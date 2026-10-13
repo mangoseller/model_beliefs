@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software or its results bundle, please cite the paper below."
+title: "Replication package for Beliefs and Behavior in Language Models"
+type: software
+license: MIT
+repository-code: "https://github.com/bwilder0/llm_beliefs_replication"
+authors:
+  - family-names: Smolin
+    given-names: Alex
+    affiliation: Toulouse School of Economics
+  - family-names: Wilder
+    given-names: Bryan
+    affiliation: Carnegie Mellon University
+preferred-citation:
+  type: article
+  title: "Beliefs and Behavior in Language Models"
+  year: 2026
+  authors:
+    - family-names: Smolin
+      given-names: Alex
+    - family-names: Wilder
+      given-names: Bryan
