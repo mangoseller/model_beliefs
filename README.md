@@ -19,7 +19,7 @@ Two reasoning-prefix branching experiments with Gemma 3 12B and DeepSeek V3.2
 use 30 of these cases per domain.
 
 The results bundle (all prompts, LLM responses, and fitted models) is archived
-on Zenodo: <https://doi.org/10.5281/zenodo.XXXXXXX>.
+on Zenodo: <https://doi.org/10.5281/zenodo.23350428>.
 
 ## Three ways to use this package
 
