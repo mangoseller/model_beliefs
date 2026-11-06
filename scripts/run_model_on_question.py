@@ -227,7 +227,7 @@ def run_batch(tok, model, device, jobs, args, want_acts):
         T = fb["input_ids"].shape[1]
         lens = fb["attention_mask"].sum(1).tolist()
         logp_all = torch.log_softmax(res.logits[:, -1].float(), -1)
-        hs = torch.stack(res.hidden_states, 0) if want_acts else None  # [L+1, B, T, d]
+        hs = res.hidden_states if want_acts else None  # L+1 tensors of [B, T, d]
         for b, i in enumerate(idx):
             q = jobs[i]["q_shown"]
             option_probs = None
@@ -239,7 +239,8 @@ def run_batch(tok, model, device, jobs, args, want_acts):
             if want_acts:
                 pad = T - lens[b]
                 pos = {"context_end": pad + ctx_tok[i], "prompt_end": pad + len(prompt_ids[i]) - 1, "answer": T - 1}
-                acts = {k: hs[:, b, p].float().cpu().numpy().astype(np.float16) for k, p in pos.items()}
+                acts = {k: torch.stack([h[b, p] for h in hs]).float().cpu().numpy().astype(np.float16)
+                        for k, p in pos.items()}
             ans = parsed[i]
             out[i] = ({
                 "reply": replies[i],
@@ -254,6 +255,21 @@ def run_batch(tok, model, device, jobs, args, want_acts):
             }, acts)
         del res, hs
     return out
+
+
+def run_batch_safe(tok, model, device, jobs, args, want_acts):
+    """run_batch, but on out-of-memory split the jobs in half and retry (long werewolf prompts)."""
+    try:
+        return run_batch(tok, model, device, jobs, args, want_acts)
+    except torch.OutOfMemoryError:
+        if len(jobs) == 1:
+            raise
+        if device == "cuda":
+            torch.cuda.empty_cache()
+        half = len(jobs) // 2
+        print(f"  out of memory on {len(jobs)} prompts, retrying as {half} + {len(jobs) - half}", flush=True)
+        return (run_batch_safe(tok, model, device, jobs[:half], args, want_acts)
+                + run_batch_safe(tok, model, device, jobs[half:], args, want_acts))
 
 
 def make_jobs(scenario, questions, case, system, tok, args):
@@ -331,7 +347,7 @@ def main():
     for b in range(0, len(todo), cases_per_batch):
         chunk = todo[b:b + cases_per_batch]
         jobs = [j for c in chunk for j in make_jobs(scenario, questions, c, system, tok, args)]
-        results = run_batch(tok, model, device, jobs, args, not args.no_activations)
+        results = run_batch_safe(tok, model, device, jobs, args, not args.no_activations)
         for case in chunk:
             rows, acts = [], {k: [] for k in POSITIONS}
             for j, (res, a) in zip(jobs, results):
