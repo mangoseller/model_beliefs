@@ -1,0 +1,7 @@
+model,condition,cases_generated,cases_complete,retention,responses,parse_failures,call_errors,refusal_like_responses
+gemma3_4b_mlx,A,24,24,1.0,384,0,0,7
+gemma3_4b_mlx,B,24,24,1.0,384,0,0,3
+gemma3_4b_mlx,C_john,24,24,1.0,384,0,0,6
+gemma3_4b_mlx,C_user,24,24,1.0,384,0,0,0
+gemma3_4b_mlx,D_john,24,24,1.0,384,0,0,3
+gemma3_4b_mlx,D_user,24,24,1.0,384,0,0,1
