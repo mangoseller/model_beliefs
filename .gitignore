@@ -5,3 +5,7 @@ __pycache__/
 .DS_Store
 experiments/
 plans/
+results/
+figures/
+RESULTS.md
+docs/transcripts_C/

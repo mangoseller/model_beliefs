@@ -1,6 +1,0 @@
-model,set,fields,cases,median_abs_delta,share_abs_delta_gt_0.5,n_positive,n_negative,n_zero,mean_delta,parse_rate_B,responses_B,B_responses_remarking_on_missing_fields
-gemma3_4b_mlx,S1,hypertension_self_reported|diabetes_self_reported,50,0.4197538767644975,0.46,13.0,37.0,0.0,-0.33908158094978974,1.0,150,38
-gemma3_4b_mlx,S2,ridageyr,50,0.3194185290334218,0.34,16.0,34.0,0.0,-0.24619063259668666,1.0,150,63
-gemma3_4b_mlx,S3,hypertension_self_reported|diabetes_self_reported|cvd_any,50,0.6504044429782574,0.6,9.0,41.0,0.0,-0.5173829975753562,1.0,150,10
-gemma3_4b_mlx,S4,hypertension_self_reported|diabetes_self_reported|ridageyr,50,0.8289765755089775,0.74,12.0,38.0,0.0,-0.5174146978970812,1.0,150,35
-gemma3_4b_mlx,A,,50,,,,,,,1.0,150,61
