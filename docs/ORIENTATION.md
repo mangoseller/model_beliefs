@@ -90,10 +90,10 @@ All seven open-weight models' cached outputs were generated on **hosted**
 Amazon Bedrock. None were generated locally.
 
 This machine is an Apple M1 Pro with 16 GB unified memory, about 280 GB free
-disk, and no CUDA. The activation work in `experiments/activation_pilot`
+disk, and no CUDA. The earlier local activation work (`experiments/activation_pilot`, not in this branch)
 already runs MLX locally. `mlx` 0.32.4 and `mlx-lm` 0.32.2 are installed in
 `build/pilot_dependencies`, and residual capture with chunked prefill is
-implemented in `experiments/werewolf_beliefs/extract.py::forward`.
+implemented in `experiments/werewolf_beliefs/extract.py::forward` (local only).
 
 | Model | Local weights on this machine | Runnable here with activations |
 |---|---|---|
