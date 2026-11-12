@@ -1,5 +1,9 @@
 # Code structure
 
+This file maps both packages: `latent_beliefs` (the replication package, most
+of this file) and `second_order` (the second-order belief experiment, at the
+end).
+
 The package `latent_beliefs` is organised by pipeline stage.  Every stage is a
 module with a command-line interface (`python -m latent_beliefs.<module>`)
 whose defaults read and write the standard locations in `config.py`.  A
@@ -147,3 +151,45 @@ grid figures.  `python -m latent_beliefs.figures` renders all ten.
 | `assets/forecasting/framing_variants.md` | The 16 forecasting framings (hand-authored prompt text) |
 | `assets/forecasting/megastudy_prompt_enrichment.json` | Reference-arm text for the 7 anti-democratic-attitudes megastudy cases |
 | `assets/branching/selected_instances.csv` | The 30 cases per domain used in the branching experiments |
+
+## The second-order experiment (`second_order/`)
+
+Runs beside `latent_beliefs` and never modifies it. Every module has a
+command-line interface (`python -m second_order.<module>`); settings are in
+`configs/second_order.yaml`.
+
+```
+ condition table --> prompts --> generation (cache) --> responses --> pooled fits --> beliefs
+                                                                          |             |
+                                              activations --> probes -----+------------>|
+                                                                                        v
+                                                              leakage, coherence --> analyze --> figures
+```
+
+| Module | Role |
+|---|---|
+| `config.py` | Paths, the config loader, and each model's scheduled conditions |
+| `conditions.py` | The condition table (roles A, B, C, M, D; pairs S4, S1, H, F; framings) and profile rendering: withheld fields, the flipped field |
+| `prompts_second_order.py` | Prompts for every condition, built from the first-order prompt with minimal edits |
+| `example_prompts.py` | Renders `docs/example_prompts.md` |
+| `run_generation.py` | Cached, resumable generation (Bedrock, OpenAI, local MLX) with a cost-approval gate |
+| `pilot.py` | Phase 1 pilot: how far each withheld set and the flip move the model's own answer |
+| `responses.py` | Parses cached responses with the first-order parser; complete-case matrices; retention |
+| `fit_pooled.py` | One pooled latent fit per family (own belief, John, user); posteriors for each output subset |
+| `measurement.py` | Sampling from a fitted measurement model; shrinkage calibration |
+| `phase3.py` | Driver: parse, fit, export latents and beliefs, retention, transcripts |
+| `beliefs.py` | The shared belief format every method writes and the analysis reads |
+| `leakage.py` | The matched-control λ, κ, tracking τ, contrasts, the ratio rule and the paired case bootstrap |
+| `coherence.py` | Reports-to-decisions coherence per condition and its contrasts |
+| `analyze.py` | Tables by research question, method agreement, anomalies, `RESULTS.md` |
+| `figures.py` | Figures by research question, from `results/` only |
+| `activations.py` | Replays prompts and responses through an open-weight model and stores residual-stream activations |
+| `probes.py` | Report and truth probes with controls; probe readouts in the belief format |
+| `simulate.py` | Synthetic recovery of the estimators through the full fit |
+| `baseline_check.py` | Confirms the first-order baseline still reproduces |
+
+Outputs: `data/generation_cache/`, `data/responses/`, `data/latents/`,
+`data/beliefs/`, `data/activations/`, `results/`, `figures/` and `RESULTS.md`,
+all ignored by git. `scripts/estimator_bias_check.py` is a standalone
+comparison of the two leakage estimators; `tests/` holds the prompt, parser,
+estimator and cache tests.

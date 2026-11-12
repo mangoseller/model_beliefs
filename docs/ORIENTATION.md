@@ -1,7 +1,8 @@
-# Orientation: the first-order reproduction, mapped for the second-order extension
+# Orientation: the first-order reproduction, mapped for the second-order experiment
 
-Phase 0 of the second-order belief build plan (11 Nov 2026). Nothing in
-`latent_beliefs/` has been changed. New code lives in `second_order/`.
+How the replication package is organised, which of its outputs the
+second-order experiment reuses, and the baseline it must keep reproducing.
+Nothing in `latent_beliefs/` is changed; the new code lives in `second_order/`.
 
 ## 1. Where things live
 
@@ -65,13 +66,12 @@ the cached responses, rebuilds the complete-case matrix, and re-runs
 | GPT-5.6 Luna | 0.982 [0.972, 0.990] | 0.780 [0.721, 0.834] | 0.956 [0.911, 0.980] | 0.930 [0.877, 0.943] |
 | GPT-5.6 Terra | 0.996 [0.992, 0.998] | 0.891 [0.855, 0.916] | 0.940 [0.884, 0.976] | 0.910 [0.855, 0.949] |
 
-**Open item for Sam:** I compared against the 7 Nov `build/` evaluation, the
-only earlier record of these numbers I found on this machine. If you recorded
-the numbers somewhere else, point me to it and I will compare against that.
+The comparison is against the 7 Nov `build/` evaluation, the only earlier
+record of these numbers.
 
-## 4. Repo settings that differ from, or add to, the plan's reference settings
+## 4. Settings where the repository differs from the paper's description
 
-| Setting | Plan | Repo (kept) |
+| Setting | Paper, as summarised | Repository (kept) |
 |---|---|---|
 | Prompt layout | C template puts the profile first, then the agent paragraph, then the instruction | Every first-order prompt is **question → "Provide your reasoning first" → answer format → options → `Patient profile:` block last**. Phase 2 has to decide where the agent paragraph goes. See §6. |
 | Threshold wording | "screen if the probability of CKD is at least τ" | "The patient should be screened if the probability that they have CKD is at least {10%, 20%, 33.3%, 5%}." |
@@ -83,100 +83,3 @@ the numbers somewhere else, point me to it and I will compare against that.
 | Fit | Max marginal likelihood, 128-point GL | Same, plus the Adam and early-stopping settings in §1. The repo does not record whether a fit hit the epoch limit. That has to be added in the new fit code. |
 | Bootstrap | Paired case bootstrap, 2,000 draws | The first-order code resamples target prompts (10,000). The second-order intervals will use a case bootstrap as the plan says, so they are not directly comparable with §3. |
 | Split | 20% test, then 20% of the rest validation | Same, but drawn per model and adjusted by `ensure_comparable_holdout` (§1). |
-
-## 5. Open-weight models: how the cache was generated and what runs locally
-
-All seven open-weight models' cached outputs were generated on **hosted**
-Amazon Bedrock. None were generated locally.
-
-This machine is an Apple M1 Pro with 16 GB unified memory, about 280 GB free
-disk, and no CUDA. The earlier local activation work (`experiments/activation_pilot`, not in this branch)
-already runs MLX locally. `mlx` 0.32.4 and `mlx-lm` 0.32.2 are installed in
-`build/pilot_dependencies`, and residual capture with chunked prefill is
-implemented in `experiments/werewolf_beliefs/extract.py::forward` (local only).
-
-| Model | Local weights on this machine | Runnable here with activations |
-|---|---|---|
-| Gemma 3 4B | `build/activation_pilot/model`: `mlx-community/gemma-3-4b-it-4bit` @ `93724907…`, 34 layers | Yes (used already). 4-bit, so not the hosted checkpoint. |
-| Gemma 3 12B | `build/activation_pilot_12b/model`: `mlx-community/gemma-3-12b-it-4bit` @ `86cc6a8d…`, 48 layers, hidden size 3,840 | Yes (used already). 4-bit. |
-| Gemma 3 27B | none | Probably not in 16 GB: 4-bit weights are about 15–16 GB. Needs a bigger machine or GPU. |
-| Qwen3 32B | none | No (memory). |
-| Llama 3.1 70B | none | No (memory). |
-| DeepSeek V3.2, GLM-5 | none | No (hundreds of billions of parameters). |
-
-So on this machine Phase 4 can cover the two Gemma sizes, with the 4-bit
-checkpoint caveat already recorded in the activation pilot README. The
-fidelity check (local log-probability of cached hosted responses) is new and
-not implemented in the existing pilot.
-
-**Credentials:** no AWS or OpenAI credentials are visible in this shell (no
-`AWS_*` or `OPENAI_API_KEY` environment variables, no `~/.aws`). Phases 1, 3
-and 6 need new generation calls, so they cannot start until access is set up.
-
-## 6. What must change so a `condition` field passes through
-
-Everything below goes in new modules under `second_order/`. The first-order
-functions are imported and called, not edited.
-
-1. **Profile ablation.** `patient_profile` has no field filter. The new code
-   renders the same lines by reusing `FEATURE_TEXT`, `FEATURE_KEYS`,
-   `format_feature_value` and `FEATURE_UNITS`, dropping withheld lines
-   entirely. The full-field render must be byte-identical to `patient_profile`
-   (to be tested).
-2. **Prompt builders.** The builders take only `profile` (plus their
-   parameter) and hard-code "you"-directed wording, so they cannot be
-   redirected by argument. Condition B reuses them directly with the partial
-   profile. C and D need parallel builders that keep the same answer-format
-   and option strings (so `parse_response` applies unchanged) and change only
-   the question sentence and the added agent paragraph. Decision for Phase 2:
-   the repo puts the profile last, so either (a) follow the plan's order
-   (profile → agent paragraph → question → format), which changes layout
-   relative to A/B, or (b) keep the repo's order and put the agent paragraph
-   after the profile block. (b) means the question mentions John before he is
-   introduced. I'll render both for stop point 3 unless you pick one first.
-3. **Identifiers.** `prompt_id` and `task_id` must carry the condition, e.g.
-   `ckd_so_<condition>_<variant>` and `original500__prompt_NNNN__<condition>__<variant>`,
-   so record ids and parsed rows never collide with condition A. The new
-   response cache key is `sha256(model, case, condition, output, replicate)`.
-4. **Generation.** The repo only has batch collection with no response cache
-   beyond the materialised files. A new `run_generation` module needs a
-   per-item cache keyed as above, a call-count and cost estimate with an
-   approval gate above 1,000 calls, and either a synchronous client or a
-   wrapper around the existing batch prepare/submit/download steps. Settings
-   are copied from `collection/records.py` (T = 1, 4,096 tokens) and
-   `collection/openai.py` (reasoning effort medium).
-5. **Parsing.** `parse_response(family, text)` is reused as is. The
-   per-condition table needs a `condition` column, and complete-case status is
-   computed per (model, condition, case).
-6. **Split.** `datasets.build` would redraw a split from each condition's
-   complete cases. For B, C and D, the new code must instead **reuse each
-   model's condition A split assignment** from `build/datasets/ckd.csv`.
-   Cases complete in A determine split membership. The analysis set is cases
-   complete in all six conditions.
-7. **Fitting.** `ProbabilisticLatentModel` has no condition-specific
-   parameters, so a pooled fit (A + B, C-John + D-John, C-user + D-user) is
-   the same model fitted to stacked rows. Item parameters and the 7-knot prior
-   are shared, trained on train-split rows, with early stopping on validation
-   rows. Posteriors are needed for **all cases** (the repo exports test only)
-   and for output subsets: all 16, the 3 reports, the 13 decisions, plain +
-   threshold (5), and bet + cost (8). `posterior_log_weights(...,
-   include_outputs=...)` already supports this. Condition A must be refit
-   within fit 1 rather than taken from the released fit. The released fit
-   stays the baseline for §3.
-8. **Evaluation.** `reciprocal_predictions` and `target_metrics` take any
-   restored model and test matrix, so coherence per condition can call them
-   unchanged. Case-bootstrap intervals and the A − D and D − C paired
-   differences are new code.
-9. **Dependencies.** The plan's outputs are `.parquet`, but neither the
-   environment nor `build/pilot_dependencies` has `pyarrow`. Either I install
-   it into `build/pilot_dependencies` (the pattern the activation pilot uses,
-   which leaves the pinned environment unchanged), or the outputs are CSV.
-
-## 7. Decisions needed before Phase 1
-
-- Confirm the baseline reference (§3).
-- Model access for generation: Bedrock (bucket and role, batch only) and
-  OpenAI keys, or another route. Also confirm the pilot models: the plan's
-  strong + mid-range, e.g. GPT-5.6 Terra and Qwen3 32B or Gemma 3 27B.
-- Parquet via `pyarrow` in `build/pilot_dependencies`, or CSV.
-- Prompt layout for C and D (§6, item 2). This can wait for stop point 3.

@@ -1,6 +1,15 @@
-"""Compare the plan's normalised lambda with a within-framing (DiD) estimator
-under an attribution map g(l)=alpha+kappa*l + case effect u_i.  No latent fit:
-beliefs are truth + independent measurement noise (the calibrated ideal)."""
+"""Idealised comparison of the two leakage estimators in ``second_order/leakage.py``.
+
+"original": C placed between the model's own B and A, normalised by D.
+"matched":  C placed between the matched control M and D (the headline estimator).
+
+Answers about the agent follow g(l) = alpha + kappa * l + u_i.  There is no latent
+fit: beliefs are the truth plus independent measurement noise.  "inside" applies g
+to C as well; "outside" leaves C uncompressed, the case in which neither estimator
+recovers lambda.
+
+    python scripts/estimator_bias_check.py
+"""
 import numpy as np
 rng = np.random.default_rng(0)
 def slope(y, x):
@@ -27,7 +36,7 @@ def run(kind, lam, kappa, n=500, noise=0.35, u_sd=0.3, u_corr=0.0, model="inside
         did = 1 - slope(C_ - D_, x) / slope(DB_ - D_, x)
         out.append((plan, did))
     return np.mean(out, axis=0), np.std(out, axis=0)
-print("kind       model   lam kappa | plan  (sd)  | DiD   (sd)")
+print("kind       model   lam kappa | original (sd) | matched (sd)")
 for kind in ("ignorance", "flip"):
     for model in ("inside", "outside"):
         for kappa in (1.0, 0.9, 0.7, 0.55):
@@ -38,4 +47,4 @@ print("case effect correlated with A (u_corr=-0.2), kappa=1:")
 for kind in ("ignorance", "flip"):
     for lam in (0.0, 0.5):
         m, s = run(kind, lam, 1.0, u_corr=-0.2)
-        print(f"{kind:10s} lam={lam} | plan {m[0]:.3f} | DiD {m[1]:.3f}")
+        print(f"{kind:10s} lam={lam} | original {m[0]:.3f} | matched {m[1]:.3f}")

@@ -1,6 +1,6 @@
-# Second-order belief experiment (see the build plan and docs/ORIENTATION.md).
-# Every run reads this file. Values marked DECISION are choices for Sam; the
-# value shown is the default used until he says otherwise.
+# Second-order belief experiment (see README.md and docs/IMPLEMENTATION_NOTES.md).
+# Every run reads this file. Values marked DECISION are project choices that
+# may still change; the value shown is the current one.
 
 domain: ckd
 seed: 20261111             # base seed for local sampling, fits and bootstraps

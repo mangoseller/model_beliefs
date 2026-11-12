@@ -1,22 +1,25 @@
-# Second-order build: runbook
+# Second-order experiment: runbook
 
 Every command runs from the repository root with
 
 ```sh
-PY=/Users/sam/miniforge3/envs/latent-beliefs/bin/python
-export PYTHONPATH=build/so_dependencies:build/pilot_dependencies:.
+conda activate latent-beliefs
+PY=python
+export PYTHONPATH=.        # add the folders holding pyarrow and MLX if they are installed outside the environment
 ```
 
-`build/so_dependencies` holds `pyarrow` only. `build/pilot_dependencies`
-holds MLX and `mlx-lm` for local runs. The pinned environment is unchanged.
-All settings are in `configs/second_order.yaml`.
+The pinned environment is unchanged; `second_order/` additionally needs
+`pyarrow`, and local runs need MLX and `mlx-lm` (Apple silicon) or `torch`,
+`transformers` and `accelerate` (CUDA). All settings are in
+`configs/second_order.yaml`.
 
 ## Checks that run without model calls
 
 ```sh
 $PY -m unittest tests.test_prompts_second_order tests.test_leakage   # prompt, parser, estimator, cache tests
 $PY -m second_order.baseline_check --out-dir build/second_order_baseline   # first-order numbers still reproduce
-$PY -m second_order.simulate --lambdas 0 0.3 0.7 1                   # synthetic recovery (add --kappa 0.7 --rho -0.2 --hedge 0.7 for the plan's scenarios)
+$PY -m second_order.simulate --lambdas 0 0.3 0.7 1                   # synthetic recovery (--kappa, --rho, --hedge set the scenario)
+$PY scripts/estimator_bias_check.py                                  # idealised comparison of the two estimators
 $PY -m second_order.example_prompts                                  # docs/example_prompts.md
 ```
 
@@ -37,8 +40,8 @@ only the estimate.
 The settings match condition A's collection: temperature 1, 4,096 output
 tokens, one user message, no system prompt. The first-order data were
 collected with the **batch** APIs. Synchronous calls are the same models and
-settings but cost about twice as much. Whether to add batch submission is a
-decision for Sam.
+settings but cost about twice as much. Batch submission is not implemented
+yet.
 
 ```sh
 # Phase 1 pilot (50 flagged cases, numeric probability x 3 per set H, S1-S4 and the flip F; A topped up to 3)
