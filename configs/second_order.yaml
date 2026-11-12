@@ -7,8 +7,9 @@ seed: 20261111             # base seed for local sampling, fits and bootstraps
 replicate: 0               # 0 = main run; 1 = B' (deferred)
 
 # Phase 1 picks this set. The candidate sets are the plan's S1-S4.
-withheld_set: S4           # DECISION (pilot evidence: results/pilot/)
+withheld_set: S4           # the core pair (provisional from the local pilot; the hosted pilot confirms)
 withheld_sets:
+  H: [hypertension_self_reported]                           # single-field rung; matched against the flip
   S1: [diabetes_self_reported, hypertension_self_reported]
   S2: [ridageyr]
   S3: [diabetes_self_reported, hypertension_self_reported, cvd_any]
@@ -20,10 +21,25 @@ withheld_sets:
 # the agent paragraph after the profile.
 layout: plan               # DECISION
 
+# False-belief pair F: this field is shown with the opposite Yes/No value.
+flip_field: hypertension_self_reported
+
+# How withheld fields appear in the agent's copy (B and M profiles):
+# "not_recorded" keeps the line with the value "Not recorded" and C says the
+# agent's copy listed it that way (plan option (a), decided 12 Nov);
+# "removed" drops the line.
+missing_fields: not_recorded
+
 agent_name: John
 
-conditions: [A, B, C_john, D_john, C_user, D_user]
-e_conditions: [E_self, E_weak, E_strong]
+# Conditions are defined in second_order/conditions.py. `conditions` is the
+# default set a run uses; `schedule` says which extra conditions each model runs.
+conditions: [A, B, C_john, D_john, M_S4, B_F, C_F, M_F, B_H, C_H, M_H]
+schedule:
+  default: [A, B, C_john, D_john, M_S4, B_F, C_F, M_F, B_H, C_H, M_H]
+  # S1 ladder rung and the user framing run on three models only (decided 12 Nov).
+  extra: [B_S1, C_S1, C_user, D_user]
+  extra_models: [gemma3_12b, deepseek_v32, openai_terra]
 
 # Generation backends. "hosted" models already have condition A in the release
 # cache; local models regenerate condition A themselves.
@@ -82,7 +98,3 @@ analysis:
   disagreements_per_model: 20
   transcripts_per_condition: 20
 
-phase6:
-  n_cases: 200
-  weak_model: gemma3_4b
-  strong_model: openai_terra

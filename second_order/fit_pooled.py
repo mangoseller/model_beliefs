@@ -1,8 +1,10 @@
 """Pooled latent fits and latent export (plan, Phase 3).
 
-Fit groups share item parameters and the latent prior: fit 1 pools A and B,
-fit 2 pools C-John and D-John, fit 3 pools C-user and D-user.  E conditions
-are fitted one per group.  The ``separate`` robustness variant fits every
+A pooled fit shares item parameters and one latent prior across conditions
+whose instructions are identical (``conditions.fit_family``): the model's own
+belief (A and every B), John's belief (D, every C and every M) and the user's
+belief (C-user, D-user).  The matched-control estimator relies on C, M and D
+sharing that one prior.  The ``separate`` robustness variant fits every
 condition on its own.  Each fit uses the model (`ProbabilisticLatentModel`),
 optimiser (`fit_model`) and settings of the first-order main fit:
 128-point Gauss-Legendre quadrature, Adam lr 0.02, at most 30,000 epochs,
@@ -44,20 +46,16 @@ assert sorted(DEC_H1 + DEC_H2) == sorted(SUBSETS["dec"])
 QUADRATURE_POINTS = 128
 PROBABILITY_EPSILON = 1e-4
 
-POOLED_GROUPS = (("A", "B"), ("C_john", "D_john"), ("C_user", "D_user"),
-                 ("E_self",), ("E_weak",), ("E_strong",))
-
-
 def groups(kind: str, conditions: Sequence[str]) -> list[tuple[str, ...]]:
-    present = set(conditions)
+    """Fit groups for the conditions present, in a stable order."""
+    from second_order.conditions import CONDITIONS, fit_family
+
+    ordered = [c for c in CONDITIONS if c in set(conditions)]
     if kind == "separate":
-        return [(c,) for c in conditions]
-    out = []
-    for group in POOLED_GROUPS:
-        kept = tuple(c for c in group if c in present)
-        if kept:
-            out.append(kept)
-    return out
+        return [(c,) for c in ordered]
+    return [tuple(c for c in ordered if fit_family(c) == family)
+            for family in ("self", "john", "user")
+            if any(fit_family(c) == family for c in ordered)]
 
 
 def stable_seed(base: int, *parts: str) -> int:

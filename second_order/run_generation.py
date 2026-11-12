@@ -136,7 +136,10 @@ def estimate(model: str, n_calls: int, conditions: Iterable[str]) -> dict[str, A
     cfg = C.load()
     backend = C.model_config(model)["backend"]
     base = CACHE_TOKENS.get(model) or CACHE_TOKENS.get(C.split_source(model), (290, 300))
-    extra = cfg["budget"]["extra_input_tokens"] if any(c not in ("A", "B") for c in conditions) else 0
+    from second_order.conditions import CONDITIONS
+
+    extra = cfg["budget"]["extra_input_tokens"] if any(CONDITIONS[c].about == "agent" for c in conditions
+                                                       if c in CONDITIONS) else 0
     tin, tout = n_calls * (base[0] + extra), n_calls * base[1]
     price = cfg["budget"]["prices"].get(backend, {"input": None, "output": None})
     cost = None
@@ -312,7 +315,8 @@ def select_cases(n: int | str, *, exclude: Iterable[str] = (), seed_offset: int 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", required=True)
-    parser.add_argument("--conditions", nargs="+", default=list(C.load()["conditions"]))
+    parser.add_argument("--conditions", nargs="+", default=None,
+                        help="default: the model's scheduled conditions (config `schedule`)")
     parser.add_argument("--cases", default=None, help="'all', an integer, or a file of case ids")
     parser.add_argument("--smoke", action="store_true", help="use the smoke-run case set")
     parser.add_argument("--approve", action="store_true")
@@ -324,6 +328,7 @@ def main() -> None:
         case_ids = Path(args.cases).read_text().split()
     else:
         case_ids = select_cases(args.cases or C.load()["main_cases"])
+    args.conditions = args.conditions or C.scheduled_conditions(args.model)
     items = main_items(args.model, case_ids, args.conditions)
     if args.dry_run:
         todo = pending(items)

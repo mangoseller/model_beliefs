@@ -1,5 +1,55 @@
 # Implementation notes: where the build departs from or adds to the plan
 
+## 12 Nov cleanup: the code is organised around the three research questions
+
+This section describes the code as it is now. The sections below it were
+written for the first build (six conditions, the original estimator) and
+are kept as history; where they disagree with this section, this one holds.
+
+- **Conditions are one table** (`second_order/conditions.py`). Each condition
+  has a role (A, B, C, M, D), a framing (self, John, user) and a pair (S4,
+  S1, H, F). M is the matched control: the model is shown only the agent's
+  copy. Prompts, fit groups, analysis sets and figures read the table and
+  the per-model `schedule` in the config.
+- **Prompts.** Withheld fields are rendered as `... is Not recorded.` in B
+  and M, and C says the agent's copy listed them that way (`missing_fields:
+  not_recorded`; `removed` gives the earlier rendering). The age line drops
+  "years" when not recorded. The false-belief pair flips hypertension. The
+  sentence shared by D and M is now `He reviewed exactly the profile shown
+  above.` **Consequence: the B, C and D prompts differ from the 11 Nov smoke
+  run's, so its cached responses no longer match and it must be regenerated
+  before `phase3` can run on it.** The belief files already on disk still
+  analyse.
+- **Fits.** One pooled fit per family: own belief (A and every B), John (D,
+  every C, every M), user. This replaces "fits 1-5" and means a condition's
+  latent comes from exactly one pooled fit.
+- **Estimator** (`leakage.py`). Headline: lambda = 1 - T_C / T_M, the
+  position of C between M and D, per framing and pair. Also kappa, tau, a
+  mean-based position, the original estimator (`*_original`), contrasts
+  (F - H, user - John, ladder rungs against S4) and the ratio rule. Output
+  is long: one row per framing, pair and statistic.
+- **Analysis and figures** are labelled by research question (`rq` column;
+  `figures/rq1_*`, `rq2_*`, `rq3_*`). `RESULTS.md` has one section per RQ.
+- **Removed:** the AI-model arm (E conditions, `phase6`), which is out of
+  scope. It remains in git history on `second-order`.
+- **Not built yet:** see "Code status" in `docs/BUILD_PLAN.md`.
+- **First synthetic recovery of the matched-control estimator through the
+  latent fit** (one replicate, so indicative only): n = 400, true lambda
+  0.3, kappa 0.7, alpha 0.3, patient effect rho -0.2, 500 resamples
+  (`python -m second_order.simulate --lambdas 0.3 --n 400 --kappa 0.7
+  --alpha 0.3 --rho -0.2 --resamples 500 --tag check`).
+
+  | Pair | lambda (matched) | kappa (target 0.7) | Original estimator |
+  |---|---|---|---|
+  | S4 | 0.274 [0.233, 0.312] | 0.698 [0.629, 0.783] | 0.487 [0.429, 0.535] |
+  | F | 0.349 [0.293, 0.405] | 0.727 [0.650, 0.822] | 0.143 [-0.246, 0.333] |
+
+  The matched-control interval covers 0.3 for both pairs; the original
+  estimator misses it for S4. The plan's full scenario grid (four lambdas,
+  kappa 1 and 0.7, the hedging case, 5 replicates) has not been run.
+- **Check on continuity:** on the smoke-run beliefs the retained original
+  estimator gives 0.221 for John, the same value as before the cleanup.
+
 Neutral record for Sam and his mentor. Commands are in `docs/RUNBOOK.md`.
 The map of the first-order code is in `docs/ORIENTATION.md`.
 

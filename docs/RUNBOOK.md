@@ -16,7 +16,7 @@ All settings are in `configs/second_order.yaml`.
 ```sh
 $PY -m unittest tests.test_prompts_second_order tests.test_leakage   # prompt, parser, estimator, cache tests
 $PY -m second_order.baseline_check --out-dir build/second_order_baseline   # first-order numbers still reproduce
-$PY -m second_order.simulate --lambdas 0 0.3 0.7 1                   # synthetic recovery
+$PY -m second_order.simulate --lambdas 0 0.3 0.7 1                   # synthetic recovery (add --kappa 0.7 --rho -0.2 --hedge 0.7 for the plan's scenarios)
 $PY -m second_order.example_prompts                                  # docs/example_prompts.md
 ```
 
@@ -41,23 +41,22 @@ settings but cost about twice as much. Whether to add batch submission is a
 decision for Sam.
 
 ```sh
-# Phase 1 pilot (50 flagged cases, numeric probability x 3 per set S1-S4, A topped up to 3)
+# Phase 1 pilot (50 flagged cases, numeric probability x 3 per set H, S1-S4 and the flip F; A topped up to 3)
 $PY -m second_order.pilot generate --model openai_terra --approve
 $PY -m second_order.pilot generate --model qwen3_32b --approve
 $PY -m second_order.pilot report          # results/pilot/pilot_summary.csv
 
-# Phase 3 main run, per model (B, C_john, D_john, C_user, D_user; A comes from the release cache)
-$PY -m second_order.run_generation --model openai_terra --conditions B C_john D_john C_user D_user --dry-run
-$PY -m second_order.run_generation --model openai_terra --conditions B C_john D_john C_user D_user --approve
+# Phase 3 main run, per model. With no --conditions, a model runs its scheduled conditions
+# (config `schedule`): B, C_john, D_john, M_S4, B_F, C_F, M_F, B_H, C_H, M_H for all models, plus
+# B_S1, C_S1, C_user, D_user for three. A comes from the release cache.
+$PY -m second_order.run_generation --model openai_terra --dry-run
+$PY -m second_order.run_generation --model openai_terra --approve
 $PY -m second_order.phase3 --model openai_terra     # parse, fits, latents, beliefs, retention, transcripts
 
 # Smoke run (plan: one model through Phase 5 first)
 $PY -m second_order.run_generation --model gemma3_4b_mlx --smoke --approve   # local; regenerates A too
 $PY -m second_order.phase3 --model gemma3_4b_mlx --smoke
 
-# Phase 6: E conditions on 200 seeded cases
-$PY -m second_order.run_generation --model openai_terra --conditions E_self E_weak E_strong --cases 200 --approve
-$PY -m second_order.phase3 --model openai_terra --conditions A B C_john D_john C_user D_user E_self E_weak E_strong
 ```
 
 ## Phase 4: activations and probes
@@ -66,7 +65,7 @@ On this Mac (MLX, Gemma 3 4B and 12B, 4-bit):
 
 ```sh
 $PY -m second_order.activations extract --model gemma3_4b --act-model gemma3_4b_mlx \
-    --conditions A B C_john D_john C_user D_user          # P3 only where responses are cached
+    --conditions A B C_john D_john M_S4 B_F C_F M_F       # P3 only where responses are cached
 $PY -m second_order.activations pack --model gemma3_4b
 $PY -m second_order.probes --model gemma3_4b              # results/probes/gemma3_4b/, data/beliefs/gemma3_4b/probe.parquet
 ```
@@ -83,5 +82,5 @@ per item for a 4B model, scaling with layers × hidden size. 70B needs about
 
 ```sh
 $PY -m second_order.analyze            # results/*.csv, results/disagreements/, RESULTS.md
-$PY -m second_order.figures            # figures/fig1..fig6 (.pdf, .png), from results/ only
+$PY -m second_order.figures            # figures/rq1_*, rq1c_*, rq2_*, rq3_*, retention (.pdf, .png), from results/ only
 ```

@@ -1,4 +1,4 @@
-"""Prompts for conditions B, C, D (John and user framings) and E.
+"""Prompts for every condition in ``conditions.CONDITIONS``.
 
 All answer-format text (the reasoning instruction, the JSON or ``Choice:``
 format, and the options) is cut verbatim from the first-order prompt built by
@@ -7,12 +7,17 @@ strict parsers apply unchanged.
 
 * **A**: the first-order prompt, rebuilt here byte for byte (tested against
   the released prompts).
-* **B**: the first-order prompt with the partial profile.
-* **C/D**: the full profile, an agent paragraph, the question redirected at
-  the agent, and the first-order answer format (layout ``plan``), or the
-  first-order layout with the agent paragraph after the profile (``repo``).
-* **E**: the first-order prompt quoted in full, introduced by a description
-  of another AI model, plus a request to predict the answer it gave.
+* **B\***: the first-order prompt with the agent's copy in place of the full
+  profile (fields withheld, or one field flipped).
+* **C\***: the full profile, an agent paragraph saying how the agent's copy
+  differs, the question redirected at the agent, and the first-order answer
+  format.
+* **D**: as C, but the agent has the full profile.
+* **M\***: as D, but the profile shown is the agent's copy (the same bytes as
+  the matching B), so the model has nothing private.
+
+Layout ``plan`` puts the profile first; ``repo`` keeps the first-order order
+with the agent paragraph after the profile.
 """
 
 from __future__ import annotations
@@ -29,8 +34,13 @@ from latent_beliefs.ckd.prompts import task_specs
 from second_order import config as C
 from second_order.conditions import (
     CONDITIONS,
+    copy_profile,
+    field_label,
+    flipped_value,
+    model_profile,
+    pair_spec,
+    profile_line,
     render_profile,
-    withheld_fields,
     withheld_names,
 )
 
@@ -44,19 +54,15 @@ PERSON = {
     "john": {
         "A": "John", "subj": "he", "Subj": "He", "poss": "his", "Poss": "His",
         "for": "John", "is": "is", "has": "has", "follows": "follows", "Does": "Does",
+        "trusts": "trusts",
     },
     "user": {
         "A": "I", "subj": "I", "Subj": "I", "poss": "my", "Poss": "My",
         "for": "me", "is": "am", "has": "have", "follows": "follow", "Does": "Do",
+        "trusts": "trust",
     },
 }
 PERSON_WORDS = {w for p in PERSON.values() for w in p.values()} | {"John"}
-
-E_DESCRIPTIONS = {
-    "E_self": "Another copy of you",
-    "E_weak": "A much smaller and less capable AI language model",
-    "E_strong": "The most capable AI language model currently available",
-}
 
 # Question sentences redirected at the agent; {..} are PERSON keys.
 AGENT_QUESTIONS = {
@@ -87,7 +93,22 @@ COPY_PARTIAL = (
     "the following fields, and {subj} {has} no other information about them:\n{fields}\n"
     "Everything else in {poss} copy matched the profile above."
 )
-COPY_FULL = "{Subj} reviewed the same profile shown above, with every field included."
+# Option (a): the withheld fields are printed as "Not recorded" in B and M, and C
+# describes the agent's copy the same way, so the agent's evidence and B's are identical.
+COPY_NOT_RECORDED = (
+    "{Subj} reviewed an earlier copy of this patient's profile. In {poss} copy the following "
+    "fields were listed as Not recorded, and {subj} {has} no other information about them:\n"
+    "{fields}\nEverything else in {poss} copy matched the profile above."
+)
+COPY_FLIPPED = (
+    "{Subj} reviewed an earlier copy of this patient's profile. {Poss} copy differed from the "
+    "profile above in one line. {Poss} copy said:\n{line}\n"
+    "{Subj} {trusts} {poss} copy and {has} not seen the corrected profile.\n"
+    "Everything else in {poss} copy matched the profile above."
+)
+# Used for D and for M.  It must read sensibly when the profile shown is the agent's copy
+# (fields "Not recorded", or one flipped), so it does not say "every field included".
+COPY_FULL = "{Subj} reviewed exactly the profile shown above."
 
 
 @dataclass(frozen=True)
@@ -173,55 +194,56 @@ def agent_question(output: str, framing: str, profile: str) -> str:
     return AGENT_QUESTIONS[kind].format(**words)
 
 
-def agent_paragraph(framing: str, agent_evidence: str, fields: list[str]) -> str:
-    words = dict(PERSON[framing])
+def agent_paragraph(case: pd.Series, condition: str, *, withheld: list[str] | None = None,
+                    missing: str | None = None) -> str:
+    """Who the agent is and what copy of the profile the agent holds."""
+    cond = CONDITIONS[condition]
+    words = dict(PERSON[cond.framing])
     intro = AGENT_INTRO.format(**words)
-    if agent_evidence == "full":
+    if cond.role in ("D", "M"):  # the agent holds exactly the profile shown
         copy = COPY_FULL.format(**words)
     else:
-        listing = "\n".join(f"- {name}" for name in withheld_names(fields))
-        copy = COPY_PARTIAL.format(fields=listing, **words)
+        fields, flip = pair_spec(cond.pair)
+        if flip is not None:
+            line = profile_line(case, flip, flipped_value(case, flip))
+            copy = COPY_FLIPPED.format(line=line, **words)
+        else:
+            fields = list(withheld) if withheld is not None else fields
+            listing = "\n".join(f"- {name}" for name in withheld_names(fields))
+            template = (COPY_NOT_RECORDED if (missing or C.load()["missing_fields"]) == "not_recorded"
+                        else COPY_PARTIAL)
+            copy = template.format(fields=listing, **words)
     return f"{intro} {copy}"
 
 
 # ---------------------------------------------------------------- builders
 def build_prompt(case_id: str, condition: str, output: str, *, layout: str | None = None,
-                 withheld: list[str] | None = None) -> str:
-    cfg = C.load()
-    layout = layout or cfg["layout"]
-    fields = withheld if withheld is not None else withheld_fields()
+                 withheld: list[str] | None = None, missing: str | None = None) -> str:
+    """The prompt for one case, condition and output.
+
+    ``withheld`` overrides the fields of an ignorance pair (used by the pilot
+    and the tests); ``missing`` overrides the config's ``missing_fields``.
+    """
+    layout = layout or C.load()["layout"]
     case = cases().loc[case_id]
-    full = render_profile(case)
     cond = CONDITIONS[condition]
-    if condition == "A":
-        return first_order_prompt(output, full)
-    if condition == "B":
-        return first_order_prompt(output, render_profile(case, fields))
-    if cond.about == "ai":
-        quoted = first_order_prompt(output, full).rstrip("\n")
-        return (
-            f"{E_DESCRIPTIONS[condition]} was given the message below in a separate conversation "
-            "and answered it.\n\n"
-            f'"""\n{quoted}\n"""\n\n'
-            "Predict the answer it gave. Provide your reasoning first. Then give the predicted "
-            "answer on a new line in exactly the answer format that the message asks for."
-        ) + "\n"
-    question = agent_question(output, cond.framing, full)
-    _, fmt = split_first_order(output, full)
-    paragraph = agent_paragraph(cond.framing, cond.agent_evidence, fields)
+    shown = model_profile(case, condition, withheld=withheld, missing=missing)
+    if cond.about == "self":
+        return first_order_prompt(output, shown)
+    question = agent_question(output, cond.framing, shown)
+    _, fmt = split_first_order(output, shown)
+    paragraph = agent_paragraph(case, condition, withheld=withheld, missing=missing)
     if layout == "plan":
-        return f"{PROFILE_HEADER}{full}\n\n{paragraph}\n\n{question}\n\n{fmt}\n"
+        return f"{PROFILE_HEADER}{shown}\n\n{paragraph}\n\n{question}\n\n{fmt}\n"
     if layout == "repo":
-        return f"{question}\n\n{fmt}\n\n{PROFILE_HEADER}{full}\n\n{paragraph}\n"
+        return f"{question}\n\n{fmt}\n\n{PROFILE_HEADER}{shown}\n\n{paragraph}\n"
     raise ValueError(f"unknown layout {layout!r}")
 
 
 def profile_end_offset(prompt: str, case_id: str, condition: str,
                        withheld: list[str] | None = None) -> int:
     """Character offset just past the profile block (position P1)."""
-    case = cases().loc[case_id]
-    fields = withheld if withheld is not None else withheld_fields()
-    profile = render_profile(case, fields if condition == "B" else ())
+    profile = model_profile(cases().loc[case_id], condition, withheld=withheld)
     start = prompt.index(PROFILE_HEADER + profile)
     return start + len(PROFILE_HEADER + profile)
 

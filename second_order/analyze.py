@@ -1,10 +1,15 @@
-"""Phase 5 (and Phase 6) analysis from the shared belief format.  No model calls.
+"""Phase 5 analysis from the shared belief format, organised by research question.  No model calls.
 
     python -m second_order.analyze [--models ...] [--resamples 2000]
 
-Writes ``results/{coherence,leakage,agreement,retention,scatter_points,phase6}.csv``,
-``results/disagreements/{model}.md`` and ``RESULTS.md`` (tables, figure
-references, anomalies; no interpretation).  Figures: ``python -m second_order.figures``.
+RQ1 (separation): ``results/leakage.csv``: lambda, kappa, tau and their checks per
+  model, method, framing and pair, plus the contrasts F - H (RQ1c) and user - John (RQ1d).
+RQ2 (coherence and the ladder): ``results/coherence.csv``; ladder rows of ``leakage.csv``.
+RQ3 (internal): the ``probe`` rows of ``leakage.csv`` (outcomes are probe readings, the
+  regressor is the behavioural latent gap).
+Also ``results/{agreement,retention,scatter_points}.csv``, ``results/disagreements/{model}.md``
+and ``RESULTS.md`` (tables, figure references, anomalies; no interpretation).
+Figures: ``python -m second_order.figures``.
 """
 
 from __future__ import annotations
@@ -20,8 +25,8 @@ from latent_beliefs.models import MODEL_DISPLAY
 from second_order import beliefs as BL
 from second_order import config as C
 from second_order.coherence import coherence_table, latent_predictions, link_predictions
-from second_order.conditions import MAIN_CONDITIONS
-from second_order.leakage import FRAMINGS, leakage_table
+from second_order.conditions import CONDITIONS, CORE_CONDITIONS, framing_pairs, pair_conditions
+from second_order.leakage import leakage_table
 from second_order.prompts_second_order import build_prompt
 from second_order.run_generation import pilot_cases
 
@@ -41,14 +46,13 @@ def selected_mask(frame: pd.DataFrame) -> pd.Series:
     return frame["selected_layer"].map(lambda v: True if pd.isna(v) else bool(v))
 
 
-def framing_of(stat: str) -> str:
-    if "user_minus_john" in stat:
-        return "user_minus_john"
-    if "_john" in stat:
-        return "john"
-    if "_user" in stat:
-        return "user"
-    return "shared"
+def research_question(framing: str, pair: str) -> str:
+    """Which RQ a (framing, pair) row of the leakage table serves first."""
+    if framing == "contrast":
+        return {"F_minus_H": "RQ1c", "user_minus_john": "RQ1d"}.get(pair, "RQ2")
+    if framing == "user":
+        return "RQ1d"
+    return {"S4": "RQ1a/b", "F": "RQ1c", "H": "RQ1c", "S1": "RQ2"}[pair]
 
 
 def models_with_beliefs() -> list[str]:
@@ -105,55 +109,64 @@ def probe_variants(model: str, b: pd.DataFrame, all_layers: bool):
 
 
 def run_leakage(model: str, resamples: int, seed: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Leakage table for every method, and scatter points for the latent method."""
     rows, scatter = [], []
     pilots = set(pilot_cases())
-    for method in [m for m in BL.methods_for(model) if m in ("latent", "direct", "probe")]:
+    methods = [m for m in BL.methods_for(model) if m in ("latent", "direct", "probe")]
+    latent = BL.read(model, "latent") if "latent" in methods else None
+    behavioural = latent[latent.fit == "pooled"] if latent is not None else None
+    for method in methods:
         b = BL.read(model, method)
-        b = b[b.condition.isin(MAIN_CONDITIONS)]
-        if not {"A", "B"} <= set(b.condition) or not ({"C_john", "C_user"} & set(b.condition)):
-            continue
-        variants = []
+        b = b[b.condition.isin(CONDITIONS)]
+        variants = []  # (metadata, beliefs, regressor, calibrated outcomes)
         if method == "latent":
-            for fit in ("pooled", "separate"):
-                variants.append(({"fit": fit}, b[b.fit == fit]))
+            variants.append(({"fit": "pooled", "outcome_values": "raw"}, b[b.fit == "pooled"], None, False))
+            # Required checks (stop point 5): calibrated outcomes, and per-condition fits.
+            variants.append(({"fit": "pooled", "outcome_values": "calibrated"}, b[b.fit == "pooled"], None, True))
+            variants.append(({"fit": "separate", "outcome_values": "calibrated"}, b[b.fit == "separate"], None, True))
         elif method == "direct":
-            variants.append(({"fit": "none"}, b))
-        else:
+            variants.append(({"fit": "none", "outcome_values": "raw"}, b, None, False))
+        elif behavioural is not None:
             for ptype, pos, layer, is_sel, part in probe_variants(model, b, all_layers=True):
-                variants.append(({"fit": "frozen", "probe_type": ptype, "position": pos, "layer": layer,
-                                  "selected_layer": is_sel}, part))
-        for meta, part in variants:
-            cases_all = analysis_set(model, part, MAIN_CONDITIONS)
+                variants.append(({"fit": "frozen", "outcome_values": "raw", "probe_type": ptype, "position": pos,
+                                  "layer": layer, "selected_layer": is_sel}, part, behavioural, False))
+        for meta, part, regressor, calibrated in variants:
+            if part.empty:
+                continue
+            headline = meta.get("selected_layer", True) and meta["fit"] != "separate" and not calibrated
             split = part.drop_duplicates("case_id").set_index("case_id").split
-            sets = {"all_complete": cases_all}
-            if meta.get("selected_layer", True) and meta.get("fit") != "separate":
-                sets["test_only"] = [c for c in cases_all if split.get(c) == "test"]
-                sets["pilot_excluded"] = [c for c in cases_all if c not in pilots]
-            for set_name, ids in sets.items():
+            ids = set(part.case_id)
+            sets = {"all_complete": ids}
+            if headline:
+                sets["test_only"] = {c for c in ids if split.get(c) == "test"}
+                sets["pilot_excluded"] = ids - pilots
+            for set_name, keep in sets.items():
                 n_res = resamples if meta.get("selected_layer", True) else min(resamples, 500)
-                t = leakage_table(part[part.case_id.isin(ids)], method, resamples=n_res, seed=seed)
+                t = leakage_table(part[part.case_id.isin(keep)], method, resamples=n_res, seed=seed,
+                                  regressor=regressor, calibrated=calibrated)
                 if t.empty:
                     continue
                 t.insert(0, "model", model)
                 t.insert(1, "method", method)
-                t.insert(2, "framing", t.statistic.map(framing_of))
+                t.insert(2, "rq", [research_question(f, p) for f, p in zip(t.framing, t.pair)])
                 t.insert(3, "case_set", set_name)
                 for k, v in meta.items():
                     t[k] = v
                 rows.append(t)
-            if method == "latent" and meta["fit"] == "pooled":
-                W = part[part.case_id.isin(cases_all)].pivot_table(index="case_id", columns=["condition", "half"],
-                                                                   values="value_calibrated")
-                Wr = part[part.case_id.isin(cases_all)].pivot_table(index="case_id", columns=["condition", "half"],
-                                                                    values="value")
-                for f in FRAMINGS:
-                    if (f"C_{f}", "all") not in W:
+            if method == "latent" and headline:
+                W = part.pivot_table(index="case_id", columns=["condition", "half"], values="value")
+                for framing, pair in framing_pairs():
+                    k = pair_conditions(framing, pair)
+                    need = [k["A"], k["B"], k["C"], k["D"]]
+                    if any((c, "all") not in W for c in need):
                         continue
-                    scatter.append(pd.DataFrame({
-                        "model": model, "framing": f, "case_id": W.index,
-                        "x_A_minus_Bprob": Wr[("A", "all")] - Wr[("B", "prob")],
-                        "y_C_minus_Bdec": W[(f"C_{f}", "all")] - W[("B", "dec")],
-                        "y_D_minus_Bdec": W[(f"D_{f}", "all")] - W[("B", "dec")]}))
+                    frame = pd.DataFrame({
+                        "model": model, "framing": framing, "pair": pair, "case_id": W.index,
+                        "x_A_minus_B": W[(k["A"], "all")] - W[(k["B"], "all")],
+                        "y_D_minus_C": W[(k["D"], "all")] - W[(k["C"], "all")],
+                        "y_D_minus_M": (W[(k["D"], "all")] - W[(k["M"], "all")]
+                                        if k["M"] and (k["M"], "all") in W else np.nan)})
+                    scatter.append(frame.dropna(subset=["x_A_minus_B", "y_D_minus_C"]))
     return (pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(),
             pd.concat(scatter, ignore_index=True) if scatter else pd.DataFrame())
 
@@ -166,7 +179,7 @@ def run_coherence(model: str, resamples: int, seed: int) -> pd.DataFrame:
     probe_cases = None
     for method in [m for m in methods if m in ("latent", "direct", "probe")]:
         b = BL.read(model, method)
-        cases_all = analysis_set(model, b[b.condition.isin(MAIN_CONDITIONS)], MAIN_CONDITIONS)
+        cases_all = analysis_set(model, b[b.condition.isin(CORE_CONDITIONS)], CORE_CONDITIONS)
         if method == "latent":
             params_path = C.LATENTS / f"{model}_parameters.parquet"
             if not params_path.exists():
@@ -180,7 +193,7 @@ def run_coherence(model: str, resamples: int, seed: int) -> pd.DataFrame:
             (f"probe_{t}_{p}", part) for t, p, l, s, part in probe_variants(model, b, all_layers=False)]
         for name, part in variants:
             part = part[(part.half == "all") & part.condition.isin(conditions)]
-            ids = analysis_set(model, part, [c for c in MAIN_CONDITIONS if c in conditions])
+            ids = analysis_set(model, part, [c for c in CORE_CONDITIONS if c in conditions])
             test = sorted(set(wide[(wide.split == "test")].case_id) & set(ids))
             preds = link_predictions(part, wide, test)
             t = coherence_table(preds["predictions"], method=method, model=model, n_cases=len(test),
@@ -210,7 +223,7 @@ def run_agreement(models: list[str], leakage: pd.DataFrame, coherence: pd.DataFr
         names = sorted(methods)
         for i, m1 in enumerate(names):
             for m2 in names[i + 1:]:
-                for cond in MAIN_CONDITIONS:
+                for cond in CONDITIONS:
                     a = methods[m1][methods[m1].condition == cond].set_index("case_id").value
                     c = methods[m2][methods[m2].condition == cond].set_index("case_id").value
                     ids = a.index.intersection(c.index)
@@ -218,46 +231,53 @@ def run_agreement(models: list[str], leakage: pd.DataFrame, coherence: pd.DataFr
                         continue
                     rho = spearmanr(a.loc[ids], c.loc[ids]).statistic
                     rows.append({"model": model, "analysis": "spearman_between_methods", "method": f"{m1}~{m2}",
-                                 "framing": cond.split("_")[1] if "_" in cond else "self", "condition": cond,
+                                 "framing": CONDITIONS[cond].framing, "condition": cond,
                                  "estimate": rho, "n_cases": len(ids)})
         write_disagreements(model, methods)
     # sign agreement of contrasts across methods
-    L = leakage[(leakage.case_set == "all_complete") & selected_mask(leakage)] if not leakage.empty else leakage
-    if not L.empty:
-        L = L[(L.method != "latent") | (L.fit == "pooled")]
+    L = headline_rows(leakage)
     for model in models:
         signs = {}
         if not coherence.empty:
             co = coherence[(coherence.model == model) & (coherence.statistic == "mean_c_index")
                            & (coherence.direction == "reports_to_decisions")]
-            for _, r in co[co.condition.isin(["A_minus_D", "D_minus_C"])].iterrows():
+            for _, r in co[co.condition.isin(["A_minus_D", "D_minus_C", "M_minus_C"])].iterrows():
                 key = f"{r.condition}_{r.framing}"
                 signs.setdefault(key, {})[r.get("variant") if isinstance(r.get("variant"), str) else r.method] = np.sign(r.estimate)
         if not L.empty:
-            lm = L[(L.model == model) & (L.statistic == "diff_user_minus_john_lambda_C")]
+            lm = L[(L.model == model) & (L.framing == "contrast")
+                   & L.statistic.isin(["diff_lambda", "diff_T_C"]) & L.pair.isin(["F_minus_H", "user_minus_john"])]
             for _, r in lm.iterrows():
                 label = r.method if r.method != "probe" else f"probe_{r.probe_type}_{r.position}"
-                signs.setdefault("user_minus_john_lambda_C", {})[label] = np.sign(r.estimate)
+                if np.isfinite(r.estimate):
+                    signs.setdefault(f"{r.pair}_{r.statistic}", {})[label] = np.sign(r.estimate)
         for contrast, by_method in signs.items():
             vals = set(by_method.values())
             rows.append({"model": model, "analysis": "sign_agreement", "method": "|".join(sorted(by_method)),
                          "framing": "", "condition": contrast, "estimate": float(len(vals) == 1),
                          "detail": "; ".join(f"{k}:{int(v)}" for k, v in sorted(by_method.items()))})
-    # capability trend per method and framing
+    # RQ1b: capability trend of lambda (S4, John) per method; descriptive, no significance claim
     if not L.empty:
         cap = {m: capability(m, coherence) for m in models}
         floor = float(C.load()["analysis"]["capability_floor"])
-        for (method, stat), g in L[L.statistic.isin(["lambda_C_john", "lambda_C_user",
-                                                     "normalised_lambda_john", "normalised_lambda_user"])
-                                   ].groupby(["method", "statistic"]):
+        g_all = L[(L.framing == "john") & (L.pair == "S4") & L.statistic.isin(["lambda", "T_C", "T_M"])]
+        for (method, stat), g in g_all.groupby(["method", "statistic"]):
             g = g.drop_duplicates("model")
-            g = g[g.model.map(lambda m: cap.get(m, np.nan) >= floor)]
+            g = g[g.model.map(lambda m: cap.get(m, np.nan) >= floor) & g.boot_median.notna()]
             if g.model.nunique() >= 3:
-                rho = spearmanr(g.model.map(cap), g.estimate).statistic
+                rho = spearmanr(g.model.map(cap), g.boot_median).statistic
                 rows.append({"model": "all", "analysis": "capability_spearman", "method": method,
-                             "framing": framing_of(stat), "condition": stat, "estimate": rho,
+                             "framing": "john", "condition": f"S4 {stat}", "estimate": rho,
                              "n_cases": int(g.model.nunique())})
     return pd.DataFrame(rows)
+
+
+def headline_rows(leakage: pd.DataFrame) -> pd.DataFrame:
+    """Primary rows: all complete cases, pooled fit with raw outcomes, selected probe layers."""
+    if leakage.empty:
+        return leakage
+    L = leakage[(leakage.case_set == "all_complete") & selected_mask(leakage)]
+    return L[(L.method != "latent") | ((L.fit == "pooled") & (L.outcome_values == "raw"))]
 
 
 def write_disagreements(model: str, methods: dict[str, pd.DataFrame]) -> None:
@@ -267,14 +287,15 @@ def write_disagreements(model: str, methods: dict[str, pd.DataFrame]) -> None:
     folder = C.RESULTS / "disagreements"
     folder.mkdir(parents=True, exist_ok=True)
     resp = {}
-    for cond in ("C_john", "C_user"):
+    c_conditions = [c for c in CONDITIONS if CONDITIONS[c].role == "C"]
+    for cond in c_conditions:
         path = C.RESPONSES / model / f"{cond}.parquet"
         if path.exists():
             resp[cond] = pd.read_parquet(path)
     lines = [f"# {display(model)}: cases where the methods disagree most in condition C\n",
              "Disagreement = largest pairwise gap between methods after standardising each method's "
              "beliefs within the condition (z-scores).\n"]
-    for cond in ("C_john", "C_user"):
+    for cond in c_conditions:
         z = {}
         for name, part in methods.items():
             v = part[part.condition == cond].set_index("case_id").value
@@ -296,40 +317,6 @@ def write_disagreements(model: str, methods: dict[str, pd.DataFrame]) -> None:
                         lines.append(f"\nResponse ({row.output}, parsed {row.value}):\n\n```\n{row.text}\n```\n")
                 lines.append("\nParsed values: " + ", ".join(f"{o}={v}" for o, v in zip(r.output, r.value)) + "\n")
     (folder / f"{model}.md").write_text("".join(lines))
-
-
-def run_phase6(models: list[str]) -> pd.DataFrame:
-    from second_order.probes import latent_targets
-
-    cfg = C.load()["phase6"]
-    rows = []
-    for model in models:
-        lat_path = C.LATENTS / f"{model}.parquet"
-        if not lat_path.exists():
-            continue
-        lat = pd.read_parquet(lat_path)
-        lat = lat[lat.fit == "pooled"]
-        E = lat[lat.condition.str.startswith("E_")]
-        if E.empty:
-            continue
-        own = lat[lat.condition == "A"].set_index("case_id")
-        targets = {"E_self": own.ell_all,
-                   "E_weak": latent_targets(cfg["weak_model"]).set_index("case_id").ell_all,
-                   "E_strong": latent_targets(cfg["strong_model"]).set_index("case_id").ell_all}
-        for cond, tgt in targets.items():
-            e = E[E.condition == cond].set_index("case_id").ell_all
-            ids = e.index.intersection(tgt.index).intersection(own.index)
-            if len(ids) < 5:
-                continue
-            x, y, a = tgt.loc[ids], e.loc[ids], own.ell_all.loc[ids]
-            X = np.column_stack([np.ones(len(ids)), a, x])
-            coef = np.linalg.lstsq(X, y.to_numpy(), rcond=None)[0]
-            rows.append({"model": model, "method": "latent", "condition": cond, "n_cases": len(ids),
-                         "corr_with_target_ell_A": float(np.corrcoef(x, y)[0, 1]),
-                         "mae_vs_target_ell_A": float(np.mean(np.abs(x - y))),
-                         "projection_weight_own_ell_A": coef[1], "projection_weight_target_ell_A": coef[2],
-                         "projection_intercept": coef[0]})
-    return pd.DataFrame(rows)
 
 
 def md_table(frame: pd.DataFrame, cols: list[str], digits: int = 3) -> str:
@@ -364,31 +351,40 @@ def anomalies(models, leakage, coherence, retention) -> list[str]:
                 if abs(r.mean_numeric_probability - r.mean_posterior_z) > 0.05:
                     out.append(f"Anchor check: {model} {r.fit} {r.condition}: mean numeric report "
                                f"{r.mean_numeric_probability:.3f} vs mean posterior z {r.mean_posterior_z:.3f}.")
-    if not leakage.empty:
-        L = leakage[(leakage.case_set == "all_complete")]
-        for _, r in L[L.statistic == "manipulation_median_abs_A_minus_B"].drop_duplicates(["model", "method"]).iterrows():
-            if r.estimate < 0.5 and r.method == "latent":
-                out.append(f"Manipulation check below 0.5 logits: {r.model} ({r.method}, fit {r.fit}): "
-                           f"median |l_A - l_B| = {r.estimate:.3f}.")
-        for _, r in L[L.statistic.str.startswith("lambda_D_")].iterrows():
-            if not (r.ci_lower <= 1 <= r.ci_upper) and r.get("selected_layer", True) is not False:
-                if r.method == "latent" and r.get("fit") == "separate":
-                    continue
-                out.append(f"lambda_D interval excludes 1: {r.model} {r.method} {r.framing} "
-                           f"{_variant(r)}: {r.estimate:.3f} [{r.ci_lower:.3f}, {r.ci_upper:.3f}].")
+    L = headline_rows(leakage)
+    if not L.empty:
+        def label(r) -> str:
+            return f"{r.model} {r.method} {r.framing}/{r.pair} {_variant(r)}"
+
+        for _, r in L[(L.statistic == "manipulation_median_abs_gap") & (L.method == "latent")].iterrows():
+            if r.estimate < 0.5:
+                out.append(f"Manipulation check below 0.5 logits: {label(r)}: median |l_A - l_B| = {r.estimate:.3f}.")
+        for _, r in L[L.blank_reason.fillna("") != ""].iterrows():
+            out.append(f"Ratio rule: {label(r)}: {r.statistic} left blank ({r.blank_reason}).")
+        for _, r in L[L.statistic == "kappa"].iterrows():
+            if np.isfinite(r.estimate) and not 0.7 <= r.estimate <= 1.3:
+                out.append(f"kappa outside [0.7, 1.3]: {label(r)}: {r.estimate:.3f} "
+                           f"[{r.ci_lower:.3f}, {r.ci_upper:.3f}]. Answers about the agent follow evidence "
+                           "differently from the model's own answers even with nothing hidden.")
+        for _, r in L[L.statistic == "anchor_mean_M_minus_B"].iterrows():
+            if abs(r.estimate) > 0.3 and r.method != "probe":
+                out.append(f"Anchor check: {label(r)}: mean(l_M - l_B) = {r.estimate:.3f} logits (beyond 0.3).")
         for _, r in L[L.statistic == "lambda_0"].iterrows():
-            if not (r.ci_lower <= 0 <= r.ci_upper) and r.get("selected_layer", True) is not False:
-                out.append(f"lambda_0 interval excludes 0: {r.model} {r.method} {_variant(r)}: "
-                           f"{r.estimate:.3f} [{r.ci_lower:.3f}, {r.ci_upper:.3f}].")
-        # pooled vs separate
-        lat = L[(L.method == "latent")]
-        for (model, stat), g in lat[lat.statistic.str.startswith("normalised_lambda")].groupby(["model", "statistic"]):
-            p, s = g[g.fit == "pooled"], g[g.fit == "separate"]
-            if len(p) and len(s):
-                p, s = p.iloc[0], s.iloc[0]
-                if s.estimate < p.ci_lower or s.estimate > p.ci_upper:
-                    out.append(f"Pooled vs separate fits differ: {model} {stat}: pooled {p.estimate:.3f} "
-                               f"[{p.ci_lower:.3f}, {p.ci_upper:.3f}], separate {s.estimate:.3f}.")
+            if not (r.ci_lower <= 0 <= r.ci_upper):
+                out.append(f"Noise check lambda_0 interval excludes 0: {label(r)}: {r.estimate:.3f} "
+                           f"[{r.ci_lower:.3f}, {r.ci_upper:.3f}] (affects kappa and tau, not lambda).")
+        # stop point 5, criterion 2: raw vs calibrated vs per-condition fits
+        lat = leakage[(leakage.method == "latent") & (leakage.case_set == "all_complete")
+                      & (leakage.statistic == "lambda")]
+        for (model, framing, pair), g in lat.groupby(["model", "framing", "pair"]):
+            head = g[(g.fit == "pooled") & (g.outcome_values == "raw")]
+            if head.empty or not np.isfinite(head.estimate.iloc[0]):
+                continue
+            h = head.iloc[0]
+            for _, r in g[g.outcome_values == "calibrated"].iterrows():
+                if np.isfinite(r.estimate) and not (h.ci_lower <= r.estimate <= h.ci_upper):
+                    out.append(f"lambda differs between fits: {model} {framing}/{pair}: pooled raw {h.estimate:.3f} "
+                               f"[{h.ci_lower:.3f}, {h.ci_upper:.3f}], {r.fit} calibrated {r.estimate:.3f}.")
     return out
 
 
@@ -429,51 +425,84 @@ def main() -> None:
         columns=["model", "condition", "retention", "cases_generated", "cases_complete", "parse_failures",
                  "call_errors", "refusal_like_responses"])
     retention.to_csv(C.RESULTS / "retention.csv", index=False)
-    phase6 = run_phase6(models)
-    phase6.to_csv(C.RESULTS / "phase6.csv", index=False)
-    write_results_md(models, leakage, coherence, agreement, retention, phase6)
+    write_results_md(models, leakage, coherence, agreement, retention)
 
 
-def write_results_md(models, leakage, coherence, agreement, retention, phase6) -> None:
+LEAK_COLS = ["model", "method", "framing", "pair", "statistic", "estimate", "boot_median", "ci_lower",
+             "ci_upper", "n_cases", "blank_reason"]
+
+
+def leak_section(L: pd.DataFrame, rq: str, stats: list[str]) -> str:
+    part = L[(L.rq == rq) & L.statistic.isin(stats)] if not L.empty else L
+    if part.empty:
+        return "_(no rows yet)_\n\n"
+    cols = list(LEAK_COLS)
+    if "position" in part and (part.method == "probe").any():
+        part = part.assign(probe=part.apply(lambda r: f"{r.probe_type} {r.position} L{int(r.layer)}"
+                                            if r.method == "probe" else "", axis=1))
+        cols.insert(2, "probe")
+    order = {s: i for i, s in enumerate(stats)}
+    part = part.assign(_o=part.statistic.map(order)).sort_values(["model", "method", "framing", "pair", "_o"])
+    return md_table(part, cols) + "\n"
+
+
+def write_results_md(models, leakage, coherence, agreement, retention) -> None:
     cfg = C.load()
+    L = headline_rows(leakage)
+    behavioural = L[L.method != "probe"] if not L.empty else L
+    probe = L[L.method == "probe"] if not L.empty else L
+    core = ["lambda", "T_C", "T_M", "mean_position", "kappa", "tau", "anchor_mean_M_minus_B",
+            "manipulation_median_abs_gap", "gap_sd", "normalised_lambda_original"]
     parts = [f"# Second-order belief experiment: results\n\nGenerated {dt.date.today().isoformat()} by "
              "`python -m second_order.analyze`; figures by `python -m second_order.figures`.  Numbers only; "
-             "no interpretation.\n\n"]
-    parts.append("## Settings used (decisions for Sam; defaults unless changed)\n\n"
-                 f"- Withheld set: {cfg['withheld_set']} = {', '.join(cfg['withheld_sets'][cfg['withheld_set']])}\n"
-                 f"- C/D prompt layout: {cfg['layout']}\n- Agent framings: John (third person) and user (first person)\n"
-                 f"- Capability floor: {cfg['analysis']['capability_floor']}\n- Bootstrap: paired over cases, "
-                 f"{cfg['analysis']['bootstrap_resamples']} resamples (layer sweeps: 500), 95% percentile\n"
-                 f"- Models analysed here: {', '.join(display(m) for m in models)}\n- Second domain: none\n\n")
-    parts.append("## Retention (figure 4)\n\n" + md_table(retention, ["model", "condition", "cases_generated",
+             "no interpretation.  Headline rows: all complete cases for the pair, pooled fit, raw outcomes.  "
+             "`lambda` is the matched-control estimate (1 - T_C / T_M); a blank ratio means its denominator's "
+             "interval includes 0.\n\n"]
+    parts.append("## Settings\n\n"
+                 f"- Core pair: {cfg['withheld_set']} = {', '.join(cfg['withheld_sets'][cfg['withheld_set']])}\n"
+                 f"- False-belief field: {cfg['flip_field']}\n- Withheld fields rendered as: {cfg['missing_fields']}\n"
+                 f"- C/D/M prompt layout: {cfg['layout']}\n- Capability floor: {cfg['analysis']['capability_floor']}\n"
+                 f"- Bootstrap: paired over cases, {cfg['analysis']['bootstrap_resamples']} resamples "
+                 "(layer sweeps: 500), 95% percentile\n"
+                 f"- Models analysed here: {', '.join(display(m) for m in models)}\n\n")
+    parts.append("## Retention\n\n" + md_table(retention, ["model", "condition", "cases_generated",
                  "cases_complete", "retention", "parse_failures", "call_errors", "refusal_like_responses"]) + "\n")
+
+    parts.append("## RQ1: separation\n\nAssumptions that bear on these numbers: the matched control M is the "
+                 "right zero-leakage anchor (RQ1 assumption 10); leakage is linear in the gap (2); condition A is "
+                 "the same model as the new conditions (11).  kappa and tau also assume the two fit families share "
+                 "a scale (6).\n\n### RQ1a/b: leakage for pair S4, John (figures rq1_lambda_vs_capability, "
+                 "rq1_scatter)\n\n" + leak_section(behavioural, "RQ1a/b", core + [
+                     "lambda_proportionality_low", "lambda_proportionality_mid", "lambda_proportionality_high"]))
+    cap = agreement[agreement.analysis == "capability_spearman"] if not agreement.empty else agreement
+    parts.append("Capability trend (Spearman across models above the floor; descriptive):\n\n"
+                 + md_table(cap, ["method", "condition", "estimate", "n_cases"]) + "\n")
+    parts.append("### RQ1c: false belief (F) against a missing field (H) (figure rq1c_pairs)\n\nC-F and C-H "
+                 "differ in more than wrong versus missing (RQ1 assumption 12).\n\n"
+                 + leak_section(behavioural, "RQ1c", core + ["diff_lambda", "diff_tau", "diff_T_C",
+                                                             "lambda_borrowed_kappa"]))
+    parts.append("### RQ1d: user against John, in tracking units\n\nThe user framing has no matched control, "
+                 "so no lambda.\n\n" + leak_section(behavioural, "RQ1d", ["tau", "T_C", "diff_tau", "diff_T_C",
+                                                                         "normalised_lambda_original"]))
+
+    parts.append("## RQ2: coherence and the evidence ladder\n\nCoherence depends on the spread of beliefs (RQ2 "
+                 "assumption 1) and is not correctness (2).\n\n")
     if not coherence.empty:
         co = coherence[(coherence.statistic == "mean_c_index")]
-        parts.append("## Coherence (figure 1)\n\nMean c-index on the test split; reports -> decisions unless "
-                     "stated.  A_minus_D and D_minus_C are paired contrasts.\n\n" + md_table(
+        parts.append("### Coherence (figure rq2_coherence)\n\nMean c-index on the test split.  A_minus_D: cost "
+                     "of attribution; D_minus_C and M_minus_C: cost of perspective-taking.\n\n" + md_table(
                          co, ["model", "method", "framing", "condition", "direction", "estimate", "ci_lower",
                               "ci_upper", "n_test_cases"] + (["variant"] if "variant" in co else [])) + "\n")
-    if not leakage.empty:
-        keep = ["lambda_C_john", "lambda_D_john", "lambda_C_user", "lambda_D_user", "lambda_0",
-                "normalised_lambda_john", "normalised_lambda_user", "reliability", "c_C_john", "c_C_user",
-                "diff_user_minus_john_lambda_C", "diff_user_minus_john_c_C", "mean_shift_C_user_minus_john",
-                "manipulation_median_abs_A_minus_B", "closer_to_B_share_john", "closer_to_B_share_user",
-                "C_john_two_weight_wA", "C_john_two_weight_wB", "C_user_two_weight_wA", "C_user_two_weight_wB"]
-        L = leakage[leakage.statistic.isin(keep)]
-        L = L[selected_mask(L)]
-        cols = ["model", "method", "case_set", "fit", "statistic", "estimate", "ci_lower", "ci_upper", "n_cases"]
-        if "position" in L:
-            L = L.assign(probe=L.apply(lambda r: f"{r.probe_type} {r.position} L{int(r.layer)}"
-                                       if r.method == "probe" else "", axis=1))
-            cols.insert(4, "probe")
-        parts.append("## Leakage (figures 2, 3, 5, 6)\n\nPrimary case set first; `test_only` and "
-                     "`pilot_excluded` are secondary; `separate` is the per-condition-fit robustness check.\n\n"
-                     + md_table(L.sort_values(["model", "method", "case_set", "fit"]), cols) + "\n")
-    if not agreement.empty:
-        parts.append("## Method agreement\n\n" + md_table(agreement, [c for c in ["model", "analysis", "method",
-                     "condition", "estimate", "n_cases", "detail"] if c in agreement]) + "\n")
-    parts.append("## Phase 6: predicting other AI models\n\n" + md_table(phase6, list(phase6.columns)) + "\n"
-                 if not phase6.empty else "## Phase 6: predicting other AI models\n\n_(no E-condition data yet)_\n\n")
+    parts.append("### Ladder rungs S1 and H against S4\n\n"
+                 + leak_section(behavioural, "RQ2", ["tau", "T_C", "lambda_borrowed_kappa", "diff_tau", "diff_T_C",
+                                                     "manipulation_median_abs_gap"]))
+
+    parts.append("## RQ3: internal readout\n\nProbe lambda: outcomes are probe readings, the regressor is the "
+                 "behavioural latent gap.  A probe lambda near the behavioural lambda is evidence of reuse; a probe "
+                 "lambda near 1 does not separate a retained own belief from a probe that reads the chart (RQ3 "
+                 "assumption 1).\n\n### Probe lambda (figures rq3_lambda_by_method, rq3_probe_layers)\n\n"
+                 + leak_section(probe, "RQ1a/b", ["lambda", "T_C", "T_M"])
+                 + leak_section(probe, "RQ1c", ["lambda", "T_C", "T_M"]))
     probe_val = sorted((C.RESULTS / "probes").glob("*/probe_validation.csv")) if (C.RESULTS / "probes").exists() else []
     if probe_val:
         pv = pd.concat([pd.read_csv(p) for p in probe_val], ignore_index=True)
@@ -481,11 +510,14 @@ def write_results_md(models, leakage, coherence, agreement, retention, phase6) -
                             "profile_baseline_all_fields_test_auroc", "profile_baseline_partial_fields_test_auroc",
                             "test_corr_with_ell_A", "profile_baseline_all_fields_test_corr_with_ell_A", "test_r2_ell_A",
                             "P1_max_abs_diff_across_C_D", "fidelity_mean_logprob_per_token_A"] if c in pv]
-        parts.append("## Probe validation (Phase 4)\n\n" + md_table(pv, cols) + "\n")
-    parts.append("## Figures\n\n" + "".join(f"{i}. `figures/fig{i}_{n}.pdf`\n" for i, n in enumerate(
-        ["coherence", "lambda_vs_capability", "scatter", "retention", "lambda_by_method", "probe_layers"], 1)) + "\n")
-    parts.append("## Anomalies\n\n" + "".join(f"- {a}\n" for a in anomalies(models, leakage, coherence, retention))
-                 + "\n")
+        parts.append("### Probe validation (Phase 4)\n\n" + md_table(pv, cols) + "\n")
+
+    if not agreement.empty:
+        ag = agreement[agreement.analysis != "capability_spearman"]
+        parts.append("## Method agreement\n\n" + md_table(ag, [c for c in ["model", "analysis", "method",
+                     "condition", "estimate", "n_cases", "detail"] if c in ag]) + "\n")
+    parts.append("## Anomalies and stop-point checks\n\n"
+                 + "".join(f"- {a}\n" for a in anomalies(models, leakage, coherence, retention)) + "\n")
     (C.ROOT / "RESULTS.md").write_text("".join(parts))
     print("wrote RESULTS.md")
 

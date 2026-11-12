@@ -37,6 +37,13 @@ def model_config(model: str) -> dict[str, Any]:
     return load()["models"][model]
 
 
+def scheduled_conditions(model: str) -> list[str]:
+    """Conditions this model runs: the default schedule, plus the extras for the models that get them."""
+    schedule = load()["schedule"]
+    extra = schedule["extra"] if split_source(model) in schedule["extra_models"] else []
+    return list(schedule["default"]) + list(extra)
+
+
 def split_source(model: str) -> str:
     """Model whose condition A split assignment this model reuses."""
     return model_config(model).get("split_from", model)

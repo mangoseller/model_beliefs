@@ -12,10 +12,14 @@ from latent_beliefs.ckd.parse import parse_response
 from latent_beliefs.ckd.prompts import FEATURE_KEYS, patient_profile
 from second_order import config as C
 from second_order import prompts_second_order as P
-from second_order.conditions import field_label, render_profile, withheld_fields
+from second_order.conditions import (
+    CONDITIONS, NOT_RECORDED, copy_profile, field_label, flipped_value, pair_conditions,
+    profile_line, render_profile, withheld_fields,
+)
 
 CASES = list(P.cases().index[:25])
 SETS = list(C.load()["withheld_sets"])
+FLIP = C.load()["flip_field"]
 
 
 def words(text: str) -> list[str]:
@@ -39,13 +43,13 @@ class FirstOrderIdentity(unittest.TestCase):
 
 
 class ConditionB(unittest.TestCase):
-    def test_no_withheld_content(self):
+    def test_removed_rendering_has_no_withheld_content(self):
         for name in SETS:
             fields = withheld_fields(name)
             for case_id in CASES:
                 case = P.cases().loc[case_id]
                 for output in P.OUTPUTS:
-                    prompt = P.build_prompt(case_id, "B", output, withheld=fields)
+                    prompt = P.build_prompt(case_id, "B", output, withheld=fields, missing="removed")
                     for f in fields:
                         self.assertNotIn(field_label(f).split(" (")[0], prompt)
                         self.assertNotIn(f"({FEATURE_KEYS[f]})", prompt)
@@ -54,15 +58,72 @@ class ConditionB(unittest.TestCase):
                     self.assertEqual(len(block), len(kept))  # one line per kept field
                     self.assertIn(render_profile(case, fields), prompt)
 
-    def test_b_is_a_with_partial_profile(self):
-        fields = withheld_fields()
+    def test_not_recorded_rendering_keeps_lines_and_hides_values(self):
+        for name in SETS:
+            fields = withheld_fields(name)
+            for case_id in CASES:
+                case = P.cases().loc[case_id]
+                prompt = P.build_prompt(case_id, "B", "probability", withheld=fields, missing="not_recorded")
+                block = prompt.split(P.PROFILE_HEADER)[1].rstrip("\n").split("\n")
+                self.assertEqual(len(block), len(PROFILE_FEATURES))
+                for f in fields:
+                    self.assertIn(f"{field_label(f)} is {NOT_RECORDED}.", block)
+                    self.assertNotIn(profile_line(case, f), block)  # the true line is gone
+
+    def test_b_is_a_with_the_agents_copy(self):
+        for cond in ("B", "B_S1", "B_H", "B_F"):
+            for case_id in CASES:
+                case = P.cases().loc[case_id]
+                for output in P.OUTPUTS:
+                    self.assertEqual(P.build_prompt(case_id, cond, output),
+                                     P.first_order_prompt(output, copy_profile(case, CONDITIONS[cond].pair)))
+
+
+class FalseBelief(unittest.TestCase):
+    def test_b_f_shows_the_flipped_line_and_not_the_true_one(self):
         for case_id in CASES:
             case = P.cases().loc[case_id]
+            true, flipped = profile_line(case, FLIP), profile_line(case, FLIP, flipped_value(case, FLIP))
+            self.assertNotEqual(true, flipped)
+            block = P.build_prompt(case_id, "B_F", "probability").split(P.PROFILE_HEADER)[1].split("\n")
+            self.assertIn(flipped, block)
+            self.assertNotIn(true, block)
+            self.assertEqual(len([l for l in block if l]), len(PROFILE_FEATURES))
+
+    def test_c_f_has_the_true_profile_and_one_flipped_line_in_the_agent_paragraph(self):
+        for case_id in CASES:
+            case = P.cases().loc[case_id]
+            full = render_profile(case)
+            flipped = profile_line(case, FLIP, flipped_value(case, FLIP))
             for output in P.OUTPUTS:
-                self.assertEqual(
-                    P.build_prompt(case_id, "B", output),
-                    P.first_order_prompt(output, render_profile(case, fields)),
-                )
+                prompt = P.build_prompt(case_id, "C_F", output)
+                self.assertIn(P.PROFILE_HEADER + full + "\n", prompt)
+                self.assertEqual(prompt.count(flipped), 1)
+                self.assertIn("copy said:\n" + flipped + "\nHe trusts his copy", prompt)
+
+
+class MatchedControl(unittest.TestCase):
+    def test_m_is_d_with_the_agents_copy_as_the_profile(self):
+        """M differs from D only in the profile block, which is byte-identical to B's."""
+        for layout in ("plan", "repo"):
+            for pair in ("S4", "H", "F"):
+                k = pair_conditions("john", pair)
+                for case_id in CASES:
+                    case = P.cases().loc[case_id]
+                    full, copy = render_profile(case), copy_profile(case, pair)
+                    for output in P.OUTPUTS:
+                        m = P.build_prompt(case_id, k["M"], output, layout=layout)
+                        d = P.build_prompt(case_id, k["D"], output, layout=layout)
+                        self.assertEqual(m, d.replace(P.PROFILE_HEADER + full, P.PROFILE_HEADER + copy))
+                        self.assertIn(P.PROFILE_HEADER + copy + "\n",
+                                      P.build_prompt(case_id, k["B"], output))
+
+    def test_m_contains_nothing_private(self):
+        for case_id in CASES:
+            case = P.cases().loc[case_id]
+            for f in withheld_fields():
+                self.assertNotIn(profile_line(case, f), P.build_prompt(case_id, "M_S4", "probability"))
+            self.assertNotIn(profile_line(case, FLIP), P.build_prompt(case_id, "M_F", "probability"))
 
 
 class ConditionsCD(unittest.TestCase):
@@ -78,11 +139,12 @@ class ConditionsCD(unittest.TestCase):
                     full = render_profile(P.cases().loc[case_id])
                     for cond in ("C_john", "C_user"):
                         for output in P.OUTPUTS:
-                            prompt = P.build_prompt(case_id, cond, output, layout=layout,
-                                                    withheld=fields)
-                            self.assertIn(P.PROFILE_HEADER + full + "\n", prompt)
-                            self.assertEqual(self.listed_fields(prompt),
-                                             [field_label(f) for f in fields])
+                            for missing in ("removed", "not_recorded"):
+                                prompt = P.build_prompt(case_id, cond, output, layout=layout,
+                                                        withheld=fields, missing=missing)
+                                self.assertIn(P.PROFILE_HEADER + full + "\n", prompt)
+                                self.assertEqual(self.listed_fields(prompt),
+                                                 [field_label(f) for f in fields])
 
     def test_c_and_d_differ_only_in_copy_description(self):
         for layout in ("plan", "repo"):
@@ -102,7 +164,7 @@ class ConditionsCD(unittest.TestCase):
                         self.assertTrue(prefix.endswith(intro + " " + P.PERSON[framing]["Subj"]
                                                         + " reviewed "), prefix[-80:])
                         self.assertTrue(c[i:len(c) - j].startswith("an earlier copy"))
-                        self.assertTrue(d[i:len(d) - j].startswith("the same profile"))
+                        self.assertTrue(d[i:len(d) - j].startswith("exactly the profile"))
                         # what follows the differing span is identical and contains the question
                         self.assertIn(P.agent_question(output, framing,
                                                        render_profile(P.cases().loc[case_id])),
@@ -128,17 +190,18 @@ class ConditionsCD(unittest.TestCase):
             full = render_profile(P.cases().loc[case_id])
             for output in P.OUTPUTS:
                 _, fmt = P.split_first_order(output, full)
-                for cond in ("C_john", "D_john", "C_user", "D_user", "E_self"):
+                for cond in [c for c in CONDITIONS if CONDITIONS[c].about == "agent"]:
                     self.assertIn(fmt, P.build_prompt(case_id, cond, output))
 
     def test_no_hints(self):
         banned = ("ignore", "differ", "may not", "might not", "unknown", "lack", "missing")
         for case_id in CASES[:5]:
             full = render_profile(P.cases().loc[case_id])
-            for cond in ("C_john", "D_john", "C_user", "D_user"):
+            for cond in ("C_john", "D_john", "C_user", "D_user", "C_S1", "C_H", "M_S4", "M_H"):
                 for output in P.OUTPUTS:
                     # Profile values (e.g. "Missing") are data, not instructions.
-                    prompt = P.build_prompt(case_id, cond, output).replace(full, "").lower()
+                    shown = P.model_profile(P.cases().loc[case_id], cond)
+                    prompt = P.build_prompt(case_id, cond, output).replace(shown, "").lower()
                     for word in banned:
                         self.assertNotIn(word, prompt, (cond, output))
 

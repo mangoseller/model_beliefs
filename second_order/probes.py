@@ -1,21 +1,23 @@
-"""Truth, report and second-order probes with controls (plan, Phase 4).
+"""Report, truth and second-order probes with controls (plan, Phase 4; RQ3).
 
-* Truth probe (primary): L2 logistic regression on condition A and B
-  activations from the train split, target the case's true CKD label.  Output
-  logit = probe belief.
-* Report probe (secondary): ridge regression on the same rows, target the
-  latent ell (posterior mean, all 16 outputs) of that row's condition.
+* Report probe (primary for RQ3): ridge regression on own-belief activations
+  (condition A and every B) from the train split, target the latent ell
+  (posterior mean, all 16 outputs) of that row's condition.  It is the
+  direction that tracks the model's own reports.
+* Truth probe (secondary): L2 logistic regression on the same rows, target
+  the case's true CKD label.  Output logit = probe belief.
 * One probe per layer and position; penalty chosen per layer on validation;
   the layer per position is chosen on validation and frozen.  Probes are
-  never trained on C or D.  Each training row is one replay (4 per case).
+  never trained on C, M or D.  Each training row is one replay (4 per case).
 * Readouts are averaged per case and condition over the four replays
-  (``all``) and over the halves numeric + Likert (``h1``) and bin + plain
-  decision (``h2``).
+  (``all``); the halves ``h1``/``h2`` are stored but no estimator uses them.
+  Probe lambda (``leakage.py``) takes probe readings as outcomes and the
+  behavioural latent gap as the regressor.
 * Controls: shuffled-label probe at the selected layer and penalty; profile
   fields -> label logistic regression with all fields and with the partial
   set; at P1, readouts in C/D conditions sharing a token prefix must agree.
-* Second-order probe (secondary): ridge on C/D activations at P3 with ell_C,
-  ell_D targets, where C/D responses exist; cosine with the report probe and
+* Second-order probe: ridge on C/M/D activations at P3 with their latent
+  ell as targets, where responses exist; cosine with the report probe and
   cross-performance.
 
     python -m second_order.probes --model gemma3_4b
@@ -42,6 +44,10 @@ from second_order.fit_pooled import posteriors
 from second_order.prompts_second_order import cases
 from second_order.responses import split_table
 
+OWN = [c for c, v in CONDITIONS.items() if v.about == "self"]            # A and every B: probe training rows
+ATTRIBUTED = [c for c, v in CONDITIONS.items() if v.about == "agent"]    # every C, M and D
+# C and D show the full profile first, so their P1 readouts must agree.
+ATTRIBUTED_FULL_PROFILE = [c for c, v in CONDITIONS.items() if v.about == "agent" and v.model_profile == "full"]
 C_GRID = (0.001, 0.01, 0.1)
 ALPHA_GRID = (10.0, 100.0, 1000.0, 10000.0)
 CONTINUOUS = ("ridageyr", "bmxbmi", "sodium_mg_mean")
@@ -102,7 +108,7 @@ def run(model: str) -> None:
     index["framing"] = index.condition.map(lambda c: CONDITIONS[c].framing)
     targets = latent_targets(model).set_index(["case_id", "condition"]).ell_all
     index["ell"] = [targets.get((c, k), np.nan) for c, k in zip(index.case_id, index.condition)]
-    AB = index.condition.isin(["A", "B"])
+    AB = index.condition.isin(OWN)
     out_dir = C.RESULTS / "probes" / model
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -197,7 +203,7 @@ def readout_rows(model, index, s, ptype, position, layer) -> pd.DataFrame:
 def validate(model, index, root, position, layer, ptype, pen, s, mu, sd) -> dict:
     X = np.load(root / f"{position}_L{layer:02d}.npy", mmap_mode="r")
     finite = np.isfinite(X[:, 0])
-    AB = index.condition.isin(["A", "B"]).to_numpy()
+    AB = index.condition.isin(OWN).to_numpy()
     tr = AB & (index.split == "train").to_numpy() & finite
     te_A = (index.condition == "A").to_numpy() & (index.split == "test").to_numpy() & finite
     Z = (np.asarray(X) - mu) / sd
@@ -228,7 +234,7 @@ def validate(model, index, root, position, layer, ptype, pen, s, mu, sd) -> dict
     if position == "P1":
         frame = index.assign(score=s)
         piv = frame.pivot_table(index=["case_id", "replay"], columns="condition", values="score")
-        cd = [c for c in ("C_john", "D_john", "C_user", "D_user") if c in piv]
+        cd = [c for c in ATTRIBUTED_FULL_PROFILE if c in piv]
         if len(cd) > 1:
             row["P1_max_abs_diff_across_C_D"] = float(np.nanmax(np.abs(piv[cd].sub(piv[cd[0]], axis=0)).to_numpy()))
         if "A" in piv and cd:
@@ -264,7 +270,7 @@ def fidelity(index: pd.DataFrame) -> float:
 
 
 def second_order_probe(model, index, root, selected, weights) -> pd.DataFrame:
-    cd = index.condition.isin(["C_john", "D_john", "C_user", "D_user"]) & index.ell.notna()
+    cd = index.condition.isin(ATTRIBUTED) & index.ell.notna()
     sel = selected[(selected.position == "P3") & (selected.probe_type == "report")]
     if sel.empty or ("P3", "report") not in weights:
         return pd.DataFrame()
@@ -282,7 +288,7 @@ def second_order_probe(model, index, root, selected, weights) -> pd.DataFrame:
     w_so = so.coef_ / sd
     w_rep = weights[("P3", "report")]
     cos = float(w_so @ w_rep / (np.linalg.norm(w_so) * np.linalg.norm(w_rep)))
-    ab_te = index.condition.isin(["A", "B"]).to_numpy() & (index.split == "test").to_numpy() & finite & index.ell.notna().to_numpy()
+    ab_te = index.condition.isin(OWN).to_numpy() & (index.split == "test").to_numpy() & finite & index.ell.notna().to_numpy()
     raw = np.asarray(X)
     rep_pred = raw @ w_rep
     rep_pred = rep_pred - rep_pred[tr].mean() + index.ell[tr].mean()

@@ -11,7 +11,7 @@ Writes:
   data/beliefs/{model}/latent.parquet, direct.parquet
   results/fits/{model}_fit_summary.csv, {model}_anchor_check.csv
   results/retention/{model}.csv
-  docs/transcripts_C/{model}/{C_john,C_user}.md   (20 random transcripts each)
+  docs/transcripts_C/{model}/{condition}.md   (20 random transcripts per C condition)
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ import pandas as pd
 from second_order import beliefs as BL
 from second_order import config as C
 from second_order.fit_pooled import anchor_check, fit_all
+from second_order.conditions import CONDITIONS
 from second_order.prompts_second_order import build_prompt
 from second_order.responses import collect, matrix, retention
 from second_order.run_generation import select_cases, smoke_cases
@@ -32,7 +33,7 @@ from second_order.run_generation import select_cases, smoke_cases
 def write_transcripts(model: str, long: pd.DataFrame, seed: int, n: int) -> None:
     folder = C.DOCS / "transcripts_C" / model
     folder.mkdir(parents=True, exist_ok=True)
-    for condition in ("C_john", "C_user"):
+    for condition in [c for c in CONDITIONS if CONDITIONS[c].role == "C"]:
         part = long[(long.condition == condition) & long.text.notna()]
         if part.empty:
             continue
@@ -65,6 +66,7 @@ def run(model: str, case_ids: list[str], conditions: list[str]) -> None:
         lat, summ, par = fit_all(model, wide, kind=kind, base_seed=seed)
         latents.append(lat), summaries.append(summ), params.append(par)
     latents = pd.concat(latents, ignore_index=True)
+    # Informational only: each analysis uses the cases complete for its own pair (leakage.py).
     complete_all = wide[wide.complete].groupby("case_id").condition.nunique() == len(conditions)
     latents["complete_all_conditions"] = latents.case_id.map(complete_all).fillna(False)
     latents.to_parquet(C.LATENTS / f"{model}.parquet", index=False)
@@ -78,7 +80,7 @@ def run(model: str, case_ids: list[str], conditions: list[str]) -> None:
     BL.write(model, "latent", BL.latent_rows(latents))
     BL.write(model, "direct", BL.direct_rows(wide))
     write_transcripts(model, long, seed, int(cfg["analysis"]["transcripts_per_condition"]))
-    print(f"{model}: analysis set (complete in all {len(conditions)} conditions): "
+    print(f"{model}: cases complete in all {len(conditions)} conditions: "
           f"{int(complete_all.sum())} cases", flush=True)
 
 
@@ -90,7 +92,7 @@ def main() -> None:
     args = parser.parse_args()
     cfg = C.load()
     case_ids = smoke_cases() if args.smoke else select_cases(cfg["main_cases"])
-    run(args.model, case_ids, args.conditions or list(cfg["conditions"]))
+    run(args.model, case_ids, args.conditions or C.scheduled_conditions(args.model))
 
 
 if __name__ == "__main__":

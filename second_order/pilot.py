@@ -1,13 +1,16 @@
-"""Phase 1 pilot: which withheld-field set moves the model's own belief.
+"""Phase 1 pilot: does each manipulation move the model's own belief?
 
-For the pilot cases (flagged, written to ``results/pilot/pilot_cases.txt``)
-and each candidate set S1..S4, collect the numeric probability three times
+The leakage estimators only have power if the agent's copy changes the
+model's own answer.  For the pilot cases (flagged, written to
+``results/pilot/pilot_cases.txt``), each candidate withheld set (H, S1..S4)
+and the false-belief flip (F), collect the numeric probability three times
 under the partial profile (condition ``B_<set>``), and top condition A up to
 three numeric samples (replicate 0 is the released response for hosted
 models; local models generate all three).
 
 Per case: delta = mean logit p_A - mean logit p_B (p clipped to [0.01, 0.99],
-over the parsed samples).  Reported per set and model: median |delta|, share
+over the parsed samples).  Reported per set and model: median |delta|, SD of
+delta (the slope estimators draw their power from the spread), share
 with |delta| > 0.5, counts of positive and negative delta, parse rate, and the
 number of B responses that remark on missing fields.
 
@@ -57,8 +60,11 @@ def items(model: str) -> list[Item]:
         full = first_order_prompt("probability", render_profile(case))
         for r in range(samples):
             result.append(Item(model, case_id, "A", "probability", r, full))
-        for name in cfg["withheld_sets"]:
-            prompt = first_order_prompt("probability", render_profile(case, withheld_fields(name)))
+        copies = {name: render_profile(case, withheld_fields(name), missing=cfg["missing_fields"])
+                  for name in cfg["withheld_sets"]}
+        copies["F"] = render_profile(case, flip=cfg["flip_field"])  # false-belief pair
+        for name, profile in copies.items():
+            prompt = first_order_prompt("probability", profile)
             for r in range(samples):
                 result.append(Item(model, case_id, f"B_{name}", "probability", r, prompt))
     return result
@@ -87,13 +93,17 @@ def table(model: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         return frame, pd.DataFrame()
     a = frame[(frame.condition == "A") & frame.parsed].groupby("case_id")["p"].apply(
         lambda s: logit(s.to_numpy(float)).mean())
-    for name in C.load()["withheld_sets"]:
+    for name in list(C.load()["withheld_sets"]) + ["F"]:
         b_all = frame[frame.condition == f"B_{name}"]
+        if b_all.empty:
+            continue
         b = b_all[b_all.parsed].groupby("case_id")["p"].apply(lambda s: logit(s.to_numpy(float)).mean())
         delta = (a - b).dropna()
         summary.append({
-            "model": model, "set": name, "fields": "|".join(withheld_fields(name)),
+            "model": model, "set": name,
+            "fields": f"flip:{C.load()['flip_field']}" if name == "F" else "|".join(withheld_fields(name)),
             "cases": int(len(delta)), "median_abs_delta": float(np.median(np.abs(delta))) if len(delta) else np.nan,
+            "sd_delta": float(delta.std()) if len(delta) > 1 else np.nan,
             "share_abs_delta_gt_0.5": float(np.mean(np.abs(delta) > 0.5)) if len(delta) else np.nan,
             "n_positive": int((delta > 0).sum()), "n_negative": int((delta < 0).sum()),
             "n_zero": int((delta == 0).sum()), "mean_delta": float(delta.mean()) if len(delta) else np.nan,

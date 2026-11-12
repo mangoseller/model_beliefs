@@ -20,7 +20,7 @@ are resumable; ``pack`` consolidates them into one ``[items, hidden]`` array
 per position and layer for probe fitting.
 
     python -m second_order.activations extract --model gemma3_4b --act-model gemma3_4b_mlx \
-        --conditions A B C_john D_john C_user D_user [--cases all|smoke]
+        --conditions A B C_john D_john M_S4 B_F C_F M_F [--cases all|smoke]
     python -m second_order.activations pack --model gemma3_4b
 """
 

@@ -11,8 +11,9 @@
   train-split rows and evaluated on its test rows (reports -> decisions only).
 
 Intervals: paired bootstrap over test cases (the same resampled cases for
-every condition), 95% percentile.  Contrasts A - D (attribution cost) and
-D - C (perspective-taking cost) per framing come from the same draws.
+every condition), 95% percentile.  RQ2 contrasts from the same draws, per
+framing: A - D (cost of attribution), D - C (cost of perspective-taking,
+pair S4) and, for John, M - C (the same cost against the matched control).
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ from latent_beliefs.evaluation.reciprocal import (
     target_metrics,
 )
 from latent_beliefs.latent.domains import CKD_SPECS, likelihood_values
+from second_order.conditions import CONDITIONS, pair_conditions
 from second_order.fit_pooled import SUBSETS, restore
 
 DECISIONS = SUBSETS["dec"]
@@ -136,14 +138,15 @@ def coherence_table(preds: dict[tuple[str, str], pd.DataFrame], *, method: str, 
                      "ci_lower": lo, "ci_upper": hi, "n_test_cases": n_cases, "resamples": resamples})
 
     for (condition, direction) in keys:
-        framing = condition.split("_")[1] if "_" in condition else "self"
+        framing = CONDITIONS[condition].framing
         for stat in ("mean_c_index", "pooled_r2"):
             add(condition, direction, stat, point[(condition, direction)][stat],
                 [d[stat] for d in draws[(condition, direction)]], framing)
     for framing in ("john", "user"):
         for direction in sorted({d for _, d in keys}):
-            for name, (first, second) in {"A_minus_D": ("A", f"D_{framing}"),
-                                          "D_minus_C": (f"D_{framing}", f"C_{framing}")}.items():
+            k = pair_conditions(framing, "S4")
+            for name, (first, second) in {"A_minus_D": ("A", k["D"]), "D_minus_C": (k["D"], k["C"]),
+                                          "M_minus_C": (k["M"], k["C"])}.items():
                 if (first, direction) not in preds or (second, direction) not in preds:
                     continue
                 for stat in ("mean_c_index", "pooled_r2"):
