@@ -82,9 +82,9 @@ models:
   gemma3_12b_mlx: {backend: mlx, path: build/activation_pilot_12b/model, cached_a: false, split_from: gemma3_12b, batch_size: 8}
   # Curse-of-knowledge models: local open weights on a CUDA machine (vLLM), thinking off.
   qwen3_8b:  {backend: vllm, path: Qwen/Qwen3-8B, cached_a: false, split: own, datasets: [ckd, bespoke],
-              conditions: *curse, dtype: bfloat16, enable_thinking: false, max_model_len: 8192, batch_size: 2048}
+              conditions: *curse, dtype: bfloat16, enable_thinking: false, max_model_len: 16384, batch_size: 2048}
   qwen3_14b: {backend: vllm, path: Qwen/Qwen3-14B, cached_a: false, split: own, datasets: [ckd, bespoke],
-              conditions: *curse, dtype: bfloat16, enable_thinking: false, max_model_len: 8192, batch_size: 2048}
+              conditions: *curse, dtype: bfloat16, enable_thinking: false, max_model_len: 16384, batch_size: 2048}
   # Transformers fallback and a CPU-sized smoke model for the chat template and parsing path.
   qwen3_8b_hf:   {backend: hf, path: Qwen/Qwen3-8B, cached_a: false, split: own, datasets: [ckd, bespoke],
                   conditions: *curse, dtype: bfloat16, enable_thinking: false, batch_size: 16}

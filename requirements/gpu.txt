@@ -1,0 +1,7 @@
+# Local generation on a CUDA GPU: vLLM (Qwen3 needs vllm >= 0.8.4, transformers >= 4.51).
+# vllm 0.8.5 pins torch 2.6.0, the version environment.yml uses.
+vllm==0.8.5
+torch==2.6.0
+transformers==4.51.3
+accelerate==1.6.0
+hf_transfer==0.1.9

@@ -186,6 +186,8 @@ command-line interface (`python -m second_order.<module>`); settings are in
 | `curse.py` | Curse-of-knowledge tables (λ, ρ, φ, τ, checks, placebo, Bayes, comprehension) and `outputs/curse/RESULTS.md` |
 | `figures.py` | `curse_estimates`, `curse_scatter` and `retention` from `outputs/curse/`; shared plot style |
 | `report.py` | Model display names and markdown tables |
+| `runner.py` | One command for everything (`run_experiment.sh`): data, model snapshots, checks, the paper, generation, fits, analysis, report, tarball |
+| `runner_record.py` | A run's `record/` (constants, estimator, usage, example prompts) and `RUN_REPORT.md` |
 | `baseline_check.py` | Confirms the first-order baseline still reproduces |
 
 `second_order/deprecated/` holds the earlier RQ1–RQ3 design, still runnable

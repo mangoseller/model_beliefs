@@ -20,6 +20,15 @@ and ``direct`` for CKD, ``direct`` for bespoke), on the main analysis set:
   agent's evidence; a perfect perspective-taker has lambda 0 and phi 1).
 * ``comprehension.csv``: follow-up accuracy per model, dataset and condition.
 * ``scatter.csv``: per case, x = l_A - l_B, l_C - l_M and l_D - l_M (figures).
+* ``thresholds.csv``: CKD decision thresholds implied by each pooled fit (where
+  P(decide) = 1/2, i.e. z = sigmoid(-a/b)) against the instructed ones, for the
+  model's own family and John's (the paper's Figure 5, per fit family).
+* ``decision_curves.csv``: the plain screening decision smoothed against the
+  all-output posterior mean z per condition (Nadaraya-Watson, Gaussian kernel,
+  bandwidth 0.10, all complete cases, pointwise 95% case-bootstrap bands; the
+  paper's Figure 3, per condition).
+* ``bespoke_points.csv``: per item and condition, the mean stated logit, its
+  standard error and the Bayes logit of the believer's evidence.
 * ``RESULTS.md``: the tables, the Camerer et al. reference w, and anomalies.
 
 Figures: ``python -m second_order.figures`` (``curse_*``).
@@ -194,6 +203,83 @@ def bayes_table(model: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+FAMILY = {"self": "own belief", "john": "John's belief", "user": "the user's belief"}
+DECISION_CURVE_CONDITIONS = ("A", "D_john", "M_S4", "C_john", "B", "D_F", "M_F", "C_F", "B_F")
+
+
+def decision_kind(output: str) -> str:
+    if "no_threshold" in output:
+        return "plain"
+    if "bet_payoff" in output:
+        return "bet"
+    return "cost" if "cost_fn" in output else "threshold"
+
+
+def threshold_table(model: str) -> pd.DataFrame:
+    """Implied vs instructed decision thresholds per pooled fit family (CKD)."""
+    path = C.LATENTS / f"{model}_parameters.parquet"
+    if not path.exists():
+        return pd.DataFrame()
+    p = pd.read_parquet(path)
+    p = p[(p.fit == "pooled") & p.parameter.isin(["nominal_threshold", "implied_threshold"])]
+    w = p.pivot_table(index=["fit_group", "output_name"], columns="parameter", values="value",
+                      aggfunc="first").reset_index()
+    w["family"] = w.fit_group.map(lambda g: CONDITIONS[g.split("+")[0]].framing)
+    w["kind"] = w.output_name.map(decision_kind)
+    w.insert(0, "model", model)
+    return w
+
+
+def decision_curves(model: str, *, bandwidth: float = 0.10, points: int = 40, resamples: int = 200,
+                    seed: int = 0) -> pd.DataFrame:
+    """Smoothed P(plain screening decision) against posterior mean z, per condition (CKD)."""
+    from second_order.responses import DATASET_COLUMN
+
+    lat_path, mat_path = C.LATENTS / f"{model}.parquet", C.LATENTS / f"{model}_matrix.parquet"
+    if not lat_path.exists() or not mat_path.exists():
+        return pd.DataFrame()
+    lat = pd.read_parquet(lat_path)
+    lat = lat[(lat.fit == "pooled") & (lat.replicate == 0)][["case_id", "condition", "z_mean_all"]]
+    mat = pd.read_parquet(mat_path)
+    column = DATASET_COLUMN["decision_no_threshold"]
+    mat = mat[mat.complete & (mat.replicate == 0)][["case_id", "condition", column]]
+    both = lat.merge(mat, on=["case_id", "condition"])
+    both = both[both.condition.isin(DECISION_CURVE_CONDITIONS)]
+    if both.empty:
+        return pd.DataFrame()
+    grid = np.linspace(*np.quantile(both.z_mean_all, [0.05, 0.95]), points)
+    rng = np.random.default_rng(seed)
+
+    def smooth(z: np.ndarray, y: np.ndarray) -> np.ndarray:
+        k = np.exp(-0.5 * ((grid[:, None] - z[None, :]) / bandwidth) ** 2)
+        return (k @ y) / k.sum(axis=1)
+
+    rows = []
+    for condition, g in both.groupby("condition"):
+        z, y = g.z_mean_all.to_numpy(float), g[column].to_numpy(float)
+        draws = np.array([smooth(z[i], y[i]) for i in (rng.integers(0, len(z), len(z)) for _ in range(resamples))])
+        lo, hi = np.nanpercentile(draws, [2.5, 97.5], axis=0)
+        rows.append(pd.DataFrame({"model": model, "condition": condition, "z": grid, "p_decide": smooth(z, y),
+                                  "ci_lower": lo, "ci_upper": hi, "n_cases": len(z)}))
+    return pd.concat(rows, ignore_index=True)
+
+
+def bespoke_points(model: str) -> pd.DataFrame:
+    """Per bespoke item and condition: mean stated logit, its standard error and the Bayes logit."""
+    if "direct" not in BL.methods_for(model, "bespoke"):
+        return pd.DataFrame()
+    b = beliefs_for(model, "bespoke", "direct")
+    b = b[b.replicate == 0].copy()
+    items = {i.case_id: i for i in load_items()}
+    b["bayes_logit"] = [logit(bayes_answer(c, k)) for c, k in zip(b.case_id, b.condition)]
+    b["family"] = b.case_id.map(lambda c: items[c].family)
+    b["placebo"] = b.case_id.map(lambda c: items[c].placebo)
+    b["role"] = b.condition.map(lambda c: CONDITIONS[c].role)
+    b["setting"] = b.condition.map(lambda c: SETTING_OF.get(CONDITIONS[c].pair, "both"))
+    return b[["model", "case_id", "family", "placebo", "condition", "role", "setting", "value", "sd", "n_samples",
+              "bayes_logit"]]
+
+
 # ---------------------------------------------------------------- report
 def blank(r) -> str:
     return r.blank_reason if isinstance(r.blank_reason, str) else ""
@@ -317,11 +403,13 @@ def main() -> None:
     seed = int(C.load()["seed"])
     models = args.models or models_default()
     OUT.mkdir(parents=True, exist_ok=True)
-    est, scat, plac, bay, comp, ret = [], [], [], [], [], []
+    est, scat, plac, bay, comp, ret, thr, curves, points = [], [], [], [], [], [], [], [], []
     for model in models:
         print(f"curse analysis: {model}", flush=True)
         e, s = estimates(model, args.resamples, seed)
         est.append(e), scat.append(s), plac.append(placebo_table(model)), bay.append(bayes_table(model))
+        thr.append(threshold_table(model)), points.append(bespoke_points(model))
+        curves.append(decision_curves(model, resamples=min(args.resamples, 200), seed=seed))
         for dataset in C.datasets_for(model):
             rows = comprehension_rows(model, dataset)
             if not rows.empty:
@@ -331,9 +419,11 @@ def main() -> None:
             ret.append(pd.read_csv(path))
     cat = lambda fs: pd.concat([f for f in fs if not f.empty], ignore_index=True) if any(  # noqa: E731
         not f.empty for f in fs) else pd.DataFrame()
-    est, scat, plac, bay, comp, ret = map(cat, (est, scat, plac, bay, comp, ret))
+    est, scat, plac, bay, comp, ret, thr, curves, points = map(
+        cat, (est, scat, plac, bay, comp, ret, thr, curves, points))
     for name, frame in (("estimates", est), ("scatter", scat), ("placebo", plac), ("bayes", bay),
-                        ("comprehension", comp), ("retention", ret)):
+                        ("comprehension", comp), ("retention", ret), ("thresholds", thr),
+                        ("decision_curves", curves), ("bespoke_points", points)):
         frame.to_csv(OUT / f"{name}.csv", index=False)
     write_results_md(models, est, plac, bay, comp, ret)
     print(f"wrote {OUT / 'RESULTS.md'}")

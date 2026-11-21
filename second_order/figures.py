@@ -1,8 +1,31 @@
 """Figures of the curse-of-knowledge experiment, regenerated from ``outputs/curse/`` only (no model calls).
 
-``curse_estimates`` (lambda, phi and tau per model, dataset, method and setting, with
-Camerer et al.'s w), ``curse_scatter`` (the two regressions behind lambda) and
-``retention``.  The style helpers here are shared with the deprecated RQ figures
+Headline and diagnostics:
+
+* ``curse_schematic``: what lambda, phi and tau measure, on two lines of log-odds
+  gaps (illustrative values);
+* ``curse_decomposition``: the same diagram with each run's estimates, one row per
+  model, dataset, method and setting;
+* ``curse_estimates``: lambda, phi and tau per model, dataset, method and setting,
+  with Camerer et al.'s w;
+* ``curse_scatter``: the two regressions behind lambda;
+* ``curse_linearity``: binned means of l_C - l_M and l_D - l_M against x with the
+  fitted lines (the partial-linearity assumption);
+* ``curse_case_leakage``: the distribution of per-case leakage (l_C - l_M) / (l_D - l_M);
+* ``curse_comprehension``: lambda on all answers and on comprehension-passing answers.
+
+After the paper's figures:
+
+* ``curse_thresholds``: implied against instructed decision thresholds for the
+  model's own fit family and John's (Figure 5);
+* ``curse_decision_curves``: the screening decision against the latent belief,
+  per condition (Figure 3).
+
+For the bespoke dataset:
+
+* ``curse_bayes``: stated logits against the Bayes logit of the believer's evidence.
+
+Plus ``retention``.  The style helpers here are shared with the deprecated RQ figures
 (``second_order.deprecated.rq_figures``).
 
     python -m second_order.figures
@@ -141,11 +164,312 @@ def curse_scatter(scatter, est):
     save(fig, "curse_scatter")
 
 
+FAMILY_COLOR = {"self": "#52514e", "john": "#2a78d6", "user": "#eb6834"}
+KIND_MARKER = {"threshold": "o", "bet": "s", "cost": "^", "plain": "D"}
+ROLE_COLOR = {"A": "#52514e", "B": "#8a8984", "D": "#7fb0eb", "M": "#1baf7a", "C": "#eb6834"}
+SETTING_CONDITIONS = {"partial": ("A", "B", "D_john", "M_S4", "C_john"), "false": ("A", "B_F", "D_F", "M_F", "C_F")}
+
+
+def groups_of(frame, keys=("model", "dataset", "method")):
+    return list(frame.groupby(list(keys), sort=False).size().index)
+
+
+def curse_thresholds(thr):
+    """Implied vs instructed decision thresholds, own fit family against John's (paper Figure 5)."""
+    thr = thr[thr.nominal_threshold.notna()]
+    if thr.empty:
+        return
+    models = list(thr.model.unique())
+    fig, axes = plt.subplots(1, len(models), figsize=(3.6 * len(models), 3.4), squeeze=False)
+    ticks = [0.05, 0.10, 0.20, 1 / 3]
+    for ax, model in zip(axes[0], models):
+        ax.plot([0.03, 0.4], [0.03, 0.4], color=MUTED, lw=0.8, ls=":")
+        for (family, kind), g in thr[thr.model == model].groupby(["family", "kind"]):
+            ax.scatter(g.nominal_threshold, g.implied_threshold, color=FAMILY_COLOR.get(family, INK),
+                       marker=KIND_MARKER.get(kind, "o"), s=28, label=f"{family} · {kind}")
+        ax.set_xscale("log"), ax.set_yscale("log")
+        ax.set_xticks(ticks, ["5%", "10%", "20%", "33%"]), ax.set_yticks(ticks, ["5%", "10%", "20%", "33%"])
+        ax.minorticks_off()
+        ax.set_xlabel("Instructed threshold", fontsize=8, color=INK2)
+        style(ax, display(model))
+    axes[0][0].set_ylabel("Threshold implied by the fit", fontsize=8, color=INK2)
+    axes[0][-1].legend(fontsize=6.5, frameon=False, loc="upper left")
+    save(fig, "curse_thresholds")
+
+
+def curse_decision_curves(curves):
+    """P(recommend screening) against the latent belief per condition (paper Figure 3)."""
+    if curves.empty:
+        return
+    models = list(curves.model.unique())
+    fig, axes = plt.subplots(len(models), 2, figsize=(8, 3 * len(models)), squeeze=False)
+    for i, model in enumerate(models):
+        for j, (setting, conds) in enumerate(SETTING_CONDITIONS.items()):
+            ax = axes[i][j]
+            for cond in conds:
+                g = curves[(curves.model == model) & (curves.condition == cond)]
+                if g.empty:
+                    continue
+                color = CONDITION_COLOR.get(cond, INK)
+                ax.plot(g.z, g.p_decide, color=color, lw=1.6, label=f"{cond} (n={int(g.n_cases.iloc[0])})")
+                ax.fill_between(g.z, g.ci_lower, g.ci_upper, color=color, alpha=0.15, lw=0)
+            ax.set_xlabel("Posterior mean belief z (all 16 outputs)", fontsize=8, color=INK2)
+            ax.set_ylim(-0.02, 1.02)
+            style(ax, f"{display(model)} · {setting}")
+            ax.legend(fontsize=6.5, frameon=False, loc="lower right")
+        axes[i][0].set_ylabel("P(recommend screening)", fontsize=8, color=INK2)
+    save(fig, "curse_decision_curves")
+
+
+def curse_bayes(points):
+    """Bespoke items: mean stated logit against the Bayes logit of the believer's evidence."""
+    if points.empty:
+        return
+    models = list(points.model.unique())
+    fig, axes = plt.subplots(len(models), 2, figsize=(7.5, 3.4 * len(models)), squeeze=False)
+    lim = np.nanmax(np.abs(np.r_[points.value, points.bayes_logit])) * 1.05
+    for i, model in enumerate(models):
+        for j, (title, roles) in enumerate((("own beliefs (A, B, B_F)", ("A", "B")),
+                                            ("about John (D, M, C)", ("D", "M", "C")))):
+            ax = axes[i][j]
+            ax.plot([-lim, lim], [-lim, lim], color=MUTED, lw=0.8, ls=":")
+            for role in roles:
+                g = points[(points.model == model) & (points.role == role)]
+                ax.errorbar(g.bayes_logit, g.value, yerr=1.96 * g.sd.fillna(0), fmt="o", ms=4, lw=0.8,
+                            color=ROLE_COLOR[role], mfc="white" if role == "C" else ROLE_COLOR[role],
+                            label=role, alpha=0.85)
+            ax.set_xlim(-lim, lim), ax.set_ylim(-lim, lim)
+            ax.set_xlabel("Bayes logit, believer's evidence", fontsize=8, color=INK2)
+            style(ax, f"{display(model)} · {title}")
+            ax.legend(fontsize=7, frameon=False, loc="upper left")
+        axes[i][0].set_ylabel("Mean stated logit", fontsize=8, color=INK2)
+    save(fig, "curse_bayes")
+
+
+def curse_linearity(scatter, est, bins: int = 8):
+    """Binned means of the two gap regressions' outcomes against x, with the fitted lines."""
+    if scatter.empty:
+        return
+    groups = groups_of(scatter)
+    fig, axes = plt.subplots(len(groups), 2, figsize=(7.5, 2.6 * len(groups)), squeeze=False)
+    for i, (model, dataset, method) in enumerate(groups):
+        for j, setting in enumerate(("partial", "false")):
+            ax = axes[i][j]
+            d = scatter[(scatter.model == model) & (scatter.dataset == dataset) & (scatter.method == method)
+                        & (scatter.setting == setting)]
+            if len(d) < 3:
+                ax.set_visible(False)
+                continue
+            x = d.x_A_minus_B.to_numpy()
+            edges = np.unique(np.quantile(x, np.linspace(0, 1, min(bins, len(d)) + 1)))
+            which = np.clip(np.digitize(x, edges[1:-1]), 0, len(edges) - 2)
+            for column, color, label in (("y_D_minus_M", MUTED, "D − M"),
+                                         ("y_C_minus_M", SETTING_COLOR[setting], "C − M")):
+                y = d[column].to_numpy()
+                mx = [x[which == b].mean() for b in range(len(edges) - 1) if (which == b).any()]
+                my = [y[which == b].mean() for b in range(len(edges) - 1) if (which == b).any()]
+                se = [y[which == b].std(ddof=1) / np.sqrt((which == b).sum()) if (which == b).sum() > 1 else 0
+                      for b in range(len(edges) - 1) if (which == b).any()]
+                ax.errorbar(mx, my, yerr=1.96 * np.array(se), fmt="o", ms=4, color=color, lw=1, label=label)
+                slope, intercept = np.polyfit(x, y, 1)
+                grid = np.linspace(x.min(), x.max(), 20)
+                ax.plot(grid, intercept + slope * grid, color=color, lw=1, ls="--")
+            ax.axhline(0, color=GRID, lw=0.8)
+            ax.set_xlabel("l_A − l_B (binned)", fontsize=8, color=INK2)
+            style(ax, f"{display(model)} · {dataset} · {method} · {setting}")
+            ax.legend(fontsize=6.5, frameon=False, loc="upper left")
+    save(fig, "curse_linearity")
+
+
+def curse_case_leakage(scatter):
+    """Per-case leakage (l_C - l_M) / (l_D - l_M), for cases with |l_D - l_M| above its median."""
+    if scatter.empty:
+        return
+    groups = groups_of(scatter)
+    fig, axes = plt.subplots(len(groups), 2, figsize=(7.5, 2.3 * len(groups)), squeeze=False)
+    for i, (model, dataset, method) in enumerate(groups):
+        for j, setting in enumerate(("partial", "false")):
+            ax = axes[i][j]
+            d = scatter[(scatter.model == model) & (scatter.dataset == dataset) & (scatter.method == method)
+                        & (scatter.setting == setting)]
+            den = d.y_D_minus_M.to_numpy()
+            keep = np.abs(den) > np.median(np.abs(den)) if len(d) else np.array([], bool)
+            if keep.sum() < 3:
+                ax.set_visible(False)
+                continue
+            ratio = np.clip(d.y_C_minus_M.to_numpy()[keep] / den[keep], -1, 2)
+            ax.hist(ratio, bins=np.linspace(-1, 2, 31), color=SETTING_COLOR[setting], alpha=0.8)
+            ax.axvline(np.median(ratio), color=INK, lw=1.2, label=f"median {np.median(ratio):.2f}")
+            for ref in (0, 1):
+                ax.axvline(ref, color=MUTED, lw=0.8, ls=":")
+            ax.set_xlabel("(l_C − l_M) / (l_D − l_M), clipped to [−1, 2]", fontsize=8, color=INK2)
+            style(ax, f"{display(model)} · {dataset} · {method} · {setting} (n={int(keep.sum())})")
+            ax.legend(fontsize=6.5, frameon=False)
+    save(fig, "curse_case_leakage")
+
+
+def curse_comprehension(est):
+    """lambda on all answers against lambda on answers whose comprehension follow-up was correct."""
+    L = est[(est.statistic == "lambda") & est.setting.isin(["partial", "false"])]
+    if L.empty or "comprehension_pass" not in set(L.case_set):
+        return
+    groups = groups_of(L, ("model", "dataset", "method", "setting"))
+    fig, ax = plt.subplots(figsize=(6, 0.4 * len(groups) + 1.4))
+    w = float(C.load()["experiment"]["camerer_w"])
+    for ref in (0, w, 1):
+        ax.axvline(ref, color=MUTED, lw=0.8, ls=":" if ref == w else "-")
+    for i, (model, dataset, method, setting) in enumerate(groups):
+        for k, (case_set, hollow) in enumerate((("all", False), ("comprehension_pass", True))):
+            r = L[(L.model == model) & (L.dataset == dataset) & (L.method == method) & (L.setting == setting)
+                  & (L.case_set == case_set)]
+            if r.empty or not np.isfinite(r.estimate.iloc[0]):
+                continue
+            r = r.iloc[0]
+            ax.errorbar(r.estimate, i + (k - 0.5) * 0.3, xerr=[[r.estimate - r.ci_lower], [r.ci_upper - r.estimate]],
+                        fmt="o", ms=5, color=SETTING_COLOR[setting], mfc="white" if hollow else SETTING_COLOR[setting],
+                        elinewidth=1.1, capsize=0, label=case_set if i == 0 else None)
+    ax.set_yticks(range(len(groups)), [f"{display(m)} · {d} · {k} · {s}" for m, d, k, s in groups], fontsize=7)
+    ax.invert_yaxis()
+    ax.legend(fontsize=7, frameon=False, loc="lower right")
+    style(ax, "λ on all answers (filled) and comprehension-passing answers (hollow)")
+    save(fig, "curse_comprehension")
+
+
+# ---------------------------------------------------------------- the decomposition diagram
+M_COLOR, C_COLOR, D_COLOR = CONDITION_COLOR["M_S4"], "#c4521f", CONDITION_COLOR["C_john"]
+
+
+def brace(ax, x0: float, x1: float, y: float, height: float, *, color=INK2, lw: float = 1.0) -> None:
+    """A horizontal curly brace from x0 to x1 at y, opening up (height < 0) or down (height > 0)."""
+    if x1 - x0 < 1e-6:
+        return
+    t = np.linspace(0, 1, 201)
+    half = np.where(t <= 0.5, t, 1 - t)
+    shape = 1 / (1 + np.exp(-60 * (half - 0.03))) + 1 / (1 + np.exp(-60 * (half - 0.47)))
+    ax.plot(x0 + t * (x1 - x0), y + height * shape / shape.max(), color=color, lw=lw, solid_capstyle="round")
+
+
+def draw_decomposition(ax, lam: float, phi: float, *, w: float | None = None, annotate: bool = True) -> None:
+    """Own belief (top) and the belief attributed to John (bottom), as gaps with delta = 1.
+
+    Positions: l_B = l_M = 0 (both lines measured from their reduced-evidence point),
+    l_A = 1, l_D = phi, l_C = phi * lambda.  The dashed segment is the shortfall of D
+    from a fully responsive attribution (phi = 1).
+    """
+    top, bottom = 1.0, 0.0
+    c, d = phi * lam, phi
+    ax.plot([0, 1], [top, top], color=INK, lw=2.2, solid_capstyle="round", zorder=2)
+    ax.plot([0, d], [bottom, bottom], color=INK, lw=2.2, solid_capstyle="round", zorder=2)
+    if d < 1:
+        ax.plot([d, 1], [bottom, bottom], color=MUTED, lw=1.4, ls=(0, (4, 3)), zorder=1)
+    for x in (0, 1):
+        ax.plot([x, x], [bottom, top], color=GRID, lw=1, ls=":", zorder=0)
+    ax.scatter([0], [top], s=70, color=CONDITION_COLOR["B"], zorder=3)
+    ax.scatter([1], [top], s=70, color=CONDITION_COLOR["A"], zorder=3)
+    ax.scatter([0], [bottom], s=70, color=M_COLOR, zorder=3)
+    ax.scatter([c], [bottom], s=70, color=C_COLOR, zorder=3)
+    ax.scatter([d], [bottom], s=70, color=D_COLOR, zorder=3)
+    ax.scatter([1], [bottom], s=70, facecolor="white", edgecolor=MUTED, lw=1.2, zorder=3)
+    label = dict(ha="center", fontsize=11)
+    ax.text(0, top + 0.1, "$l_B$", color=CONDITION_COLOR["B"], **label)
+    ax.text(1, top + 0.1, "$l_A$", color=CONDITION_COLOR["A"], **label)
+    for x, text, color in ((0, "$l_M$", M_COLOR), (c, "$l_C$", C_COLOR), (d, "$l_D$", D_COLOR)):
+        ax.text(x, bottom + 0.1, text, color=color, **label)
+    ax.text(1, bottom + 0.1, "$l_D$ if $\\varphi=1$", color=MUTED, ha="center", fontsize=9)
+    ax.text(-0.04, top, "model's own\nbelief", ha="right", va="center", fontsize=9, color=INK2)
+    ax.text(-0.04, bottom, "belief attributed\nto John", ha="right", va="center", fontsize=9, color=INK2)
+    if w is not None:
+        ax.plot([w * phi] * 2, [bottom - 0.06, bottom + 0.06], color=MUTED, lw=1.2)
+        ax.text(w * phi, bottom - 0.13, f"λ = {w:g}\n(Camerer et al.)", ha="center", va="top", fontsize=7,
+                color=MUTED)
+    if annotate:
+        brace(ax, 0, 1, top + 0.32, 0.08)
+        ax.text(0.5, top + 0.47, "$\\delta = l_A - l_B$: how far the private evidence moves the model's own belief",
+                ha="center", fontsize=9, color=INK2)
+        brace(ax, 0, c, bottom - 0.12, -0.07, color=C_COLOR)
+        ax.text(c / 2, bottom - 0.3, "leaked\n$\\lambda\\varphi\\delta$", ha="center", va="top", fontsize=9,
+                color=C_COLOR)
+        brace(ax, c, d, bottom - 0.12, -0.07, color=D_COLOR)
+        ax.text((c + d) / 2, bottom - 0.3, "withheld from John\n$\\tau\\delta = \\varphi(1-\\lambda)\\delta$",
+                ha="center", va="top", fontsize=9, color=D_COLOR)
+        brace(ax, d, 1, bottom - 0.12, -0.07, color=MUTED)
+        ax.text((d + 1) / 2, bottom - 0.3, "compression\n$(1-\\varphi)\\delta$", ha="center", va="top",
+                fontsize=9, color=MUTED)
+        brace(ax, 0, d, bottom - 0.62, -0.07)
+        ax.text(d / 2, bottom - 0.8, "$\\varphi\\delta = l_D - l_M$: John's belief moves when he has the evidence",
+                ha="center", va="top", fontsize=9, color=INK2)
+    ax.set_xlim(-0.32, 1.12)
+    ax.set_ylim(bottom - (1.05 if annotate else 0.3), top + (0.62 if annotate else 0.3))
+    ax.axis("off")
+
+
+def curse_schematic(lam: float = 0.45, phi: float = 0.75) -> None:
+    """What lambda, phi and tau measure (illustrative lambda and phi)."""
+    fig, ax = plt.subplots(figsize=(8.6, 4.4))
+    draw_decomposition(ax, lam, phi)
+    ax.set_title(f"Leakage λ, responsiveness φ and theory-of-mind score τ (illustration: λ = {lam}, φ = {phi})",
+                 fontsize=10, color=INK, loc="left")
+    fig.text(0.02, 0.01, "Gaps on the log-odds scale, in units of δ, across cases: l_C − l_M = λφδ, l_D − l_M = φδ.  "
+             "λ = 0: John is given only his own evidence; λ = 1: the model's private evidence fully leaks.",
+             fontsize=7.5, color=INK2)
+    save(fig, "curse_schematic")
+
+
+def curse_decomposition(est):
+    """The decomposition diagram with each run's estimates: C at phi * lambda, D at phi (delta = 1)."""
+    L = est[(est.case_set == "all") & (est.setting != "false_minus_partial")]
+    groups = [g for g in groups_of(L, ("model", "dataset", "method", "setting"))
+              if {"phi", "phi_lambda"} <= set(L[(L.model == g[0]) & (L.dataset == g[1]) & (L.method == g[2])
+                                                & (L.setting == g[3])].statistic)]
+    if not groups:
+        return
+    w = float(C.load()["experiment"]["camerer_w"])
+    fig, ax = plt.subplots(figsize=(8.6, 0.55 * len(groups) + 1.6))
+    for i, (model, dataset, method, setting) in enumerate(groups):
+        g = L[(L.model == model) & (L.dataset == dataset) & (L.method == method) & (L.setting == setting)]
+        g = g.set_index("statistic")
+        y = -i
+        ax.plot([0, 1], [y + 0.18, y + 0.18], color=GRID, lw=2.5, solid_capstyle="round")
+        ax.plot([0, 1], [y, y], color=GRID, lw=0.8, ls=":")
+        ax.scatter([0], [y], s=40, color=M_COLOR, zorder=3)
+        ax.scatter([1], [y], s=40, facecolor="white", edgecolor=MUTED, zorder=3)
+        for stat, color in (("phi_lambda", C_COLOR), ("phi", D_COLOR)):
+            r = g.loc[stat]
+            if np.isfinite(r.estimate):
+                ax.errorbar(r.estimate, y, xerr=[[r.estimate - r.ci_lower], [r.ci_upper - r.estimate]], fmt="o",
+                            ms=6, color=color, elinewidth=1.4, capsize=0, zorder=4)
+        if np.isfinite(g.loc["phi"].estimate):
+            ax.plot([w * g.loc["phi"].estimate] * 2, [y - 0.12, y + 0.12], color=MUTED, lw=1)
+        lam = g.loc["lambda"] if "lambda" in g.index else None
+        text = (f"λ = {lam.estimate:.2f} [{lam.ci_lower:.2f}, {lam.ci_upper:.2f}]" if lam is not None
+                and np.isfinite(lam.estimate) else "λ blank")
+        ax.text(1.2, y, f"{text};  φ = {g.loc['phi'].estimate:.2f}", va="center", fontsize=7, color=INK2)
+        ax.text(-0.04, y, f"{display(model)} · {dataset} · {method} · {setting}", ha="right", va="center",
+                fontsize=7, color=INK2)
+    ax.text(0, 0.55, "$l_M$", ha="center", color=M_COLOR, fontsize=10)
+    ax.text(0.5, 0.55, "$l_C$ at $\\varphi\\lambda$,  $l_D$ at $\\varphi$", ha="center", color=INK2, fontsize=10)
+    ax.text(1, 0.55, "$l_A$ / $\\varphi=1$", ha="center", color=MUTED, fontsize=10)
+    ax.set_xlim(-0.75, 1.75)
+    ax.set_ylim(-len(groups) + 0.4, 0.85)
+    ax.axis("off")
+    ax.set_title("Estimated decomposition, δ = 1 (grey bar: the model's own gap; ticks: Camerer et al.'s λ = "
+                 f"{w:g}; bars: 95% intervals)", fontsize=9, color=INK, loc="left")
+    save(fig, "curse_decomposition")
+
+
 def main() -> None:
+    curse_schematic()
     est = read("curse/estimates.csv")
     if not est.empty:
+        curse_decomposition(est)
         curse_estimates(est)
         curse_scatter(read("curse/scatter.csv"), est)
+        curse_linearity(read("curse/scatter.csv"), est)
+        curse_case_leakage(read("curse/scatter.csv"))
+        curse_comprehension(est)
+    curse_thresholds(read("curse/thresholds.csv"))
+    curse_decision_curves(read("curse/decision_curves.csv"))
+    curse_bayes(read("curse/bespoke_points.csv"))
     retention(read("curse/retention.csv"))
     print(f"figures written to {C.FIGURES}")
 

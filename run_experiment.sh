@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Run the whole curse-of-knowledge experiment on a fresh GPU instance (e.g. vast.ai) and package it.
+#
+#   git clone https://github.com/mangoseller/model_beliefs && cd model_beliefs
+#   nohup bash run_experiment.sh > run.out 2>&1 &      # everything; then download runs/<run_id>.tar.gz
+#   bash run_experiment.sh --smoke                     # 20 CKD cases, 3 samples: a quick full check first
+#   bash run_experiment.sh --run-id <run_id>           # resume an interrupted run (nothing is regenerated)
+#   bash run_experiment.sh --help                      # every option (second_order/runner.py)
+#
+# Needs: Linux, an NVIDIA GPU with CUDA 12 drivers (48 GB or more runs Qwen3 14B in bf16 comfortably;
+# 24 GB is enough for Qwen3 8B alone), about 120 GB of free disk, internet access.
+# Put the bespoke item file at data/bespoke/items.yaml (or pass --bespoke-items PATH); without
+# it the test fixture stands in and the run is marked as using placeholder data.
+#
+# Environment: CPU_ONLY=1 skips torch/vLLM (synthetic model only); HF_TOKEN for gated models;
+# VENV=<dir> picks the virtual environment (default .venv-experiment).
+set -euo pipefail
+cd "$(dirname "$0")"
+VENV="${VENV:-.venv-experiment}"
+
+if ! command -v uv >/dev/null 2>&1; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+fi
+[ -x "$VENV/bin/python" ] || uv venv --python 3.11 "$VENV"
+uv pip install --python "$VENV/bin/python" -r requirements/experiment.txt
+if [ "${CPU_ONLY:-0}" = 1 ]; then
+  # The latent fits need torch even without a GPU: the CPU build of the same version.
+  uv pip install --python "$VENV/bin/python" torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+else
+  uv pip install --python "$VENV/bin/python" -r requirements/gpu.txt
+  export HF_HUB_ENABLE_HF_TRANSFER=1
+fi
+
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
+export TOKENIZERS_PARALLELISM=false
+exec "$VENV/bin/python" -m second_order.runner "$@"

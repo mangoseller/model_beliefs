@@ -16,6 +16,32 @@ All settings are in `configs/second_order.yaml`.
 The `SO_CONFIG`, `SO_DATA_DIR`, `SO_RESULTS_DIR`, `SO_FIGURES_DIR` and
 `SO_BESPOKE_ITEMS` environment variables redirect a run (`second_order/config.py`).
 
+## Everything in one command
+
+```sh
+nohup bash run_experiment.sh > run.out 2>&1 &              # a fresh GPU instance: install, run, package
+bash run_experiment.sh --smoke                             # 20 CKD cases, 3 samples, short fits
+bash run_experiment.sh --run-id <run_id> --stages analyze report package   # redo the analysis of a run
+CPU_ONLY=1 bash run_experiment.sh --models synthetic --smoke                # the same pipeline, no GPU
+```
+
+`second_order/runner.py` runs these stages, each logged in
+`runs/<run_id>/logs/` and recorded in `manifest.json`:
+
+| Stage | What it does |
+|---|---|
+| `fetch_data` | Downloads the Zenodo bundle, checks its MD5 and manifest, and resolves the bespoke items (else the placeholder fixture) |
+| `fetch_models` | Downloads the weights, tokenizer and config, and pins each model's snapshot hash in the run's `config.yaml` |
+| `checks` | Unit tests, `nvidia-smi`, disk |
+| `paper` | `./reproduce.sh analysis` into `runs/<run_id>/paper/`, compared with `docs/baseline_ckd.csv` |
+| `generate` | Generation per model; each model's phase 3 runs in the background while the next generates |
+| `analyze` | `second_order.curse` and `second_order.figures` |
+| `report` | `RUN_REPORT.md`, plus `record/`: constants, estimator, usage, example prompts, `pip freeze` |
+| `package` | `runs/<run_id>.tar.gz` and its SHA-256 |
+
+A failed stage is recorded, and later stages are skipped unless you pass
+`--continue-on-error`; `report` and `package` always run.
+
 ## Checks that run without model calls
 
 ```sh

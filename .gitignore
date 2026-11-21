@@ -19,3 +19,5 @@ outputs/
 figures/
 experiments/
 plans/
+runs/
+.venv-experiment/

@@ -85,7 +85,7 @@ HALVES = {
 # Ratio statistic -> the denominator whose interval must exclude 0.
 DENOMINATOR = {
     "lambda": "T_M", "mean_position": "mean_D_minus_M", "tau_halves": "R", "kappa_halves": "R",
-    "phi": "rho", "tau": "rho", "phi_D_on_A": "cov_A_A1", "phi_M_on_B": "cov_B_B1",
+    "phi": "rho", "tau": "rho", "phi_lambda": "rho", "phi_D_on_A": "cov_A_A1", "phi_M_on_B": "cov_B_B1",
     "phi_pooled": "rho_pooled", "lambda_x_positive": "T_M_positive", "lambda_x_negative": "T_M_negative",
     "normalised_lambda_original": "lambda_D_original", "lambda_borrowed_kappa": "R",
     "lambda_proportionality_low": "T_M_low", "lambda_proportionality_mid": "T_M_mid",
@@ -238,6 +238,7 @@ def pair_statistics(W: dict[str, np.ndarray], method: str, framing: str, pair: s
             out["beta_D_calibrated"] = ols(cd - cm, xc)[1]
             out["beta_C_calibrated"] = ols(cc - cm, xc)[1]
             out["phi"] = _ratio(out["beta_D_calibrated"], out["rho"])
+            out["phi_lambda"] = _ratio(out["beta_C_calibrated"], out["rho"])  # where C sits, in units of delta
             out["cov_B_B1"] = _cov(cb, cb1)
             out["phi_M_on_B"] = _ratio(_cov(cm, cb1), out["cov_B_B1"])
             out["intercept_M_on_B"] = float(np.mean(cm) - out["phi_M_on_B"] * np.mean(cb))

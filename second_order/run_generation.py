@@ -92,6 +92,7 @@ def settings_signature(model: str) -> str:
     """Hash of what besides the prompt shapes a response: backend, weights, sampling, chat template."""
     mcfg = C.model_config(model)
     payload = {"backend": mcfg["backend"], "weights": mcfg.get("path") or mcfg.get("model_id"),
+               "revision": mcfg.get("revision"),
                "sampling": sampling(model), "template": template_kwargs(model),
                "reasoning_effort": mcfg.get("reasoning_effort"), "truth": mcfg.get("truth")}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
@@ -308,7 +309,7 @@ def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, An
 
     mcfg = C.model_config(model)
     if model not in _LOCAL:
-        _LOCAL[model] = LLM(model=mcfg["path"], dtype=mcfg.get("dtype", "auto"),
+        _LOCAL[model] = LLM(model=mcfg["path"], revision=mcfg.get("revision"), dtype=mcfg.get("dtype", "auto"),
                             max_model_len=mcfg.get("max_model_len"), seed=int(seed),
                             tensor_parallel_size=int(mcfg.get("tensor_parallel_size", 1)),
                             gpu_memory_utilization=float(mcfg.get("gpu_memory_utilization", 0.9)))
@@ -337,8 +338,9 @@ def generate_hf(model: str, items: list[Item], seed: int) -> list[dict[str, Any]
 
     mcfg = C.model_config(model)
     if model not in _LOCAL:
-        tok = AutoTokenizer.from_pretrained(mcfg["path"], padding_side="left")
-        lm = AutoModelForCausalLM.from_pretrained(mcfg["path"], torch_dtype=getattr(torch, mcfg.get("dtype", "bfloat16")),
+        tok = AutoTokenizer.from_pretrained(mcfg["path"], revision=mcfg.get("revision"), padding_side="left")
+        lm = AutoModelForCausalLM.from_pretrained(mcfg["path"], revision=mcfg.get("revision"),
+                                                  torch_dtype=getattr(torch, mcfg.get("dtype", "bfloat16")),
                                                   device_map=mcfg.get("device_map", "auto"))
         lm.eval()
         _LOCAL[model] = (lm, tok)

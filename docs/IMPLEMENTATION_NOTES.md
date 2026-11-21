@@ -52,6 +52,8 @@ probability (direct elicitation).
 
 ### Estimators
 
+![What λ, φ and τ measure](figures/curse_schematic.png)
+
 With x = l_A − l_B:
 
 - β_D is the slope of (l_D − l_M) on x, and β_C the slope of (l_C − l_M) on x.

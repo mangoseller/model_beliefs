@@ -36,6 +36,9 @@ copy of the chart.
 
 **Leakage λ** is where C sits between M and D: 0 means the model fully took
 John's perspective, 1 means it gave its own belief as John's. Here λ ≈ 0.84.
+
+![What λ, φ and τ measure](docs/figures/curse_schematic.png)
+
 Across cases, with x = l_A − l_B in log-odds:
 
 - λ = β_C / β_D, the slopes of l_C − l_M and l_D − l_M on x;
@@ -106,7 +109,51 @@ python -m second_order.run_generation --model qwen3_8b --approve   # CKD and bes
 python -m second_order.phase3 --model qwen3_8b                     # parse, latent fits, beliefs
 python -m second_order.curse                                       # outputs/curse/*.csv, outputs/curse/RESULTS.md
 python -m second_order.figures                                     # figures/curse_*
+bash run_experiment.sh                                             # or all of the above, end to end (below)
 ```
+
+## Running everything on a GPU instance
+
+`run_experiment.sh` does the whole study in one command on a fresh Linux GPU
+machine (e.g. vast.ai), then packages it:
+
+```bash
+git clone https://github.com/mangoseller/model_beliefs && cd model_beliefs
+# put the bespoke item file at data/bespoke/items.yaml (else a placeholder stands in)
+nohup bash run_experiment.sh > run.out 2>&1 &     # or --smoke first: 20 cases, 3 samples
+```
+
+1. It installs `uv`, a Python 3.11 environment and the pinned dependencies
+   (`requirements/`, including vLLM).
+2. It downloads the Zenodo bundle and the Qwen3 8B and 14B weights, and pins
+   their exact Hugging Face snapshots.
+3. It runs the unit tests and reproduces the original paper.
+4. It generates every condition, run, sample and comprehension follow-up.
+5. It fits, analyses and draws every figure.
+6. It writes `runs/<run_id>/RUN_REPORT.md` and `record/`: every constant, the
+   estimator as implemented, model revisions, hardware, data checksums, usage
+   and example prompts.
+7. It ends with `runs/<run_id>.tar.gz`.
+
+`--run-id <run_id>` resumes an interrupted run without regenerating anything.
+Expect roughly 120 GB of disk. A 48 GB GPU runs Qwen3 14B in bf16; 24 GB is
+enough for 8B alone. Options: `bash run_experiment.sh --help`. Without a GPU,
+`CPU_ONLY=1 bash run_experiment.sh --models synthetic --smoke` runs the same
+pipeline on the synthetic model.
+
+The figures (`second_order.figures`):
+
+- **The decomposition:** `curse_schematic` and `curse_decomposition` (the
+  diagram above, with each run's estimates).
+- **Headline:** `curse_estimates` (λ, φ, τ with Camerer et al.'s w).
+- **After the paper's Figures 3 and 5:** `curse_decision_curves` and
+  `curse_thresholds`.
+- **Assumption checks:**
+  - `curse_scatter` and `curse_linearity` (the regressions and their linearity);
+  - `curse_case_leakage` (per-case leakage);
+  - `curse_comprehension` (λ with and without comprehension failures);
+  - `curse_bayes` (bespoke answers against Bayes).
+- **Data quality:** `retention`.
 
 ## Reproducing the original paper
 
