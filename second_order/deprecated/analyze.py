@@ -80,7 +80,7 @@ def analysis_set(model: str, b: pd.DataFrame, conditions) -> list[str]:
     present = [c for c in conditions if c in set(b.condition)]
     if lat.exists():
         l = pd.read_parquet(lat)
-        l = l[l.fit == "pooled"]
+        l = l[(l.fit == "pooled") & (l.replicate == 0 if "replicate" in l else True)]  # main run only
         counts = l[l.condition.isin(present)].groupby("case_id").condition.nunique()
         return sorted(counts[counts == len(present)].index)
     counts = b[b.condition.isin(present)].groupby("case_id").condition.nunique()
