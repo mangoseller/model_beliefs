@@ -35,8 +35,11 @@ import pandas as pd
 
 from second_order import beliefs as BL
 from second_order import config as C
+from second_order.analyze import display, md_table
+from second_order.bespoke import bayes_answer, load as load_items, logit
 from second_order.conditions import CONDITIONS, SETTING_OF, SETTINGS, pair_conditions
 from second_order.leakage import leakage_table, pair_keys
+from second_order.responses import comprehension_summary, responses_path
 
 OUT = C.RESULTS / "curse"
 METHODS = ("latent", "direct")
@@ -47,12 +50,6 @@ AFFINE = ["phi_D_on_A", "intercept_D_on_A", "phi_M_on_B", "intercept_M_on_B", "c
 CONTRAST = ["diff_lambda", "diff_phi", "diff_tau", "diff_rho", "phi_pooled", "rho_pooled", "beta_D_pooled"]
 
 
-def display(model: str) -> str:
-    from second_order.analyze import display as show
-
-    return show(model)
-
-
 def models_default() -> list[str]:
     present = sorted(p.name for p in C.BELIEFS.iterdir() if p.is_dir()) if C.BELIEFS.exists() else []
     wanted = list(C.load()["experiment"]["models"])
@@ -60,10 +57,8 @@ def models_default() -> list[str]:
 
 
 def placebo_ids() -> set[str]:
-    from second_order.bespoke import load
-
     try:
-        return {i.case_id for i in load() if i.placebo}
+        return {i.case_id for i in load_items() if i.placebo}
     except FileNotFoundError:
         return set()
 
@@ -92,8 +87,6 @@ def comprehension_pass(model: str, dataset: str, b: pd.DataFrame) -> pd.DataFram
         passed = comp.groupby("case_id").correct.all()
         return b[b.case_id.isin(set(passed[passed].index))]
     # bespoke: recompute the C means from the samples whose follow-up was correct
-    from second_order.responses import responses_path
-
     rows = []
     for condition in comp.condition.unique():
         path = responses_path(model, dataset, condition)
@@ -170,8 +163,6 @@ def placebo_table(model: str) -> pd.DataFrame:
 def bayes_table(model: str) -> pd.DataFrame:
     if "direct" not in BL.methods_for(model, "bespoke"):
         return pd.DataFrame()
-    from second_order.bespoke import bayes_answer, logit
-
     b = beliefs_for(model, "bespoke", "direct")
     b = b[(b.replicate == 0) & ~b.case_id.isin(placebo_ids())].copy()
     b["bayes_logit"] = [logit(bayes_answer(c, k)) for c, k in zip(b.case_id, b.condition)]
@@ -200,12 +191,6 @@ def fmt(r) -> str:
     if r is None or not np.isfinite(r.estimate):
         return "" if r is None else f"blank ({blank(r)})" if blank(r) else ""
     return f"{r.estimate:.3f} [{r.ci_lower:.3f}, {r.ci_upper:.3f}]"
-
-
-def md_table(frame: pd.DataFrame, cols: list[str], digits: int = 3) -> str:
-    from second_order.analyze import md_table as table
-
-    return table(frame, cols, digits)
 
 
 def headline_md(est: pd.DataFrame, stats: list[str]) -> str:
@@ -313,8 +298,6 @@ def main() -> None:
     parser.add_argument("--models", nargs="+", default=None)
     parser.add_argument("--resamples", type=int, default=int(C.load()["analysis"]["bootstrap_resamples"]))
     args = parser.parse_args()
-    from second_order.responses import comprehension_summary
-
     seed = int(C.load()["seed"])
     models = args.models or models_default()
     OUT.mkdir(parents=True, exist_ok=True)

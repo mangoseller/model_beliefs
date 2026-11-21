@@ -25,7 +25,6 @@ import argparse
 
 import numpy as np
 import pandas as pd
-import torch
 
 from latent_beliefs.latent.domains import CKD_SPECS
 from latent_beliefs.latent.model import FitConfig, load_fit, restore_cell

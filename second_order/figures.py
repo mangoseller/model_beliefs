@@ -25,7 +25,6 @@ from second_order import config as C  # noqa: E402
 from second_order.analyze import GEMMA_PARAMS, OPEN_WEIGHT, display  # noqa: E402
 
 INK, INK2, MUTED, GRID = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e1"
-FRAMING_COLOR = {"john": "#2a78d6", "user": "#eb6834", "self": "#52514e"}
 CONDITION_ORDER = ["A", "B", "D_john", "M_S4", "C_john", "D_user", "C_user"]
 CONDITION_COLOR = {"A": "#52514e", "B": "#8a8984", "D_john": "#7fb0eb", "M_S4": "#1baf7a", "C_john": "#2a78d6",
                    "D_user": "#f3a37f", "C_user": "#eb6834"}

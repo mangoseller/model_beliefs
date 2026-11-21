@@ -35,7 +35,9 @@ own ``comprehension`` questions instead.
 from __future__ import annotations
 
 import argparse
+import json
 import math
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -44,6 +46,7 @@ from typing import Any
 import pandas as pd
 import yaml
 
+from latent_beliefs.ckd.parse import normalize_probability
 from latent_beliefs.ckd.prompts import probability_prompt
 from second_order import config as C
 from second_order.comprehension import Comprehension, make
@@ -238,6 +241,36 @@ def table(path: str | None = None) -> pd.DataFrame:
                      "n_evidence": len(item.evidence), "n_partial": len(item.partial),
                      "n_false": len(item.false)})
     return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------- parsing
+QUOTED_KEY = re.compile(r'"probability"\s*:\s*"?([0-9]*\.?[0-9]+)\s*(%?)"?', flags=re.I)
+
+
+def parse_response(output: str, text: str | None) -> tuple[float | None, str | None]:
+    """The answer from the JSON object only (the last one with a ``probability`` key).
+
+    The first-order parser falls back to any number within 40 characters after
+    the word "probability"; bespoke propositions contain numbers ("Bag 1"), so
+    that fallback would read a missing answer as 1.  Only the JSON object, or
+    a quoted ``"probability":`` key, counts here.
+    """
+    if output not in OUTPUTS or not text:
+        return None, None
+    for candidate in reversed(re.findall(r"\{[^{}]*\}", text, flags=re.DOTALL)):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and "probability" in parsed:
+            p = normalize_probability(parsed["probability"])
+            if p is not None:
+                return p, "json"
+    for number, percent in reversed(QUOTED_KEY.findall(text)):
+        p = normalize_probability(number + percent)
+        if p is not None:
+            return p, "quoted_key"
+    return None, None
 
 
 # ---------------------------------------------------------------- prompts

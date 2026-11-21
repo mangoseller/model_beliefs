@@ -32,7 +32,6 @@ same question-and-format suffix; ``first_order`` is the released prompt.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
@@ -44,13 +43,11 @@ from second_order import config as C
 from second_order.comprehension import Comprehension, make
 from second_order.conditions import (
     CONDITIONS,
-    copy_profile,
     field_label,
     flipped_value,
     model_profile,
     pair_spec,
     profile_line,
-    render_profile,
     withheld_fields,
     withheld_names,
 )
@@ -132,18 +129,6 @@ REPORTED_FLIPPED = (
     "{Subj} {believes} what {subj} was told and {has} not seen the profile above.\n"
     "Everything else {subj} was told matched the profile above."
 )
-
-
-@dataclass(frozen=True)
-class PromptRow:
-    case_id: str
-    condition: str
-    output: str
-    prompt: str
-
-    def as_dict(self) -> dict[str, Any]:
-        return {"case_id": self.case_id, "condition": self.condition, "output": self.output,
-                "prompt": self.prompt}
 
 
 # ---------------------------------------------------------------- inputs
@@ -288,6 +273,14 @@ def prompt_for(model: str, case_id: str, condition: str, output: str) -> str:
     return build_prompt(case_id, condition, output, self_layout=C.self_layout(model))
 
 
+def profile_end_offset(prompt: str, case_id: str, condition: str,
+                       withheld: list[str] | None = None) -> int:
+    """Character offset just past the profile block (position P1)."""
+    profile = model_profile(cases().loc[case_id], condition, withheld=withheld)
+    start = prompt.index(PROFILE_HEADER + profile)
+    return start + len(PROFILE_HEADER + profile)
+
+
 # ---------------------------------------------------------------- comprehension
 BINARY_FIELDS = ("hypertension_self_reported", "diabetes_self_reported", "cvd_any",
                  "physical_activity_any")
@@ -314,19 +307,3 @@ def comprehension(case_id: str, condition: str) -> Comprehension:
     stem = f"Which of the following lists exactly the fields that {words['A']} had no information about?"
     return make(stem, listing(fields), [listing(o) for o in others[:2]]
                 + [f"None: {words['A']} had the full profile"], key)
-
-
-def profile_end_offset(prompt: str, case_id: str, condition: str,
-                       withheld: list[str] | None = None) -> int:
-    """Character offset just past the profile block (position P1)."""
-    profile = model_profile(cases().loc[case_id], condition, withheld=withheld)
-    start = prompt.index(PROFILE_HEADER + profile)
-    return start + len(PROFILE_HEADER + profile)
-
-
-def prompt_rows(case_ids: list[str], conditions: list[str], outputs: tuple[str, ...] = OUTPUTS,
-                **kwargs: Any) -> list[PromptRow]:
-    return [
-        PromptRow(case_id, condition, output, build_prompt(case_id, condition, output, **kwargs))
-        for condition in conditions for case_id in case_ids for output in outputs
-    ]

@@ -12,30 +12,26 @@ model holds both datasets.
 
 from __future__ import annotations
 
+from latent_beliefs.ckd.parse import parse_response as parse_ckd
+from second_order import bespoke as BS
 from second_order import config as C
+from second_order import prompts_second_order as CKD
 from second_order.comprehension import Comprehension
-
-DATASETS = ("ckd", "bespoke")
+from second_order.conditions import CONDITIONS
 
 
 def dataset_of(case_id: str) -> str:
-    from second_order.bespoke import PREFIX
-
-    return "bespoke" if case_id.startswith(PREFIX) else "ckd"
+    return "bespoke" if case_id.startswith(BS.PREFIX) else "ckd"
 
 
 def outputs(dataset: str) -> tuple[str, ...]:
-    if dataset == "bespoke":
-        from second_order.bespoke import OUTPUTS
-    else:
-        from second_order.prompts_second_order import OUTPUTS
-    return tuple(OUTPUTS)
+    return BS.OUTPUTS if dataset == "bespoke" else CKD.OUTPUTS
 
 
 def comprehension_outputs(dataset: str) -> tuple[str, ...]:
     """Outputs whose answers in C conditions get a comprehension follow-up."""
     if dataset == "bespoke":
-        return outputs("bespoke")
+        return BS.OUTPUTS
     return tuple(C.load()["experiment"]["comprehension"]["outputs"])
 
 
@@ -45,37 +41,32 @@ def samples(dataset: str) -> int:
 
 def case_ids(dataset: str, n: int | str = "all") -> list[str]:
     if dataset == "bespoke":
-        from second_order.bespoke import case_ids as ids
-
-        found = ids()
+        found = BS.case_ids()
         return found if n == "all" else found[: int(n)]
-    from second_order.run_generation import select_cases
+    from second_order.run_generation import select_cases  # run_generation imports this module
 
     return select_cases(n)
 
 
+def parse(dataset: str, output: str, text: str | None) -> tuple[float | None, str | None]:
+    """Strict parse: the first-order parser for CKD; JSON only for bespoke (``bespoke.parse_response``)."""
+    if dataset == "bespoke":
+        return BS.parse_response(output, text)
+    return parse_ckd(output, text) if text else (None, None)
+
+
 def prompt(dataset: str, model: str, case_id: str, condition: str, output: str) -> str:
     if dataset == "bespoke":
-        from second_order.bespoke import build_prompt
-
-        return build_prompt(case_id, condition, output)
-    from second_order.prompts_second_order import prompt_for
-
-    return prompt_for(model, case_id, condition, output)
+        return BS.build_prompt(case_id, condition, output)
+    return CKD.prompt_for(model, case_id, condition, output)
 
 
 def comprehension(dataset: str, case_id: str, condition: str) -> Comprehension:
-    if dataset == "bespoke":
-        from second_order.bespoke import comprehension as question
-    else:
-        from second_order.prompts_second_order import comprehension as question
-    return question(case_id, condition)
+    return (BS.comprehension if dataset == "bespoke" else CKD.comprehension)(case_id, condition)
 
 
 def conditions_for(dataset: str, conditions: list[str]) -> list[str]:
-    """The bespoke dataset has the partial (S4) and false-belief (F) settings only."""
+    """The bespoke dataset has the partial (S4) and false-belief (F) settings only, for John."""
     if dataset != "bespoke":
         return list(conditions)
-    from second_order.conditions import CONDITIONS
-
     return [c for c in conditions if CONDITIONS[c].pair in (None, "S4", "F") and CONDITIONS[c].framing != "user"]

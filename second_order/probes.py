@@ -34,7 +34,7 @@ from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import r2_score, roc_auc_score
 
 from latent_beliefs.ckd.cases import PROFILE_FEATURES
-from latent_beliefs.latent.domains import CKD_SPECS, likelihood_values
+from latent_beliefs.latent.domains import CKD_SPECS
 from latent_beliefs.latent.model import load_fit, restore_cell
 from second_order import beliefs as BL
 from second_order import config as C

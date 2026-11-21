@@ -157,6 +157,21 @@ class Prompts(unittest.TestCase):
             BS.build_prompt("bespoke__marbles_01", "A", "likert", path=FIXTURE)
 
 
+class Parsing(unittest.TestCase):
+    def test_json_answers_parse(self):
+        for text, value in (('reasoning\n{"probability": 0.42}', 0.42), ('```json\n{"probability": 0.0}\n```', 0.0),
+                            ('{"probability": 0.9} then {"probability": 0.3}', 0.3), ('"probability": "65%"', 0.65)):
+            self.assertEqual(BS.parse_response("probability", text)[0], value, text)
+
+    def test_numbers_in_the_question_are_not_answers(self):
+        """The first-order fallback reads 'the probability that ... Bag 1' as 1; bespoke parsing must not."""
+        text = "We need the probability that the marbles were drawn from Bag 1.\nFinal: $\\boxed{0.9}$"
+        self.assertEqual(parse_response("probability", text)[0], 1.0)  # the first-order parser's fallback
+        self.assertIsNone(BS.parse_response("probability", text)[0])
+        self.assertIsNone(BS.parse_response("probability", "")[0])
+        self.assertIsNone(BS.parse_response("probability", '{"answer": 0.4}')[0])
+
+
 class Comprehension(unittest.TestCase):
     def test_correct_option_is_the_agents_evidence(self):
         for cid in BS.case_ids(FIXTURE):

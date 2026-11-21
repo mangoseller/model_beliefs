@@ -31,7 +31,6 @@ import hashlib
 import json
 import re
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -188,7 +187,8 @@ def extract(model: str, act_model: str, conditions: list[str], case_ids: list[st
     n_layers = len(ex.core.layers) if backend == "mlx" else ex.n_layers
     hidden = int(ex.core.args.hidden_size) if backend == "mlx" else ex.hidden
     provenance = {"response_model": model, "activation_model": act_model, "backend": backend,
-                  "checkpoint": str(C.model_config(act_model)["path"]), "layers": n_layers,
+                  "checkpoint": str(C.model_config(act_model)["path"]), "revision": ex.revision,
+                  "layers": n_layers,
                   "hidden": hidden, "positions": POSITIONS, "replays": REPLAYS,
                   "location": "post transformer block, before final RMSNorm", "dtype": "float32"}
     root.mkdir(parents=True, exist_ok=True)

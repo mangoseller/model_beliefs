@@ -26,9 +26,9 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-from latent_beliefs.ckd.parse import parse_response
 from latent_beliefs.datasets import DOMAIN_SPECS
 from second_order import config as C
+from second_order import datasets as DS
 from second_order.comprehension import parse_choice
 from second_order.conditions import CONDITIONS
 from second_order.prompts_second_order import OUTPUTS
@@ -101,7 +101,7 @@ def collect(model: str, case_ids: list[str], conditions: list[str], write: bool 
         if not record["ok"]:
             status, value = "call_error", None
         else:
-            value, _ = parse_response(item.output, visible_text(record["text"]))
+            value, _ = DS.parse(dataset, item.output, visible_text(record["text"]))
             status = "parsed" if value is not None else "parse_failure"
         rows.append({**base, "status": status, "text": record["text"],
                      "value": np.nan if value is None else float(value),
@@ -137,17 +137,14 @@ def matrix(long: pd.DataFrame) -> pd.DataFrame:
 def retention(long: pd.DataFrame) -> pd.DataFrame:
     """Per condition: share of calls (case, run, sample) with every output parsed."""
     rows = []
-    n_outputs = long.groupby("dataset").output.nunique().to_dict() if "dataset" in long else {}
-    for keys, part in long.groupby([c for c in ("model", "dataset", "condition") if c in long]):
-        keys = dict(zip([c for c in ("model", "dataset", "condition") if c in long], keys))
+    for (model, dataset, condition), part in long.groupby(["model", "dataset", "condition"]):
         generated = part[part.status != "not_generated"]
         if generated.empty:
             continue
-        need = n_outputs.get(keys.get("dataset"), len(OUTPUTS))
-        unit = [c for c in UNIT if c in generated]
-        per_unit = generated.groupby(unit)["status"].apply(lambda s: (s == "parsed").all() and len(s) == need)
+        need = long.loc[long.dataset == dataset, "output"].nunique()
+        per_unit = generated.groupby(UNIT)["status"].agg(lambda s, n=need: (s == "parsed").all() and len(s) == n)
         rows.append({
-            **keys,
+            "model": model, "dataset": dataset, "condition": condition,
             "cases_generated": int(per_unit.size), "cases_complete": int(per_unit.sum()),
             "retention": float(per_unit.mean()),
             "responses": int(len(generated)),
@@ -161,8 +158,6 @@ def retention(long: pd.DataFrame) -> pd.DataFrame:
 def comprehension(model: str, dataset: str, case_ids: list[str], conditions: list[str],
                   write: bool = True) -> pd.DataFrame:
     """Parsed and scored comprehension answers: one row per follow-up."""
-    from second_order import datasets as DS
-
     items, _ = comprehension_items(model, dataset, case_ids, conditions)
     rows = []
     for item, record in zip(items, lookup(items)):

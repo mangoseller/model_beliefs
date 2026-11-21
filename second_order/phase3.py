@@ -92,13 +92,13 @@ def run_bespoke(model: str, case_ids: list[str], conditions: list[str]) -> pd.Da
     return long
 
 
-def run(model: str, case_ids: list[str], conditions: list[str], datasets: list[str] | None = None,
-        cases_arg: str | None = None, smoke: bool = False) -> None:
-    """Every dataset of the model; ``case_ids`` (CKD) wins over ``cases_arg`` when given."""
+def run(model: str, conditions: list[str], datasets: list[str] | None = None, cases: str | None = None,
+        smoke: bool = False) -> None:
+    """Every dataset of the model (``cases``: 'all', an integer or a file of case ids)."""
     seed = int(C.load()["seed"])
     rets, comps = [], []
     for dataset in datasets or C.datasets_for(model):
-        ids = case_ids if (dataset == "ckd" and case_ids is not None) else dataset_cases(dataset, cases_arg, smoke)
+        ids = dataset_cases(dataset, cases, smoke)
         long = run_ckd(model, ids, conditions, seed) if dataset == "ckd" else run_bespoke(model, ids, conditions)
         rets.append(retention(long))
         comps.append(comprehension(model, dataset, ids, conditions))
@@ -106,8 +106,7 @@ def run(model: str, case_ids: list[str], conditions: list[str], datasets: list[s
     (C.RESULTS / "retention").mkdir(parents=True, exist_ok=True)
     ret.to_csv(C.RESULTS / "retention" / f"{model}.csv", index=False)
     print(ret.to_string(index=False), flush=True)
-    comp = pd.concat([c for c in comps if not c.empty], ignore_index=True) if any(len(c) for c in comps) \
-        else pd.DataFrame()
+    comp = pd.concat(comps, ignore_index=True)
     if not comp.empty:
         (C.RESULTS / "comprehension").mkdir(parents=True, exist_ok=True)
         comp.drop(columns="text").to_csv(C.RESULTS / "comprehension" / f"{model}.csv", index=False)
@@ -122,8 +121,7 @@ def main() -> None:
     parser.add_argument("--cases", default=None, help="'all', an integer, or a file of case ids")
     parser.add_argument("--conditions", nargs="+", default=None)
     args = parser.parse_args()
-    run(args.model, None, args.conditions or C.scheduled_conditions(args.model), args.dataset,
-        cases_arg=args.cases, smoke=args.smoke)
+    run(args.model, args.conditions or C.scheduled_conditions(args.model), args.dataset, args.cases, args.smoke)
 
 
 if __name__ == "__main__":

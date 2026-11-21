@@ -182,7 +182,6 @@ def run_coherence(model: str, resamples: int, seed: int) -> pd.DataFrame:
     out = []
     methods = BL.methods_for(model)
     conditions = [c for c in wide.condition.unique()]
-    probe_cases = None
     for method in [m for m in methods if m in ("latent", "direct", "probe")]:
         b = BL.read(model, method)
         b = b[b.replicate == 0]
@@ -197,7 +196,7 @@ def run_coherence(model: str, resamples: int, seed: int) -> pd.DataFrame:
                                        resamples=resamples, seed=seed))
             continue
         variants = [("direct", b)] if method == "direct" else [
-            (f"probe_{t}_{p}", part) for t, p, l, s, part in probe_variants(model, b, all_layers=False)]
+            (f"probe_{t}_{p}", part) for t, p, _, _, part in probe_variants(model, b, all_layers=False)]
         for name, part in variants:
             part = part[(part.half == "all") & part.condition.isin(conditions)]
             ids = analysis_set(model, part, [c for c in CORE_CONDITIONS if c in conditions])
@@ -224,7 +223,7 @@ def run_agreement(models: list[str], leakage: pd.DataFrame, coherence: pd.DataFr
             elif method == "direct":
                 methods["direct"] = b
             else:
-                for t, p, l, s, part in probe_variants(model, b, all_layers=False):
+                for t, p, _, _, part in probe_variants(model, b, all_layers=False):
                     if t == "truth":
                         methods[f"probe_{p}"] = part
         names = sorted(methods)

@@ -69,7 +69,7 @@ def latent_predictions(wide: pd.DataFrame, params: pd.DataFrame, cases: list[str
     """(condition, direction) -> long predictions on test cases, ordered by ``cases``."""
     out: dict[tuple[str, str], pd.DataFrame] = {}
     point: list[dict[str, Any]] = []
-    groups = indices = condition_indices(CKD_SPECS)
+    groups = condition_indices(CKD_SPECS)
     pooled = params[params.fit == "pooled"]
     for condition in wide.condition.unique():
         group = next(g for g in pooled.fit_group.unique() if condition in g.split("+"))

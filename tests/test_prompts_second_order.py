@@ -258,7 +258,6 @@ class ConditionsCD(unittest.TestCase):
     def test_no_hints(self):
         banned = ("ignore", "differ", "may not", "might not", "unknown", "lack", "missing")
         for case_id in CASES[:5]:
-            full = render_profile(P.cases().loc[case_id])
             for cond in ("C_john", "D_john", "C_user", "D_user", "C_S1", "C_H", "M_S4", "M_H", "M_F", "D_F"):
                 for output in P.OUTPUTS:
                     # Profile values (e.g. "Missing") are data, not instructions.
@@ -271,7 +270,6 @@ class ConditionsCD(unittest.TestCase):
 class Comprehension(unittest.TestCase):
     def test_questions_have_one_correct_option(self):
         for case_id in CASES:
-            case = P.cases().loc[case_id]
             q = P.comprehension(case_id, "C_john")
             self.assertEqual(q.options[q.answer], "; ".join(field_label(f) for f in withheld_fields()))
             self.assertEqual(len(set(q.options)), len(q.options))

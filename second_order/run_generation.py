@@ -203,7 +203,7 @@ def generate_mlx(model: str, items: list[Item], seed: int) -> list[dict[str, Any
                             verbose=False)
     elapsed = time.time() - started
     records = []
-    for item, prompt_ids, text in zip(items, prompts, result.texts):
+    for prompt_ids, text in zip(prompts, result.texts):
         n_out = len(tok.encode(text, add_special_tokens=False))
         records.append({"text": text, "ok": True, "error": None,
                         "stop_reason": "length" if n_out >= cfg["generation"]["max_tokens"] else "end",
@@ -410,16 +410,6 @@ def run(items: list[Item], *, approve: bool = False, label: str = "") -> None:
         rate = (time.time() - started) / done
         print(f"[{label or model}] {done}/{len(todo)} done; {rate:.2f}s/call; "
               f"eta {rate * (len(todo) - done) / 60:.1f} min", flush=True)
-
-
-def main_items(model: str, case_ids: list[str], conditions: list[str], replicate: int = 0,
-               outputs: tuple[str, ...] | None = None) -> list[Item]:
-    """One CKD run (replicate) of each condition, case and output."""
-    from second_order.prompts_second_order import OUTPUTS, prompt_for
-
-    outputs = outputs or OUTPUTS
-    return [Item(model, case_id, condition, output, replicate, prompt_for(model, case_id, condition, output))
-            for condition in conditions for case_id in case_ids for output in outputs]
 
 
 def experiment_items(model: str, dataset: str, case_ids: list[str], conditions: list[str],

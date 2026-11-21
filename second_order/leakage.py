@@ -126,6 +126,13 @@ def _cov(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.cov(a, b, ddof=1)[0, 1])
 
 
+def cal_values(W: dict[str, np.ndarray], key: str, default: np.ndarray | None = None) -> np.ndarray:
+    """A column's calibrated values (``key:cal``) if stored, else its values, else ``default``."""
+    if f"{key}:cal" in W:
+        return W[f"{key}:cal"]
+    return W[key] if key in W else default
+
+
 def pair_keys(framing: str, pair: str, available) -> dict[str, str | None]:
     """``pair_conditions``, falling back to the shared D for runs without the pair's own D."""
     k = dict(pair_conditions(framing, pair))
@@ -198,9 +205,8 @@ def pair_statistics(W: dict[str, np.ndarray], method: str, framing: str, pair: s
                 out[f"lambda_x_{name}"] = _ratio(ols((c - m)[sel], x[sel])[1], t_m)
         out["mean_D_minus_M"] = float(np.mean(d - m))
         out["mean_position"] = _ratio(float(np.mean(c - m)), out["mean_D_minus_M"])
-        cal = ":cal" if f"{k['M']}:{full}:cal" in W else ""
-        own_b = W[f"{k['B']}:{full}{cal}"] if f"{k['B']}:{full}{cal}" in W else b
-        out["anchor_mean_M_minus_B"] = float(np.mean(W[f"{k['M']}:{full}{cal}"] - own_b))
+        own_b = cal_values(W, f"{k['B']}:{full}", default=b)
+        out["anchor_mean_M_minus_B"] = float(np.mean(cal_values(W, f"{k['M']}:{full}") - own_b))
         out["sd_C"], out["sd_M"], out["sd_D"] = (float(np.std(v, ddof=1)) for v in (c, m, d))
         # Proportionality: lambda within thirds of |x| (same cases in T_C and T_M).
         edges = np.quantile(np.abs(x), [1 / 3, 2 / 3])
@@ -218,12 +224,9 @@ def pair_statistics(W: dict[str, np.ndarray], method: str, framing: str, pair: s
     # ---- the Methods estimators: rho from a second run, phi and tau (calibrated values)
     a1_key, b1_key = f"A{SECOND_RUN}:{full}", f"{k['B']}{SECOND_RUN}:{full}"
     if not px and a1_key in W and b1_key in W:
-        def calv(key: str) -> np.ndarray:
-            return W[f"{key}:cal"] if f"{key}:cal" in W else W[key]
-
-        ca, cb, ca1, cb1 = calv(f"A:{full}"), calv(f"{k['B']}:{full}"), calv(a1_key), calv(b1_key)
+        ca, cb, ca1, cb1 = (cal_values(W, key) for key in (f"A:{full}", f"{k['B']}:{full}", a1_key, b1_key))
         xc, x1c = ca - cb, ca1 - cb1
-        cd, cc = calv(f"{k['D']}:{full}"), calv(f"{k['C']}:{full}")
+        cd, cc = cal_values(W, f"{k['D']}:{full}"), cal_values(W, f"{k['C']}:{full}")
         out["var_delta"] = _cov(xc, x1c)
         out["rho"] = _ratio(out["var_delta"], float(np.var(xc, ddof=1)))
         out["tau"] = _ratio(ols(cd - cc, xc)[1], out["rho"])
@@ -231,7 +234,7 @@ def pair_statistics(W: dict[str, np.ndarray], method: str, framing: str, pair: s
         out["phi_D_on_A"] = _ratio(_cov(cd, ca1), out["cov_A_A1"])
         out["intercept_D_on_A"] = float(np.mean(cd) - out["phi_D_on_A"] * np.mean(ca))
         if has_m:
-            cm = calv(f"{k['M']}:{full}")
+            cm = cal_values(W, f"{k['M']}:{full}")
             out["beta_D_calibrated"] = ols(cd - cm, xc)[1]
             out["phi"] = _ratio(out["beta_D_calibrated"], out["rho"])
             out["cov_B_B1"] = _cov(cb, cb1)
@@ -241,7 +244,7 @@ def pair_statistics(W: dict[str, np.ndarray], method: str, framing: str, pair: s
     # ---- tracking, compression, noise check, original estimator (independent halves)
     if "dec" in h and not px:
         def cal(cond: str, half: str) -> np.ndarray:
-            return W[f"{cond}:{half}:cal"]
+            return cal_values(W, f"{cond}:{half}")
 
         xp = W[f"A:{h['prob']}"] - W[f"{k['B']}:{h['prob']}"]
         r = ols(cal("A", h["dec"]) - cal(k["B"], h["dec"]), xp)[1]
@@ -290,15 +293,11 @@ def pooled_phi(W: dict[str, np.ndarray], method: str, pairs: list[tuple[str, str
     """phi with one responsiveness shared by several pairs: within-pair slopes, pooled rho."""
     full = HALVES[method]["full"]
     sxy = sxx = cxx1 = 0.0
-
-    def cal(key: str) -> np.ndarray:
-        return W[f"{key}:cal"] if f"{key}:cal" in W else W[key]
-
     for framing, pair in pairs:
         k = pair_keys(framing, pair, W)
-        x = cal(f"A:{full}") - cal(f"{k['B']}:{full}")
-        x1 = cal(f"A{SECOND_RUN}:{full}") - cal(f"{k['B']}{SECOND_RUN}:{full}")
-        y = cal(f"{k['D']}:{full}") - cal(f"{k['M']}:{full}")
+        x = cal_values(W, f"A:{full}") - cal_values(W, f"{k['B']}:{full}")
+        x1 = cal_values(W, f"A{SECOND_RUN}:{full}") - cal_values(W, f"{k['B']}{SECOND_RUN}:{full}")
+        y = cal_values(W, f"{k['D']}:{full}") - cal_values(W, f"{k['M']}:{full}")
         n1 = len(x) - 1
         sxy += _cov(y, x) * n1
         sxx += float(np.var(x, ddof=1)) * n1

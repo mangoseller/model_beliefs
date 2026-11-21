@@ -130,12 +130,20 @@ def choice_value(output: str, z: float, t: dict[str, Any], rng: np.random.Genera
 
 def option_for(output: str, prompt: str, value: float) -> str:
     """The option text whose strict parse is ``value``."""
+    texts = _option_values(output, tuple(text for _, text in OPTION.findall(prompt)))
+    if value not in texts:
+        raise ValueError(f"no option of {output} parses to {value}")
+    return texts[value]
+
+
+@lru_cache(maxsize=None)
+def _option_values(output: str, options: tuple[str, ...]) -> dict[float, str]:
     from latent_beliefs.ckd.parse import parse_response
 
-    for _, text in OPTION.findall(prompt):
-        if parse_response(output, f"x\nChoice: {text}")[0] == value:
-            return text
-    raise ValueError(f"no option of {output} parses to {value}")
+    values = {}
+    for text in options:
+        values.setdefault(parse_response(output, f"x\nChoice: {text}")[0], text)
+    return values
 
 
 def respond(model: str, item, seed: int) -> str:

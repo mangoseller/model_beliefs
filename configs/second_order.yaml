@@ -2,7 +2,6 @@
 # Every run reads this file. Values marked DECISION are project choices that
 # may still change; the value shown is the current one.
 
-domain: ckd
 seed: 20261111             # base seed for local sampling, fits and bootstraps
 
 # Phase 1 picks this set. The candidate sets are the plan's S1-S4.
@@ -41,11 +40,8 @@ flip_field: hypertension_self_reported
 # "removed" drops the line.
 missing_fields: not_recorded
 
-agent_name: John
-
-# Conditions are defined in second_order/conditions.py. `conditions` is the
-# default set a run uses; `schedule` says which extra conditions each model runs.
-conditions: [A, B, C_john, D_john, M_S4, B_F, C_F, M_F, B_H, C_H, M_H]
+# Conditions are defined in second_order/conditions.py. `schedule` is the set a
+# model runs unless its entry lists its own `conditions`, plus the extras for some models.
 schedule:
   default: [A, B, C_john, D_john, M_S4, B_F, C_F, M_F, B_H, C_H, M_H]
   # S1 ladder rung and the user framing run on three models only (decided 12 Nov).
@@ -56,8 +52,7 @@ schedule:
 # lambda in a partial-evidence and a false-belief setting, on CKD (latent and
 # direct beliefs) and the bespoke dataset (direct beliefs only).
 experiment:
-  models: [qwen3_8b, qwen3_14b]
-  settings: {partial: S4, false: F}       # setting -> pair of conditions.py
+  models: [qwen3_8b, qwen3_14b]           # the partial (S4) and false-belief (F) settings: conditions.SETTINGS
   conditions: &curse [A, B, C_john, M_S4, D_john, B_F, C_F, M_F, D_F]
   replicates: {A: 2, B: 2, B_F: 2}        # runs of the own-belief conditions; the second gives rho
   comprehension:
@@ -106,8 +101,7 @@ models:
   qwen3_32b_hf:   {backend: hf, path: Qwen/Qwen3-32B, cached_a: false, split_from: qwen3_32b, dtype: bfloat16}
   llama31_70b_hf: {backend: hf, path: meta-llama/Llama-3.1-70B-Instruct, cached_a: false, split_from: llama31_70b, dtype: bfloat16}
 
-# Models in the main run (default: every model with cached condition A).
-main_models: [gemma3_4b, gemma3_12b, llama31_70b, gemma3_27b, qwen3_32b, deepseek_v32, glm5, openai_luna, openai_terra]  # DECISION
+# Cases in the main run.
 main_cases: all            # DECISION: all 500, or an integer
 
 pilot:

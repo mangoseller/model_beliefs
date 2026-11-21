@@ -46,7 +46,6 @@ from second_order import config as C
 
 NOT_RECORDED = "Not recorded"
 PAIRS = ("S4", "S1", "H", "F")
-IGNORANCE_PAIRS = ("S4", "S1", "H")
 SETTINGS = {"partial": "S4", "false": "F"}       # curse-of-knowledge setting -> pair
 SETTING_OF = {pair: setting for setting, pair in SETTINGS.items()}
 

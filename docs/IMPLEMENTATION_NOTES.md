@@ -168,10 +168,12 @@ lists conditions.
   someone else cancel; x comes from different model calls, so its noise is
   independent of the outcomes and scales both slopes equally.
 - **Companions.** A mean-based position (a uniform shift toward the model's
-  own view shows there, not in λ); κ, how strongly answers about the agent
-  follow evidence when nothing is hidden; tracking τ = κ(1 − λ), available
-  without a matched control; λ within thirds of |x|; contrasts between
-  pairs (F − H, user − John, ladder rungs against S4).
+  own view shows there, not in λ); κ (`kappa_halves`), how strongly answers
+  about the agent follow evidence when nothing is hidden; tracking
+  τ = κ(1 − λ) (`tau_halves`), available without a matched control; λ within
+  thirds of |x|; contrasts between pairs (F − H, user − John, ladder rungs
+  against S4). These are the halves-based forms; the curse-of-knowledge
+  experiment's φ and τ come from a second run (above).
 - **Ratio rule.** A ratio is left blank when its denominator's interval
   includes 0.
 - **Original estimator.** The first build placed C between the model's own
@@ -182,7 +184,7 @@ lists conditions.
   idealised simulation.
 - **Methods.** The same ratio is computed from latents, from the stated
   numeric probability, and from probe readings (with the behavioural gap as
-  the regressor). κ and τ need independent halves and exist for latents
+  the regressor). `kappa_halves` and `tau_halves` need independent halves and exist for latents
   only.
 - **Uncertainty.** Paired case bootstrap, 95% percentile intervals, item
   parameters held fixed.

@@ -87,6 +87,13 @@ Every prompt is built from these parts, in order:
 
 M and D share one template, so they differ only in the evidence block (tested).
 
+Answers are read from the JSON object only (`bespoke.parse_response`): the
+last `{...}` with a `probability` key, or a quoted `"probability":` key. The
+first-order CKD parser also accepts any number within 40 characters after
+the word "probability". Bespoke propositions contain numbers ("the
+probability that the marbles were drawn from Bag 1"), so with that fallback
+a missing answer would be read as 1. It is therefore not used here.
+
 After each C answer, a second turn asks which evidence the agent saw or was
 told. The options are the agent's evidence, the full evidence and the other
 setting's evidence (plus, for the partial setting, the withheld

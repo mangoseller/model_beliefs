@@ -126,7 +126,7 @@ class Synthetic(unittest.TestCase):
         t = S.truth("synthetic")
         for cid in BESPOKE_CASES:
             own = {s: S.own_logit("bespoke", cid, s) for s in ("full", "partial", "false")}
-            get = lambda c: S.believed_logit("synthetic", "bespoke", cid, c)  # noqa: E731
+            get = lambda c, cid=cid: S.believed_logit("synthetic", "bespoke", cid, c)  # noqa: E731
             self.assertAlmostEqual(get("A"), own["full"])
             self.assertAlmostEqual(get("B_F"), own["false"])
             self.assertAlmostEqual(get("D_F"), t["intercept"] + t["phi"] * own["full"])
