@@ -237,6 +237,8 @@ def stage_checks(run: Run, cfg: dict) -> None:
     run.manifest["hardware"] = {"gpus": [g.strip() for g in gpus.splitlines() if g.strip()],
                                 "cpus": os.cpu_count(), "disk_free_gb": round(free, 1),
                                 "platform": platform.platform(), "python": sys.version.split()[0]}
+    run.manifest["tools"] = {tool: (capture([tool, "--version"]).strip().splitlines() or ["not installed"])[0]
+                             if shutil.which(tool) else "not installed" for tool in ("claude", "codex", "node", "uv")}
     if local_models(run, cfg) and not run.manifest["hardware"]["gpus"]:
         raise RuntimeError("no GPU found (nvidia-smi) but local models are scheduled")
     if free < 40:

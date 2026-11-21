@@ -124,7 +124,10 @@ nohup bash run_experiment.sh > run.out 2>&1 &     # or --smoke first: 20 cases, 
 ```
 
 1. It installs `uv`, a Python 3.11 environment and the pinned dependencies
-   (`requirements/`, including vLLM).
+   (`requirements/`, including vLLM). It also installs the Claude Code and
+   Codex CLIs into `~/.local/bin`, adding Node.js if needed, and puts them on
+   `PATH`, including in `~/.bashrc`. Log in with `claude` or `codex`, or set
+   `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. `INSTALL_AGENTS=0` skips this.
 2. It downloads the Zenodo bundle and the Qwen3 8B and 14B weights, and pins
    their exact Hugging Face snapshots.
 3. It runs the unit tests and reproduces the original paper.

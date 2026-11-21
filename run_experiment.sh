@@ -12,11 +12,38 @@
 # Put the bespoke item file at data/bespoke/items.yaml (or pass --bespoke-items PATH); without
 # it the test fixture stands in and the run is marked as using placeholder data.
 #
-# Environment: CPU_ONLY=1 skips torch/vLLM (synthetic model only); HF_TOKEN for gated models;
-# VENV=<dir> picks the virtual environment (default .venv-experiment).
+# It also installs the Claude Code and Codex CLIs (`claude`, `codex`) into ~/.local/bin and puts
+# them on PATH, here and in ~/.bashrc for later shells. Log in with `claude` / `codex`, or set
+# ANTHROPIC_API_KEY / OPENAI_API_KEY. A failed install only warns; the experiment still runs.
+#
+# Environment: CPU_ONLY=1 skips torch/vLLM (synthetic model only); INSTALL_AGENTS=0 skips the
+# Claude Code and Codex install; HF_TOKEN for gated models; VENV=<dir> picks the virtual
+# environment (default .venv-experiment).
 set -euo pipefail
 cd "$(dirname "$0")"
 VENV="${VENV:-.venv-experiment}"
+NODE_VERSION=v22.12.0
+LOCAL="$HOME/.local"
+PATH_LINE='export PATH="$HOME/.local/bin:$HOME/.local/node/bin:$PATH"'
+
+install_agent_clis() {
+  # Node.js (for npm) unless the machine already has it: the official Linux build into ~/.local/node.
+  if ! command -v npm >/dev/null 2>&1; then
+    local arch
+    case "$(uname -m)" in x86_64) arch=x64 ;; aarch64 | arm64) arch=arm64 ;; *) echo "unsupported CPU $(uname -m)"; return 1 ;; esac
+    mkdir -p "$LOCAL"
+    curl -fsSL "https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-linux-$arch.tar.xz" | tar -xJ -C "$LOCAL"
+    ln -sfn "$LOCAL/node-$NODE_VERSION-linux-$arch" "$LOCAL/node"
+  fi
+  export PATH="$LOCAL/bin:$LOCAL/node/bin:$PATH"
+  npm install --global --prefix "$LOCAL" @anthropic-ai/claude-code @openai/codex
+  grep -qxF "$PATH_LINE" "$HOME/.bashrc" 2>/dev/null || echo "$PATH_LINE" >> "$HOME/.bashrc"
+  echo "installed: claude $(claude --version 2>/dev/null | head -1); codex $(codex --version 2>/dev/null | head -1)"
+}
+
+if [ "${INSTALL_AGENTS:-1}" = 1 ]; then
+  install_agent_clis || echo "WARNING: installing Claude Code / Codex failed; continuing without them" >&2
+fi
 
 if ! command -v uv >/dev/null 2>&1; then
   curl -LsSf https://astral.sh/uv/install.sh | sh
