@@ -48,10 +48,10 @@ questions, and 20 fictional puzzles with known Bayes answers. The design is in
 
 ## Running it
 
-On a Linux machine with an NVIDIA GPU, clone the branch and choose a run mode.
+On a Linux machine with an NVIDIA GPU, clone the repo and choose a run mode.
 
 ```bash
-git clone --branch claude/bold-archimedes-8vdm0o https://github.com/mangoseller/model_beliefs && cd model_beliefs
+git clone https://github.com/mangoseller/model_beliefs && cd model_beliefs
 
 bash run_experiment.sh --smoke                 # quick check on 20 CKD patients
 bash run_experiment.sh --core                  # main CKD battery, bespoke trials, estimates and figures

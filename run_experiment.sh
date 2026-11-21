@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the whole curse-of-knowledge experiment on a fresh GPU instance (e.g. vast.ai) and package it.
 #
-#   git clone --branch claude/bold-archimedes-8vdm0o https://github.com/mangoseller/model_beliefs && cd model_beliefs
+#   git clone https://github.com/mangoseller/model_beliefs && cd model_beliefs
 #   nohup bash run_experiment.sh > run.out 2>&1 &      # everything; then download runs/<run_id>.tar.gz
 #   bash run_experiment.sh --core --no-install-agents  # main experiment only, skip coding-agent installation
 #   bash run_experiment.sh --smoke                     # 20 CKD cases, 3 samples: a quick full check first
