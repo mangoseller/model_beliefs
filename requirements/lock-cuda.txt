@@ -440,6 +440,8 @@ sentencepiece==0.2.0
     #   mistral-common
     #   vllm
     #   xgrammar
+setuptools==80.9.0
+    # via -r requirements/gpu.txt
 shellingham==1.5.4
     # via typer
 six==1.17.0
