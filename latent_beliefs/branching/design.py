@@ -57,7 +57,7 @@ PROBABILITY_VARIANT = {
     "forecasting": "probability_positive",
 }
 
-# ------------------------------------------------------------------ locations
+# Locations
 # The 30 cases per domain on which both experiments were run.  They were drawn
 # from the 500 main-experiment cases by a seeded sampler that shuffled
 # label-by-stratum groups (CKD status x risk decile; Werewolf identity x cut
@@ -86,7 +86,7 @@ def response_path(responses_dir: Path, experiment: str, stage: str, model: str) 
     return responses_dir / experiment / stage / f"{model}.jsonl"
 
 
-# ------------------------------------------------------------------ helpers
+# Design utilities
 def stable_id(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:32]
 

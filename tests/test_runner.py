@@ -5,11 +5,12 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
 import torch
 
+from second_order import config as C
 from second_order import datasets as DS
 from second_order import freeze as F
 from second_order import tune as T
@@ -25,6 +26,15 @@ def trial(tok_s: float, parse: float = 0.95, truncated: float = 0.0, seqs: int =
 
 
 class Tuning(unittest.TestCase):
+    def test_old_run_configs_inherit_bundled_settings(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(C, "CONFIG_PATH", Path(tmp) / "config.yaml"):
+            C.CONFIG_PATH.write_text("activations:\n  outputs: {bespoke: [probability]}\n")
+            C.load.cache_clear()
+            self.addCleanup(C.load.cache_clear)
+            defaults = C.load(str(C.BUNDLED_CONFIG))
+            self.assertEqual(T.settings(), defaults["tuning"])
+            self.assertEqual(F.settings(), defaults["activations"] | {"outputs": {"bespoke": ["probability"]}})
+
     def test_the_fastest_successful_trial_wins(self):
         s = T.settings()
         out = T.choose("m", 100, [trial(1000), trial(1800, seqs=512), {"engine": {}, "ok": False}], s)
@@ -178,14 +188,24 @@ class Freeze(unittest.TestCase):
         self.assertEqual(F.token_at(offsets, 4), 1)
         self.assertEqual(F.token_at(offsets, 9), 3)
         self.assertEqual(F.token_at(offsets, 0), -1)
-        merged = [(0, 4), (4, 7), (7, 12)]  # e.g. a ' {"' token that starts before the answer's brace
-        self.assertEqual(F.token_before(merged, 5), 0)
-        self.assertEqual(F.token_before(merged, 7), 1)
         text = 'thinking {"probability": 0.2} wait {"probability": 0.3}'
         self.assertEqual(F.answer_start("probability", text), text.rindex("{"))
         self.assertEqual(F.answer_start("probability/normal", text), text.rindex("{"))
         self.assertEqual(F.answer_start("probability", "no answer"), -1)
         self.assertEqual(F.answer_start("likert/flip", "B"), 0)
+
+    def test_pre_answer_position_uses_emitted_tokens(self):
+        item = Item("synthetic", "b01", "A", "probability", 0, "Question")
+        replay = F.Replayer.__new__(F.Replayer)
+        replay.kwargs = {}
+        replay.tok = Mock(return_value={"input_ids": [1], "offset_mapping": [(0, len(item.prompt))]})
+        replay.tok.apply_chat_template.return_value = item.prompt
+        tokens = {2: "reason", 3: ' {"', 4: " ", 5: '{"', 6: 'probability": 0.2}'}
+        replay.tok.decode.side_effect = lambda ids, **kwargs: "".join(tokens[i] for i in ids)
+        for reply, pre_answer in (([2, 3, 6], 1), ([2, 4, 5, 6], 2)):
+            with self.subTest(reply=reply):
+                ids, positions, n = replay.tokens_and_positions(item, {"prompt_token_ids": [1], "token_ids": reply})
+                self.assertEqual((ids, positions, n), ([1] + reply, [-1, 0, pre_answer], 1))
 
     def test_evidence_end_is_just_before_the_question(self):
         for dataset, case_id in (("ckd", DS.case_ids("ckd")[0]), ("bespoke", "b01")):

@@ -127,7 +127,7 @@ def item_seed(seed: int, item: Item) -> int:
     return (int(seed) + int(item.key[:8], 16)) % (2**31)
 
 
-# ---------------------------------------------------------------- cache
+# Generation cache
 class Cache:
     def __init__(self, model: str, root: Path | None = None):
         self.path = (root or C.CACHE) / f"{model}.jsonl"
@@ -220,7 +220,7 @@ def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
     return out
 
 
-# ---------------------------------------------------------------- backends
+# Generation backends
 def sampling(model: str, dataset: str, output: str) -> dict[str, Any]:
     """Temperature, top-p, top-k, token limit and log-probabilities, overridable per model."""
     from second_order.datasets import max_tokens
@@ -336,7 +336,7 @@ def generate_synthetic(model: str, items: list[Item], seed: int) -> list[dict[st
 BACKENDS = {"vllm": generate_vllm, "hf": generate_hf, "synthetic": generate_synthetic}
 
 
-# ---------------------------------------------------------------- driver
+# Generation and resume
 def pending(items: list[Item]) -> list[Item]:
     records = lookup(items)
     return [item for item, record in zip(items, records) if record is None or not record.get("ok")]

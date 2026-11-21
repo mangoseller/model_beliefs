@@ -33,7 +33,7 @@ MODEL_DISPLAY = {
     "openai_terra": "GPT-5.6 Terra",
 }
 
-# ---------------------------------------------------------------- providers
+# Providers
 # Amazon Bedrock model IDs (Converse batch inference).
 BEDROCK_MODEL_IDS = {
     "deepseek_v32": "deepseek.v3.2",
@@ -50,7 +50,7 @@ OPENAI_MODEL_IDS = {
     "openai_terra": "gpt-5.6-terra",
 }
 
-# ---------------------------------------------------------------- figure order
+# Figure order
 # Figure axes: ascending Artificial Analysis Intelligence Index v4.1.1
 # (retrieved 2026-08-21): Gemma 3 4B 1, Gemma 3 12B 6, Llama 3.1 70B 7,
 # Gemma 3 27B 7, Qwen3 32B 8, DeepSeek V3.2 25, GLM-5 41, GPT-5.6 Luna 52,
@@ -71,7 +71,7 @@ EXAMPLE_MODELS = ("gemma3_4b", "qwen3_32b", "openai_terra")
 # Models in the reasoning-prefix branching experiments.
 BRANCHING_MODELS = ("gemma3_12b", "deepseek_v32")
 
-# ---------------------------------------------------------------- positions
+# Positions
 # Position of each model in the analysis pipeline.  Written to the
 # ``model_position`` column of analysis tables and used for capability ranks
 # (rank = position + 1) and per-cell seeds in the fitting stages.

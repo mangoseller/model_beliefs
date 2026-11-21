@@ -520,7 +520,7 @@ def leave_one_out_metrics(predictions: pd.DataFrame, train: pd.DataFrame) -> pd.
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------- CLI
+# Command-line entry point
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--domains", nargs="+", choices=DOMAINS, default=list(DOMAINS))

@@ -55,7 +55,7 @@ def rng_for(*parts: Any) -> np.random.Generator:
     return np.random.default_rng(int(digest[:16], 16))
 
 
-# ---------------------------------------------------------------- beliefs
+# Beliefs
 def records(prompt: str) -> dict[str, dict[str, str]]:
     """CKD prompt -> {"model": fields, "person": fields} for the records it shows."""
     out = {}
@@ -106,7 +106,7 @@ def believed_logit(model: str, dataset: str, meta: dict) -> float:
     return float(t["intercept"]) + float(t["phi"]) * (person + lam * (own - person))
 
 
-# ---------------------------------------------------------------- answers
+# Answer formats
 def choice_value(question: str, z: float, t: dict[str, Any], rng: np.random.Generator) -> float:
     """The meaning of the simulated choice given the call's belief z (logit)."""
     from second_order.responses import cutoff

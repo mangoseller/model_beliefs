@@ -69,7 +69,7 @@ def run_r(script: str, *args: Path) -> None:
     subprocess.run(["Rscript", str(R_DIR / script), *map(str, args)], check=True)
 
 
-# ------------------------------------------------- Voelkel (2024) materials
+# Voelkel (2024) materials
 def compact(value: str) -> str:
     value = value.replace("­", "").replace("", "-")
     value = re.sub(r"\n\s*\d+\s*\n", "\n", value)
@@ -134,7 +134,7 @@ def voelkel_2024_materials(text: str, effects: list[dict[str, str]]) -> dict[str
     return out
 
 
-# ------------------------------------------------------ megastudy scenarios
+# Megastudy scenarios
 def megastudy_scenarios(
     effects: list[dict[str, str]], extracted: dict[str, dict], enrichments: dict[str, dict]
 ) -> list[dict]:

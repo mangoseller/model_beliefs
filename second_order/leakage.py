@@ -57,6 +57,15 @@ DENOMINATOR = {
     "lambda_x_positive": "beta_D_positive", "lambda_x_negative": "beta_D_negative",
     "lambda_third_low": "beta_D_low", "lambda_third_mid": "beta_D_mid", "lambda_third_high": "beta_D_high",
 }
+RATIO_DENOMINATORS = {
+    **{stat: (den,) for stat, den in DENOMINATOR.items()},
+    "diff_lambda": ("beta_D_partial", "beta_D_false"),
+    "diff_tau": ("beta_D_partial", "beta_D_false", "rho_pooled"),
+    "diff_phi_setting": ("rho_partial", "rho_false"),
+    "diff_lambda_layout": ("beta_D_single_record", "beta_D_two_record"),
+    **{f"{stat}_{setting}": ("rho_pooled", f"beta_D_{setting}")
+       for setting in SETTINGS for stat in ("tau", "phi_lambda")},
+}
 SECOND_RUN = "@r1"  # suffix of the second run's columns (replicate 1)
 MIN_SIGN_CASES = 8  # cases needed on each side of 0 for lambda by the sign of the gap
 MIN_THIRD_CASES = 50  # cases needed in each third of |x|
@@ -124,7 +133,7 @@ def setting_statistics(W: dict[str, np.ndarray], k: dict[str, str]) -> dict[str,
     out: dict[str, float] = {"manipulation_median_abs_gap": float(np.median(np.abs(x))),
                              "gap_sd": float(np.std(x, ddof=1))}
 
-    # ---- leakage (values as measured)
+    # Leakage (values as measured)
     out["intercept_C"], out["beta_C"] = ols(c - m, x)
     out["intercept_D"], out["beta_D"] = ols(d - m, x)
     out["lambda"] = _ratio(out["beta_C"], out["beta_D"])
@@ -133,7 +142,7 @@ def setting_statistics(W: dict[str, np.ndarray], k: dict[str, str]) -> dict[str,
     if not has_second_run(W, k):
         return out
 
-    # ---- reliability, responsiveness and theory of mind (calibrated values)
+    # Reliability, responsiveness and theory of mind (calibrated values)
     ca, cb, cc, cm, cd = (cal(W, k[r]) for r in ("A", "B", "C", "M", "D"))
     ca1, cb1 = cal(W, k["A"] + SECOND_RUN), cal(W, k["B"] + SECOND_RUN)
     xc, x1c = ca - cb, ca1 - cb1
@@ -143,7 +152,7 @@ def setting_statistics(W: dict[str, np.ndarray], k: dict[str, str]) -> dict[str,
     out["beta_C_calibrated"], out["beta_D_calibrated"] = slope(cc - cm, xc), slope(cd - cm, xc)
     out["phi_setting"] = _ratio(out["beta_D_calibrated"], out["rho"])
 
-    # ---- affine form: levels, instrumented by the second run; anchoring
+    # Affine form and anchoring using the second run as an instrument
     out["cov_A_A1"], out["cov_B_B1"] = _cov(ca, ca1), _cov(cb, cb1)
     out["phi_D_on_A"] = _ratio(_cov(cd, ca1), out["cov_A_A1"])
     out["intercept_D_on_A"] = float(np.mean(cd) - out["phi_D_on_A"] * np.mean(ca))
@@ -270,20 +279,8 @@ def apply_ratio_rule(table: pd.DataFrame) -> pd.DataFrame:
     by_stat = table.set_index("statistic")
     for i, row in table.iterrows():
         stat = row.statistic
-        deps = [DENOMINATOR[stat]] if stat in DENOMINATOR else []
-        if stat in ("diff_lambda", "diff_tau"):
-            deps = ["beta_D_partial", "beta_D_false"]
-        if stat == "diff_phi_setting":
-            deps = ["rho_partial", "rho_false"]
-        if stat == "diff_lambda_layout":
-            deps = ["beta_D_single_record", "beta_D_two_record"]
-        if stat == "diff_tau":
-            deps.append("rho_pooled")
-        for setting in SETTINGS:
-            if stat in (f"tau_{setting}", f"phi_lambda_{setting}"):
-                deps = ["rho_pooled", f"beta_D_{setting}"]
         reasons = []
-        for den in deps:
+        for den in RATIO_DENOMINATORS.get(stat, ()):
             if den not in by_stat.index:
                 reasons.append(f"insufficient cases for {den}")
                 continue

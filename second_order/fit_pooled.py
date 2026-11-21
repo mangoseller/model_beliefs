@@ -34,6 +34,7 @@ import torch
 from latent_beliefs.latent.domains import likelihood_values
 from latent_beliefs.latent.model import FitConfig, ProbabilisticLatentModel, fit_model
 from second_order import config as C
+from second_order.beliefs import clip_logit
 from second_order.responses import configured_specs
 QUADRATURE_POINTS = 128
 PROBABILITY_EPSILON = 1e-4
@@ -170,6 +171,5 @@ def anchor_check(latents: pd.DataFrame) -> pd.DataFrame:
         "mean_numeric_probability": g.numeric_probability.mean(),
         "mean_posterior_z": g.z_mean.mean(),
         "mean_ell": g.ell.mean(),
-        "mean_logit_numeric": g.numeric_probability.apply(
-            lambda s: np.mean(np.log(np.clip(s, .01, .99)) - np.log1p(-np.clip(s, .01, .99)))),
+        "mean_logit_numeric": g.numeric_probability.apply(lambda s: pd.Series(clip_logit(s)).mean()),
     }).reset_index()

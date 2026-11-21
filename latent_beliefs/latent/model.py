@@ -223,7 +223,7 @@ class ProbabilisticLatentModel(nn.Module):
                 continue
             raise ValueError(f"unknown output kind {spec.kind!r} for {spec.name!r}")
 
-    # ------------------------------------------------------------ curves
+    # Curves
     def _initialize_spline_curve(self, name: str, *, initial_slope: float) -> None:
         knot_values = float(initial_slope) * self.spline_knot_logits
         gaps = torch.diff(knot_values)
@@ -351,7 +351,7 @@ class ProbabilisticLatentModel(nn.Module):
             return probabilities @ categories
         raise ValueError(spec.kind)
 
-    # ------------------------------------------------------------ likelihood
+    # Likelihood
     def output_log_prob(self, output_index: int, observations: torch.Tensor) -> torch.Tensor:
         """Return log p(y_i | z_q) with shape [case, quadrature_point]."""
 
@@ -454,7 +454,7 @@ class ProbabilisticLatentModel(nn.Module):
         terms = [parameter.square().mean() for parameter in self.parameters()]
         return torch.stack(terms).mean() if terms else torch.zeros((), dtype=self.dtype)
 
-    # ------------------------------------------------------------ export
+    # Export
     def parameter_rows(self) -> list[dict[str, Any]]:
         """Derived parameters, in the layout of parameters.csv."""
 
@@ -516,7 +516,7 @@ class ProbabilisticLatentModel(nn.Module):
         ]
 
 
-# ---------------------------------------------------------------- fitting
+# Fitting
 @dataclass(frozen=True)
 class FitConfig:
     epochs: int = 30000
@@ -633,7 +633,7 @@ def concordance_index(actual: Iterable[float], prediction: Iterable[float]) -> t
     return concordant / comparable, comparable
 
 
-# ---------------------------------------------------------------- restoring
+# Restoring fitted models
 def _parameter_lookup(rows: pd.DataFrame, output_name: str, parameter: str) -> float:
     selected = rows[(rows["output_name"] == output_name) & (rows["parameter"] == parameter)]
     if len(selected) != 1:

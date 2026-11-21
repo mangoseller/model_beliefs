@@ -69,7 +69,7 @@ def prepare(domain: str, prompts_dir: Path, collection_dir: Path) -> None:
     print(f"{domain}: prepared {len(rows)} records ({input_path.stat().st_size} bytes)")
 
 
-# ---------------------------------------------------------------- AWS
+# AWS requests
 class Bedrock:
     def __init__(self, args: argparse.Namespace):
         import boto3

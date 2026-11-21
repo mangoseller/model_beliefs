@@ -31,7 +31,6 @@ from second_order.bespoke import score_comprehension
 from second_order.conditions import CONDITIONS
 from second_order.run_generation import FOLLOWUP, Item, experiment_items, followup_plan, lookup
 
-UNIT = ["case_id", "replicate", "sample"]  # one model call per output
 CHECKS = ("check", "role_check")
 THINK = re.compile(r"<think>.*?</think>", flags=re.S)
 
@@ -48,7 +47,7 @@ def responses_path(model: str, dataset: str, condition: str):
     return C.RESPONSES / model / dataset / f"{condition}.parquet"
 
 
-# ---------------------------------------------------------------- latent specs
+# Latent output specifications
 def cutoff(question_id: str) -> float | None:
     """The probability at which a decision should flip: 1 / (1 + k) for threshold_k, bet_k and cost_k."""
     kind, _, k = question_id.partition("_")
@@ -80,7 +79,7 @@ def configured_specs() -> tuple[OutputSpec, ...]:
     return latent_specs(tuple(C.load()["latent"]["batteries"]))
 
 
-# ---------------------------------------------------------------- parsing
+# Response parsing
 @dataclass(frozen=True)
 class AnswerScore:
     """Value extracted from the text. Only status 'parsed' qualifies for primary analysis."""
@@ -199,7 +198,7 @@ def retention(long: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------- checks and comprehension
+# Checks and comprehension
 def checks(long: pd.DataFrame) -> pd.DataFrame:
     """CKD checks and role probes, one row per answer, with the keyed relation and record order."""
     part = long[long.output.str.split("/").str[0].isin(CHECKS)].copy()

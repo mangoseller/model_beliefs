@@ -56,7 +56,7 @@ DOMAIN_INDEX = {domain: index for index, domain in enumerate(DOMAINS)}
 MODEL_INDEX = {model: index for index, model in enumerate(FIGURE_ORDER)}
 
 
-# ---------------------------------------------------------------- predictions
+# Predictions
 def probability_conditioned_predictions(
     model: ProbabilisticLatentModel, likelihood_values: np.ndarray, raw_test: pd.DataFrame
 ) -> pd.DataFrame:
@@ -113,7 +113,7 @@ def generate_probability_conditioned_predictions(fit_dir: Path) -> pd.DataFrame:
     return pd.concat(parts, ignore_index=True)
 
 
-# ---------------------------------------------------------------- concordance share
+# Concordance share
 def align_prediction_frames(latent_predictions: pd.DataFrame, probability_predictions: pd.DataFrame) -> pd.DataFrame:
     """Align both predictors on the exact same test outcomes."""
     keys = ["domain", "model_key", "row_index", "output_name"]
@@ -254,7 +254,7 @@ def summarize_cindex_pairs(pairs: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------- pooled R^2
+# Pooled R^2
 def prediction_components(predictions: pd.DataFrame, method: str) -> pd.DataFrame:
     """Per-output SSE and SST (around the test mean) on the reported scale."""
     finite = predictions[np.isfinite(predictions["actual"]) & np.isfinite(predictions["prediction"])].copy()

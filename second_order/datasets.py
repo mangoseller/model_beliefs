@@ -30,10 +30,10 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 from second_order import config as C
+from second_order.beliefs import clip_logit as logit
 from second_order.conditions import condition_key
 
 CKD_FILES = {"main": "ckd_second_order_v3.csv", "high_thresholds": "ckd_second_order_v3_high_thresholds.csv",
@@ -46,7 +46,7 @@ BESPOKE_META = ["family", "person", "n_shown", "n_hidden_or_altered", "model_evi
 BESPOKE_OUTPUT = "probability"
 
 
-# ---------------------------------------------------------------- files
+# Dataset files
 def ckd_dir() -> Path:
     return C.resolve(C.load()["datasets"]["ckd"]["dir"])
 
@@ -74,7 +74,7 @@ def patients() -> pd.DataFrame:
     return open_csv(ckd_dir() / "patients.csv").set_index("item_id", drop=False)
 
 
-# ---------------------------------------------------------------- rows
+# Dataset rows
 @lru_cache(maxsize=None)
 def _ckd_battery(battery: str) -> pd.DataFrame:
     raw = open_csv(ckd_dir() / CKD_FILES[battery])
@@ -165,7 +165,7 @@ def max_tokens(dataset: str, output: str) -> int:
     return int(limits["probability" if output.split("/")[0] == "probability" else "choice"])
 
 
-# ---------------------------------------------------------------- answers
+# Answer formats
 OPTION = re.compile(r"^([A-E])\. (.+)$", flags=re.M)
 ACT = {"Recommend screening for CKD": 1.0, "Screen this patient for CKD": 1.0, "Accept the bet": 1.0,
        "Recommend not screening for CKD": 0.0, "Do not screen this patient for CKD": 0.0, "Decline the bet": 0.0}
@@ -173,7 +173,7 @@ LIKERT = {"Very unlikely": 1.0, "Somewhat unlikely": 2.0, "Neither likely nor un
           "Somewhat likely": 4.0, "Very likely": 5.0}
 QUINTILE = {"Less than 5.07%": 1.0, "5.07% to less than 7.49%": 2.0, "7.49% to less than 13.02%": 3.0,
             "13.02% to less than 29.72%": 4.0, "29.72% or higher": 5.0}
-QUOTED_KEY = re.compile(r'"probability"\s*:\s*"?([0-9]*\.?[0-9]+)\s*(%?)"?', flags=re.I)
+OPTION_SCORES = {"likert": LIKERT, "quintile": QUINTILE}
 LETTER = re.compile(r"\s*[*_`(\[]*([A-E])[*_`)\].:]*(?:\s+(.*?))?[\s.*_`]*", flags=re.S)
 
 
@@ -184,13 +184,9 @@ def options(prompt: str) -> dict[str, str]:
 
 def option_value(question_id: str, text: str) -> float | str:
     """The meaning of an option: 1/0 (act or not), a 1-5 category, or Yes/No (checks)."""
-    if question_id == "likert":
-        return LIKERT[text]
-    if question_id == "quintile":
-        return QUINTILE[text]
     if question_id in ("check", "role_check"):
         return text
-    return ACT[text]
+    return OPTION_SCORES.get(question_id, ACT)[text]
 
 
 def parse_letter(text: str, opts: dict[str, str]) -> str | None:
@@ -258,12 +254,3 @@ def parse(dataset: str, output: str, prompt: str, text: str | None, *,
     if check_answer is not None:
         return float(letter == check_answer), "letter"
     return option_value(question, opts[letter]), "letter"
-
-
-def logit(p) -> np.ndarray:
-    p = np.clip(np.asarray(p, dtype=float), 0.01, 0.99)
-    return np.log(p) - np.log1p(-p)
-
-
-
-

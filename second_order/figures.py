@@ -5,7 +5,7 @@ Headline and diagnostics:
 * ``curse_schematic``: what lambda, phi and tau measure, on two lines of log-odds
   gaps (illustrative values);
 * ``curse_decomposition``: the same diagram with each run's estimates, one row per
-  model, dataset, method and setting (with that setting's own phi);
+  model, dataset, method and setting, using the shared phi;
 * ``curse_estimates``: lambda and tau per setting and the shared phi, per model,
   dataset and method, with Camerer et al.'s w;
 * ``curse_scatter``: the two regressions behind lambda;
@@ -74,11 +74,6 @@ def read(name):
     return pd.read_csv(path) if path.exists() and path.stat().st_size > 1 else pd.DataFrame()
 
 
-def errbar(ax, x, r, color, marker="o", hollow=False, label=None):
-    ax.errorbar(x, r.estimate, yerr=[[r.estimate - r.ci_lower], [r.ci_upper - r.estimate]], fmt=marker,
-                color=color, mfc="white" if hollow else color, ms=6, elinewidth=1.2, capsize=0, label=label)
-
-
 def retention(ret):
     if ret.empty:
         return
@@ -108,8 +103,8 @@ def retention(ret):
 def curse_estimates(est):
     """Leakage and theory of mind per setting, with pooled responsiveness."""
     L = est[est.case_set == "all"]
-    groups = list(L.groupby(["model", "dataset", "method"], sort=False).size().index)
-    if not groups:
+    groups = L.groupby(["model", "dataset", "method"], sort=False)
+    if groups.ngroups == 0:
         return
     w = float(C.load()["experiment"]["camerer_w"])
     fig, axes = plt.subplots(1, 3, figsize=(10, 0.45 * len(groups) + 1.6), sharey=True)
@@ -118,59 +113,60 @@ def curse_estimates(est):
     for ax, (statistic, title, refs) in zip(axes, panels):
         for ref in refs:
             ax.axvline(ref, color=MUTED, lw=0.8, ls=":" if ref == w and statistic == "lambda" else "-")
-        for i, (model, dataset, method) in enumerate(groups):
-            rows = [(setting, statistic, (j - 0.5) * 0.3, SETTING_COLOR[setting], False)
-                    for j, setting in enumerate(("partial", "false"))]
-            if statistic == "phi":
-                rows = [("both", "phi", 0.0, INK, False)]
-            for setting, stat, dy, color, hollow in rows:
-                r = L[(L.model == model) & (L.dataset == dataset) & (L.method == method) & (L.setting == setting)
-                      & (L.statistic == stat)]
-                if r.empty or not np.isfinite(r.estimate.iloc[0]):
+        settings = [("both", 0, INK)] if statistic == "phi" else [
+            ("partial", -0.15, SETTING_COLOR["partial"]), ("false", 0.15, SETTING_COLOR["false"])]
+        for i, (_, group) in enumerate(groups):
+            for setting, dy, color in settings:
+                rows = group[(group.setting == setting) & (group.statistic == statistic)]
+                if rows.empty or not np.isfinite(rows.estimate.iloc[0]):
                     continue
-                r = r.iloc[0]
+                r = rows.iloc[0]
                 ax.hlines(i + dy, r.ci_lower, r.ci_upper, color=color, lw=1.2)
-                ax.errorbar(r.estimate, i + dy,
-                            fmt="o", color=color, mfc="white" if hollow else color, ms=5, elinewidth=1.2,
-                            capsize=0, label=(setting if setting != "both" else "shared")
-                            if i == 0 and not hollow else None)
+                label = "shared" if setting == "both" else setting
+                ax.errorbar(r.estimate, i + dy, fmt="o", color=color, ms=5, elinewidth=1.2,
+                            capsize=0, label=label if i == 0 else None)
         style(ax, title)
         ax.grid(axis="x", color=GRID, linewidth=0.8)
         ax.grid(axis="y", visible=False)
-    axes[0].set_yticks(range(len(groups)), [f"{display(m)} · {d} · {k}" for m, d, k in groups], fontsize=7)
+    axes[0].set_yticks(range(len(groups)), [f"{display(m)} · {d} · {k}" for (m, d, k), _ in groups], fontsize=7)
     axes[0].invert_yaxis()
     axes[0].legend(fontsize=7, frameon=False, loc="lower right")
     save(fig, "curse_estimates")
+
+
+def setting_panels(frame, row_height):
+    """Give each model, dataset and method a row, with partial and false in fixed columns."""
+    groups = frame.groupby(["model", "dataset", "method"], sort=False)
+    fig, axes = plt.subplots(len(groups), 2, figsize=(7.5, row_height * len(groups)), squeeze=False)
+    panels = ((ax, *key, setting, group[group.setting == setting])
+              for (key, group), row in zip(groups, axes)
+              for ax, setting in zip(row, ("partial", "false")))
+    return fig, panels
 
 
 def curse_scatter(scatter, est):
     """Per model, dataset and method: l_C - l_M and l_D - l_M against x = l_A - l_B, by setting."""
     if scatter.empty:
         return
-    groups = list(scatter.groupby(["model", "dataset", "method"], sort=False).size().index)
-    fig, axes = plt.subplots(len(groups), 2, figsize=(7.5, 2.8 * len(groups)), squeeze=False)
-    for i, (model, dataset, method) in enumerate(groups):
-        for j, setting in enumerate(("partial", "false")):
-            ax = axes[i][j]
-            d = scatter[(scatter.model == model) & (scatter.dataset == dataset) & (scatter.method == method)
-                        & (scatter.setting == setting)]
-            if len(d) < 3:
-                ax.set_visible(False)
-                continue
-            x = d.x_A_minus_B.to_numpy()
-            grid = np.linspace(x.min(), x.max(), 20)
-            for column, color, label in (("y_D_minus_M", MUTED, "D − M (slope β_D)"),
-                                         ("y_C_minus_M", SETTING_COLOR[setting], "C − M (slope β_C)")):
-                ax.scatter(x, d[column], s=6, color=color, alpha=0.5, lw=0)
-                role = column.split("_")[1]
-                slope, intercept = d[f"beta_{role}"].iloc[0], d[f"intercept_{role}"].iloc[0]
-                ax.plot(grid, intercept + slope * grid, color=color, lw=1.5, label=f"{label} = {slope:.2f}, intercept {intercept:.2f}")
-            lam = est[(est.model == model) & (est.dataset == dataset) & (est.method == method)
-                      & (est.setting == setting) & (est.statistic == "lambda") & (est.case_set == "all")]
-            tag = f", λ = {lam.estimate.iloc[0]:.2f}" if len(lam) and np.isfinite(lam.estimate.iloc[0]) else ""
-            style(ax, f"{display(model)} · {dataset} · {method} · {setting}{tag}")
-            ax.set_xlabel("l_A − l_B (logits)", fontsize=8, color=INK2)
-            ax.legend(fontsize=6.5, frameon=False, loc="upper left")
+    fig, panels = setting_panels(scatter, 2.8)
+    for ax, model, dataset, method, setting, d in panels:
+        if len(d) < 3:
+            ax.set_visible(False)
+            continue
+        x = d.x_A_minus_B.to_numpy()
+        grid = np.linspace(x.min(), x.max(), 20)
+        for column, color, label in (("y_D_minus_M", MUTED, "D − M (slope β_D)"),
+                                     ("y_C_minus_M", SETTING_COLOR[setting], "C − M (slope β_C)")):
+            ax.scatter(x, d[column], s=6, color=color, alpha=0.5, lw=0)
+            role = column.split("_")[1]
+            slope, intercept = d[f"beta_{role}"].iloc[0], d[f"intercept_{role}"].iloc[0]
+            ax.plot(grid, intercept + slope * grid, color=color, lw=1.5, label=f"{label} = {slope:.2f}, intercept {intercept:.2f}")
+        lam = est[(est.model == model) & (est.dataset == dataset) & (est.method == method)
+                  & (est.setting == setting) & (est.statistic == "lambda") & (est.case_set == "all")]
+        tag = f", λ = {lam.estimate.iloc[0]:.2f}" if len(lam) and np.isfinite(lam.estimate.iloc[0]) else ""
+        style(ax, f"{display(model)} · {dataset} · {method} · {setting}{tag}")
+        ax.set_xlabel("l_A − l_B (logits)", fontsize=8, color=INK2)
+        ax.legend(fontsize=6.5, frameon=False, loc="upper left")
     save(fig, "curse_scatter")
 
 
@@ -178,10 +174,6 @@ FAMILY_COLOR = {"self": "#52514e", "person": "#2a78d6"}
 KIND_MARKER = {"threshold": "o", "bet": "s", "cost": "^", "decision": "D"}
 ROLE_COLOR = {"A": "#52514e", "B": "#8a8984", "D": "#7fb0eb", "M": "#1baf7a", "C": "#eb6834"}
 SETTING_CONDITIONS = {"partial": ("A", "B", "D", "M", "C"), "false": ("A_F", "B_F", "D_F", "M_F", "C_F")}
-
-
-def groups_of(frame, keys=("model", "dataset", "method")):
-    return list(frame.groupby(list(keys), sort=False).size().index)
 
 
 def curse_thresholds(thr):
@@ -265,47 +257,41 @@ def curse_linearity(scatter, est, bins: int = 8):
     """Binned means of the two gap regressions' outcomes against x, with the fitted lines."""
     if scatter.empty:
         return
-    groups = groups_of(scatter)
-    fig, axes = plt.subplots(len(groups), 2, figsize=(7.5, 2.6 * len(groups)), squeeze=False)
-    for i, (model, dataset, method) in enumerate(groups):
-        for j, setting in enumerate(("partial", "false")):
-            ax = axes[i][j]
-            d = scatter[(scatter.model == model) & (scatter.dataset == dataset) & (scatter.method == method)
-                        & (scatter.setting == setting)]
-            if len(d) < 3:
-                ax.set_visible(False)
-                continue
-            x = d.x_A_minus_B.to_numpy()
-            edges = np.unique(np.quantile(x, np.linspace(0, 1, min(bins, len(d)) + 1)))
-            which = np.clip(np.digitize(x, edges[1:-1]), 0, len(edges) - 2)
-            for column, color, label in (("y_D_minus_M", MUTED, "D − M"),
-                                         ("y_C_minus_M", SETTING_COLOR[setting], "C − M")):
-                y = d[column].to_numpy()
-                mx = [x[which == b].mean() for b in range(len(edges) - 1) if (which == b).any()]
-                my = [y[which == b].mean() for b in range(len(edges) - 1) if (which == b).any()]
-                se = [y[which == b].std(ddof=1) / np.sqrt((which == b).sum()) if (which == b).sum() > 1 else 0
-                      for b in range(len(edges) - 1) if (which == b).any()]
-                ax.errorbar(mx, my, yerr=1.96 * np.array(se), fmt="o", ms=4, color=color, lw=1, label=label)
-                role = column.split("_")[1]
-                slope, intercept = d[f"beta_{role}"].iloc[0], d[f"intercept_{role}"].iloc[0]
-                grid = np.linspace(x.min(), x.max(), 20)
-                ax.plot(grid, intercept + slope * grid, color=color, lw=1, ls="--")
-            ax.axhline(0, color=GRID, lw=0.8)
-            ax.set_xlabel("l_A − l_B (binned)", fontsize=8, color=INK2)
-            style(ax, f"{display(model)} · {dataset} · {method} · {setting}")
-            ax.legend(fontsize=6.5, frameon=False, loc="upper left")
+    fig, panels = setting_panels(scatter, 2.6)
+    for ax, model, dataset, method, setting, d in panels:
+        if len(d) < 3:
+            ax.set_visible(False)
+            continue
+        x = d.x_A_minus_B.to_numpy()
+        grid = np.linspace(x.min(), x.max(), 20)
+        edges = np.unique(np.quantile(x, np.linspace(0, 1, min(bins, len(d)) + 1)))
+        which = np.clip(np.digitize(x, edges[1:-1]), 0, len(edges) - 2)
+        masks = [which == b for b in range(len(edges) - 1)]
+        masks = [mask for mask in masks if mask.any()]
+        mx = [x[mask].mean() for mask in masks]
+        for column, color, label in (("y_D_minus_M", MUTED, "D − M"),
+                                     ("y_C_minus_M", SETTING_COLOR[setting], "C − M")):
+            y = d[column].to_numpy()
+            values = [y[mask] for mask in masks]
+            my = [v.mean() for v in values]
+            se = [v.std(ddof=1) / np.sqrt(len(v)) if len(v) > 1 else 0 for v in values]
+            ax.errorbar(mx, my, yerr=1.96 * np.array(se), fmt="o", ms=4, color=color, lw=1, label=label)
+            role = column.split("_")[1]
+            slope, intercept = d[f"beta_{role}"].iloc[0], d[f"intercept_{role}"].iloc[0]
+            ax.plot(grid, intercept + slope * grid, color=color, lw=1, ls="--")
+        ax.axhline(0, color=GRID, lw=0.8)
+        ax.set_xlabel("l_A − l_B (binned)", fontsize=8, color=INK2)
+        style(ax, f"{display(model)} · {dataset} · {method} · {setting}")
+        ax.legend(fontsize=6.5, frameon=False, loc="upper left")
     save(fig, "curse_linearity")
-    fig, axes = plt.subplots(len(groups), 2, figsize=(7.5, 2.6 * len(groups)), squeeze=False)
-    for i, (model, dataset, method) in enumerate(groups):
-        for ax, setting in zip(axes[i], ("partial", "false")):
-            d = scatter[(scatter.model == model) & (scatter.dataset == dataset) & (scatter.method == method)
-                        & (scatter.setting == setting)]
-            for role, color in (("C", C_COLOR), ("D", D_COLOR)):
-                ax.scatter(d.x_A_minus_B, d[f"residual_{role}"], s=5, color=color, alpha=.5, label=role)
-            ax.axhline(0, color=MUTED, lw=.8)
-            ax.set(xlabel="A − B (log odds)", ylabel="Observed minus fitted (log odds)")
-            style(ax, f"{display(model)} · {dataset} · {method} · {setting}")
-            ax.legend()
+    fig, panels = setting_panels(scatter, 2.6)
+    for ax, model, dataset, method, setting, d in panels:
+        for role, color in (("C", C_COLOR), ("D", D_COLOR)):
+            ax.scatter(d.x_A_minus_B, d[f"residual_{role}"], s=5, color=color, alpha=.5, label=role)
+        ax.axhline(0, color=MUTED, lw=.8)
+        ax.set(xlabel="A − B (log odds)", ylabel="Observed minus fitted (log odds)")
+        style(ax, f"{display(model)} · {dataset} · {method} · {setting}")
+        ax.legend()
     save(fig, "curse_residuals")
 
 
@@ -313,26 +299,21 @@ def curse_case_leakage(scatter):
     """Per-case leakage (l_C - l_M) / (l_D - l_M), for cases with |l_D - l_M| above its median."""
     if scatter.empty:
         return
-    groups = groups_of(scatter)
-    fig, axes = plt.subplots(len(groups), 2, figsize=(7.5, 2.3 * len(groups)), squeeze=False)
-    for i, (model, dataset, method) in enumerate(groups):
-        for j, setting in enumerate(("partial", "false")):
-            ax = axes[i][j]
-            d = scatter[(scatter.model == model) & (scatter.dataset == dataset) & (scatter.method == method)
-                        & (scatter.setting == setting)]
-            den = d.y_D_minus_M.to_numpy()
-            keep = np.abs(den) > np.median(np.abs(den)) if len(d) else np.array([], bool)
-            if keep.sum() < 3:
-                ax.set_visible(False)
-                continue
-            ratio = np.clip(d.y_C_minus_M.to_numpy()[keep] / den[keep], -1, 2)
-            ax.hist(ratio, bins=np.linspace(-1, 2, 31), color=SETTING_COLOR[setting], alpha=0.8)
-            ax.axvline(np.median(ratio), color=INK, lw=1.2, label=f"median {np.median(ratio):.2f}")
-            for ref in (0, 1):
-                ax.axvline(ref, color=MUTED, lw=0.8, ls=":")
-            ax.set_xlabel("(l_C − l_M) / (l_D − l_M), clipped to [−1, 2]", fontsize=8, color=INK2)
-            style(ax, f"{display(model)} · {dataset} · {method} · {setting} (n={int(keep.sum())})")
-            ax.legend(fontsize=6.5, frameon=False)
+    fig, panels = setting_panels(scatter, 2.3)
+    for ax, model, dataset, method, setting, d in panels:
+        den = d.y_D_minus_M.to_numpy()
+        keep = np.abs(den) > np.median(np.abs(den)) if len(d) else np.array([], bool)
+        if keep.sum() < 3:
+            ax.set_visible(False)
+            continue
+        ratio = np.clip(d.y_C_minus_M.to_numpy()[keep] / den[keep], -1, 2)
+        ax.hist(ratio, bins=np.linspace(-1, 2, 31), color=SETTING_COLOR[setting], alpha=0.8)
+        ax.axvline(np.median(ratio), color=INK, lw=1.2, label=f"median {np.median(ratio):.2f}")
+        for ref in (0, 1):
+            ax.axvline(ref, color=MUTED, lw=0.8, ls=":")
+        ax.set_xlabel("(l_C − l_M) / (l_D − l_M), clipped to [−1, 2]", fontsize=8, color=INK2)
+        style(ax, f"{display(model)} · {dataset} · {method} · {setting} (n={int(keep.sum())})")
+        ax.legend(fontsize=6.5, frameon=False)
     save(fig, "curse_case_leakage")
 
 
@@ -341,15 +322,14 @@ def curse_comprehension(est):
     L = est[(est.statistic == "lambda") & est.setting.isin(["partial", "false"])]
     if L.empty or "comprehension_pass" not in set(L.case_set):
         return
-    groups = groups_of(L, ("model", "dataset", "method", "setting"))
+    groups = L.groupby(["model", "dataset", "method", "setting"], sort=False)
     fig, ax = plt.subplots(figsize=(6, 0.4 * len(groups) + 1.4))
     w = float(C.load()["experiment"]["camerer_w"])
     for ref in (0, w, 1):
         ax.axvline(ref, color=MUTED, lw=0.8, ls=":" if ref == w else "-")
-    for i, (model, dataset, method, setting) in enumerate(groups):
+    for i, ((_, _, _, setting), group) in enumerate(groups):
         for k, (case_set, hollow) in enumerate((("all", False), ("comprehension_pass", True))):
-            r = L[(L.model == model) & (L.dataset == dataset) & (L.method == method) & (L.setting == setting)
-                  & (L.case_set == case_set)]
+            r = group[group.case_set == case_set]
             if r.empty or not np.isfinite(r.estimate.iloc[0]):
                 continue
             r = r.iloc[0]
@@ -357,14 +337,14 @@ def curse_comprehension(est):
             ax.errorbar(r.estimate, i + (k - 0.5) * 0.3,
                         fmt="o", ms=5, color=SETTING_COLOR[setting], mfc="white" if hollow else SETTING_COLOR[setting],
                         elinewidth=1.1, capsize=0, label=case_set if i == 0 else None)
-    ax.set_yticks(range(len(groups)), [f"{display(m)} · {d} · {k} · {s}" for m, d, k, s in groups], fontsize=7)
+    ax.set_yticks(range(len(groups)), [f"{display(m)} · {d} · {k} · {s}" for (m, d, k, s), _ in groups], fontsize=7)
     ax.invert_yaxis()
     ax.legend(fontsize=7, frameon=False, loc="lower right")
     style(ax, "λ on all answers (filled) and comprehension-passing answers (hollow)")
     save(fig, "curse_comprehension")
 
 
-# ---------------------------------------------------------------- the decomposition diagram
+# Decomposition diagram
 M_COLOR, C_COLOR, D_COLOR = CONDITION_COLOR["M"], "#c4521f", CONDITION_COLOR["C"]
 
 
@@ -425,16 +405,13 @@ def curse_decomposition(est):
     phi here is the pooled estimate (``phi``), so the two segments add up to D's position.
     """
     L = est[(est.case_set == "all") & est.setting.isin(["partial", "false"])]
-    groups = [g for g in groups_of(L, ("model", "dataset", "method", "setting"))
-              if {"phi", "phi_lambda"} <= set(L[(L.model == g[0]) & (L.dataset == g[1]) & (L.method == g[2])
-                                                & (L.setting == g[3])].statistic)]
+    groups = [(key, g.set_index("statistic")) for key, g in L.groupby(["model", "dataset", "method", "setting"], sort=False)
+              if {"phi", "phi_lambda"} <= set(g.statistic)]
     if not groups:
         return
     w = float(C.load()["experiment"]["camerer_w"])
     fig, ax = plt.subplots(figsize=(8.6, 0.55 * len(groups) + 1.6))
-    for i, (model, dataset, method, setting) in enumerate(groups):
-        g = L[(L.model == model) & (L.dataset == dataset) & (L.method == method) & (L.setting == setting)]
-        g = g.set_index("statistic")
+    for i, ((model, dataset, method, setting), g) in enumerate(groups):
         y = -i
         ax.plot([0, 1], [y + 0.18, y + 0.18], color=GRID, lw=2.5, solid_capstyle="round")
         ax.plot([0, 1], [y, y], color=GRID, lw=0.8, ls=":")

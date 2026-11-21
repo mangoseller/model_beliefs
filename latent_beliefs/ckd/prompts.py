@@ -32,7 +32,7 @@ CKD_PROMPTS_DIR = PROMPTS_DIR / "ckd"
 TASKS_PATH = CKD_PROMPTS_DIR / "tasks.json"
 ANALYSED_COHORT = "original500"
 
-# ---------------------------------------------------------------- patient profile
+# Patient profile
 FEATURE_KEYS = {
     "hypertension_self_reported": "htn",
     "diabetes_self_reported": "diab",
@@ -156,7 +156,7 @@ def patient_profile(case: pd.Series) -> str:
     return "\n".join(lines).strip()
 
 
-# ---------------------------------------------------------------- prompt templates
+# Prompt templates
 def quantile(sorted_values: list[float], q: float) -> float:
     pos = q * (len(sorted_values) - 1)
     lo = int(pos)

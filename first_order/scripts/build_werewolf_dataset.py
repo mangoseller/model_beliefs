@@ -47,7 +47,7 @@ API = "https://www.kaggle.com/api/v1/datasets"
 REF = "kaggle/werewolf-dataset"
 
 
-# ---------------------------------------------------------------- download
+# Download
 
 def _get(url, timeout=300):
     req = urllib.request.Request(url, headers={"User-Agent": "model-beliefs-research"})
@@ -85,7 +85,7 @@ def download(n_games, pages, rng):
         time.sleep(0.5)
 
 
-# ---------------------------------------------------------------- parsing
+# Game replay parsing
 
 def load_game(path):
     g = json.loads(path.read_text())
@@ -206,7 +206,7 @@ def make_context(game, i, focal, target, when):
     return f"{head}\n\nYOUR PRIVATE EVIDENCE\n" + "\n".join(private) + "\n\nPUBLIC EVIDENCE\n" + "\n".join(public)
 
 
-# ---------------------------------------------------------------- sampling
+# Sampling
 
 def main():
     ap = argparse.ArgumentParser()

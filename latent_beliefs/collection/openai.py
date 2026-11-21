@@ -77,7 +77,7 @@ def prepare(domain: str, models: list[str], prompts_dir: Path, collection_dir: P
         print(f"{domain}/{model}: prepared {len(rows)} requests")
 
 
-# ---------------------------------------------------------------- API
+# API requests
 def api_headers() -> dict[str, str]:
     key = os.environ.get("OPENAI_API_KEY")
     if not key:

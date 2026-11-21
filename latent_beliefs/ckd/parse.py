@@ -43,7 +43,7 @@ CASE_COLUMNS = (
     "ckd",
 )
 
-# ---------------------------------------------------------------- strict parsers
+# Strict response parsers
 POSITIVE_PHRASES = (
     "accept the bet",
     "screen this patient for ckd",
@@ -190,7 +190,7 @@ def parse_response(family: str, output_text: str) -> tuple[float | None, str | N
     return value, (STRICT if value is not None else None)
 
 
-# ---------------------------------------------------------------- tables
+# Tables
 def read_jsonl(path: Path) -> Iterator[dict[str, Any]]:
     with path.open(encoding="utf-8", errors="replace") as handle:
         for line_number, line in enumerate(handle, 1):

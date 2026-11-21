@@ -56,8 +56,7 @@ INSTRUCTIONS = ("\n\nProvide your reasoning first.", "\nAnswer with a single")
 
 
 def settings() -> dict:
-    return {"outputs": {"ckd": ["probability/normal"], "bespoke": ["probability"]}, "samples": 1,
-            "replicates": [0], **(C.load().get("activations") or {})}
+    return C.section_settings("activations")
 
 
 def freeze_items(model: str, dataset: str, case_ids: list[str], conditions: list[str] | None = None) -> list[Item]:
@@ -83,12 +82,6 @@ def answer_start(output: str, text: str) -> int:
 def token_at(offsets: list[tuple[int, int]], char_end: int) -> int:
     """Index of the last token that starts before ``char_end``: the token holding its last character."""
     found = [k for k, (start, end) in enumerate(offsets) if start < char_end and end > start]
-    return found[-1] if found else -1
-
-
-def token_before(offsets: list[tuple[int, int]], char: int) -> int:
-    """Index of the last token that ends at or before ``char`` (none of it reaches that character)."""
-    found = [k for k, (start, end) in enumerate(offsets) if end <= char and end > start]
     return found[-1] if found else -1
 
 

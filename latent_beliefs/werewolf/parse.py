@@ -574,7 +574,7 @@ def parse_response(
     return None, None
 
 
-# ------------------------------------------------------------------ CLI
+# Command-line entry point
 
 
 def read_jsonl(path: Path):

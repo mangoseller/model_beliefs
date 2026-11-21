@@ -38,7 +38,7 @@ ICC_DIR = EVALUATION_DIR / "branching_icc"
 PREDICTION_PATH = EVALUATION_DIR / "branching_prediction" / "branch_latent_cindex_summary.csv"
 MODELS = style.BRANCH_MODELS
 
-# ---------------------------------------------------------------- panel a
+# Panel a
 TREE_DOMAIN = "werewolf"
 N_EXAMPLES = 6
 PREFIX_COLORS = [plt.get_cmap("tab10")(i) for i in range(5)]
@@ -48,7 +48,7 @@ ROOT_OFF = 0.10
 PREFIX_OFF = 0.50
 LEAF_OFFS = np.linspace(0.84, 0.92, 5)
 
-# ---------------------------------------------------------------- panel c
+# Panel c
 BAR_WIDTH = 0.18
 # Bar centers within a domain group: [first same, first diff, second same, second diff].
 BAR_OFFSETS = (-0.29, -0.10, 0.10, 0.29)
@@ -137,7 +137,7 @@ def draw_tree_row(ax, resp: pd.DataFrame, order: dict, model: str, show_xticklab
     return tidy_rows
 
 
-# ---------------------------------------------------------------- panel b
+# Panel b
 def draw_icc_panel(ax, summary_path: Path) -> list[dict]:
     df = pd.read_csv(summary_path)
     df = df[df["model_alias"].isin(MODELS)].copy()
@@ -181,7 +181,7 @@ def draw_icc_panel(ax, summary_path: Path) -> list[dict]:
     return tidy
 
 
-# ---------------------------------------------------------------- panel c
+# Panel c
 PREDICTION_COLUMNS = (
     "own_branch_mean_task_c_index",
     "random_other_replicate_mean_task_c_index_mean",

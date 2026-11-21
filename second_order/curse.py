@@ -67,7 +67,7 @@ def read_csv(path) -> pd.DataFrame:
     return pd.read_csv(path) if path.exists() and path.stat().st_size > 1 else pd.DataFrame()
 
 
-# ---------------------------------------------------------------- case sets
+# Case selection
 def comprehension_pass(model: str, dataset: str, b: pd.DataFrame) -> pd.DataFrame | None:
     """Beliefs with each C condition restricted to answers whose comprehension check was right.
 
@@ -113,7 +113,7 @@ def case_sets(model: str, dataset: str, b: pd.DataFrame) -> dict[str, pd.DataFra
     return sets
 
 
-# ---------------------------------------------------------------- estimates
+# Estimates
 def beliefs_for(model: str, dataset: str, method: str) -> pd.DataFrame:
     b = BL.read(model, method, dataset)
     if dataset == "ckd" and "M2" in set(b.condition):
@@ -147,9 +147,7 @@ def direction_contrast(model: str, resamples: int, seed: int) -> pd.DataFrame:
         for reference in references("ckd"):
             k = L.roles("ckd", "false", reference)
             cols = [k[r] for r in "ABCMD"]
-            if any(c not in W for c in cols):
-                W = W.reindex(columns=W.columns.union(cols))
-            part = W.loc[W.index.isin(eligible.index), cols].dropna()
+            part = W.loc[W.index.isin(eligible.index)].reindex(columns=cols).dropna()
             strata = eligible.loc[part.index, ["label", "false_direction"]].astype(str)
             strata = strata.label + "|" + strata.false_direction
             direction = eligible.loc[part.index, "false_direction"].to_numpy()
@@ -198,7 +196,7 @@ def direction_contrast(model: str, resamples: int, seed: int) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ---------------------------------------------------------------- CKD diagnostics
+# CKD diagnostics
 def check_tables(model: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     """(check accuracy by setting, relation and record order; role-swap gaps and probe pairs)."""
     scored = read_csv(C.RESULTS / "checks" / f"{model}.csv")
@@ -285,7 +283,7 @@ def decision_curves(model: str, *, bandwidth: float = 0.10, points: int = 40, re
 
     rows = []
     for condition in scheduled:
-        g = both[both.condition == condition].dropna(subset=["z_mean", "decide"])
+        g = observed[observed.condition == condition]
         if len(g) < 3:
             rows.append(pd.DataFrame([dict(model=model, condition=condition, n_cases=len(g), status="insufficient cases", z=np.nan, p_decide=np.nan, ci_lower=np.nan, ci_upper=np.nan)]))
             continue
@@ -297,7 +295,7 @@ def decision_curves(model: str, *, bandwidth: float = 0.10, points: int = 40, re
     return concat(rows)
 
 
-# ---------------------------------------------------------------- bespoke
+# Bespoke diagnostics
 def bespoke_points(model: str) -> pd.DataFrame:
     """Per bespoke item and condition: mean stated logit, its standard error and the Bayes logit."""
     if "direct" not in BL.methods_for(model, "bespoke"):
@@ -369,7 +367,7 @@ def comprehension_table(model: str) -> pd.DataFrame:
     return accuracy_summary(comp, ["model", "dataset", "condition", "check_relation"]) if not comp.empty else comp
 
 
-# ---------------------------------------------------------------- report
+# Reporting utilities
 def fmt(r) -> str:
     if r is None:
         return ""
@@ -403,18 +401,20 @@ def anomalies(est, placebo, control, comp, checks, retention) -> list[str]:
     for _, r in main.iterrows():
         label = f"{r.model} {r.dataset} {r.method} {r.reference} {r.setting}"
         sig = np.isfinite(r.estimate) and (r.ci_lower > 0 or r.ci_upper < 0)
-        if r.statistic == "lambda_fieller" and r.interval != "bounded":
-            out.append(f"Weak denominator: {label}: the lambda confidence set is {fmt(r)}.")
-        if r.statistic in ("rho", "rho_pooled") and np.isfinite(r.estimate) and r.estimate < 0:
-            out.append(f"Negative reliability for {label} ({r.statistic} = {r.estimate:.3f}).")
-        elif r.statistic in ("rho", "rho_pooled") and r.ci_lower <= 0 <= r.ci_upper:
-            out.append(f"{r.statistic} interval includes 0: {label}: {fmt(r)}; the ratios over it are blank.")
-        if r.statistic in ("curvature_D", "curvature_C") and sig:
-            out.append(f"Affine check: {r.statistic} interval excludes 0: {label}: {fmt(r)}.")
-        if r.statistic == "diff_phi_setting" and sig:
-            out.append(f"phi differs between settings: {label}: {fmt(r)} (the shared-phi assumption).")
-        if r.statistic == "manipulation_median_abs_gap" and r.estimate < 0.5:
-            out.append(f"Manipulation check below 0.5 logits: {label}: median |l_A - l_B| = {r.estimate:.3f}.")
+        match r.statistic:
+            case "lambda_fieller" if r.interval != "bounded":
+                out.append(f"Weak denominator: {label}: the lambda confidence set is {fmt(r)}.")
+            case "rho" | "rho_pooled":
+                if np.isfinite(r.estimate) and r.estimate < 0:
+                    out.append(f"Negative reliability for {label} ({r.statistic} = {r.estimate:.3f}).")
+                elif r.ci_lower <= 0 <= r.ci_upper:
+                    out.append(f"{r.statistic} interval includes 0: {label}: {fmt(r)}; the ratios over it are blank.")
+            case "curvature_D" | "curvature_C" if sig:
+                out.append(f"Affine check: {r.statistic} interval excludes 0: {label}: {fmt(r)}.")
+            case "diff_phi_setting" if sig:
+                out.append(f"phi differs between settings: {label}: {fmt(r)} (the shared-phi assumption).")
+            case "manipulation_median_abs_gap" if r.estimate < 0.5:
+                out.append(f"Manipulation check below 0.5 logits: {label}: median |l_A - l_B| = {r.estimate:.3f}.")
     for frame, what in ((placebo, "Placebo gap"), (control, "Report-control gap")):
         for _, r in frame.iterrows():
             if r.get("gap") != "C_minus_D" and (r.ci_lower > 0 or r.ci_upper < 0):

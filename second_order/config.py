@@ -18,7 +18,8 @@ import yaml
 from latent_beliefs.config import PACKAGE_ROOT
 
 ROOT = PACKAGE_ROOT
-CONFIG_PATH = Path(os.environ.get("SO_CONFIG", Path(__file__).with_name("config.yaml")))
+BUNDLED_CONFIG = Path(__file__).with_name("config.yaml")
+CONFIG_PATH = Path(os.environ.get("SO_CONFIG", BUNDLED_CONFIG))
 DATA = Path(os.environ.get("SO_DATA_DIR", ROOT / "data"))
 RESPONSES = DATA / "responses"
 LATENTS = DATA / "latents"
@@ -33,6 +34,11 @@ DATASETS = Path(os.environ.get("SO_DATASETS_DIR", ROOT / "datasets"))
 @lru_cache(maxsize=None)
 def load(path: str | None = None) -> dict[str, Any]:
     return yaml.safe_load(Path(path or CONFIG_PATH).read_text())
+
+
+def section_settings(name: str) -> dict:
+    """Older run configs may omit a section or individual top-level settings."""
+    return load(str(BUNDLED_CONFIG))[name] | (load().get(name) or {})
 
 
 def model_config(model: str) -> dict[str, Any]:

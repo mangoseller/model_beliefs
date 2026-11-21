@@ -117,7 +117,7 @@ def prefix_hashes(responses_dir: Path, experiment: str, model: str) -> dict[str,
     return hashes
 
 
-# ---------------------------------------------------------------- behavior
+# Behavior
 BEHAVIOR_FIELDS = [
     "model_alias",
     "model_id",
@@ -217,7 +217,7 @@ def parse_behavior(responses_dir: Path, selection_path: Path) -> list[dict[str, 
     return rows
 
 
-# ---------------------------------------------------------------- probability
+# Probability
 def parse_probability(responses_dir: Path) -> pd.DataFrame:
     experiment = EXPERIMENTS["probability"]
     rows = []

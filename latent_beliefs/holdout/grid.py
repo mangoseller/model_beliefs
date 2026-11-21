@@ -88,7 +88,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-# ---------------------------------------------------------------- evidence
+# Evidence
 def eight_decision_evidence(values: np.ndarray, specs: Sequence[OutputSpec], target_family: str) -> np.ndarray:
     """Keep exactly the eight decisions of the two non-target families."""
 
@@ -114,7 +114,7 @@ def report_evidence(values: np.ndarray, specs: Sequence[OutputSpec]) -> np.ndarr
     return masked
 
 
-# ---------------------------------------------------------------- regimes
+# Regimes
 def metric_row(
     *, domain: str, model_key: str, model_display: str, target: OutputSpec, target_output: str,
     regime: str, actual: np.ndarray, predicted: np.ndarray,
@@ -276,7 +276,7 @@ def load_report_domain_holdout(fit_dir: Path) -> pd.DataFrame:
     return frame
 
 
-# ---------------------------------------------------------------- summary
+# Summary
 def target_test_baselines() -> pd.DataFrame:
     """Best constant test predictor for every domain/model/target decision."""
 

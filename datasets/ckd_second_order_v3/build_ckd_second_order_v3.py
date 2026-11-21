@@ -79,9 +79,7 @@ def fmt_age(x):
     return "%.1f years" % x
 
 
-# --------------------------------------------------------------------------
 # Parse the original file
-# --------------------------------------------------------------------------
 def load(path):
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
@@ -212,9 +210,7 @@ def fidelity_check(items, labels, first, second):
     return n
 
 
-# --------------------------------------------------------------------------
 # False-belief redesign
-# --------------------------------------------------------------------------
 def directional_changes(E):
     """-> {'sicker': {code: new_value}, 'healthier': {code: new_value}}."""
     out = {"sicker": {}, "healthier": {}}
@@ -334,9 +330,7 @@ def design_false(items):
                                         for c in (first, second))
 
 
-# --------------------------------------------------------------------------
 # Optional high-threshold questions
-# --------------------------------------------------------------------------
 def sub_once(text, old, new):
     assert text.count(old) == 1, (old, text)
     return text.replace(old, new)
@@ -373,9 +367,7 @@ def high_threshold_templates(first, second):
     return new_first, new_second, q_order
 
 
-# --------------------------------------------------------------------------
 # Generation
-# --------------------------------------------------------------------------
 def assign_block_order(items):
     # Split within each direction/assignment stratum, and as evenly as possible
     # within label. Alternate any spare patient across the odd-sized strata.

@@ -48,7 +48,7 @@ REQUEST_EVENT_NAMES = {
 }
 
 
-# ------------------------------------------------------------ replay reading
+# Reading replays
 
 
 def truth_map(game: dict[str, Any]) -> dict[str, str]:
@@ -168,7 +168,7 @@ def case_id(case: dict[str, Any]) -> str:
     )
 
 
-# ------------------------------------------------------------------ sampling
+# Sampling
 
 
 def stratum_quota(phase: str, quartile: int, label: int, sample_size: int) -> int:
@@ -414,7 +414,7 @@ def validate_sample(cases: list[dict[str, Any]], sample_size: int) -> dict[str, 
     }
 
 
-# ------------------------------------------------------------------- outputs
+# Outputs
 
 
 def write_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:

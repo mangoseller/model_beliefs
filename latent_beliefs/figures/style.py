@@ -25,7 +25,7 @@ import pandas as pd  # noqa: E402
 from latent_beliefs.config import DOMAIN_DISPLAY, DOMAINS, FIGURE_DATA_DIR, FIGURES_DIR, ensure  # noqa: E402,F401 (DOMAIN_DISPLAY is re-exported)
 from latent_beliefs.models import BRANCHING_MODELS, EXAMPLE_MODELS, FIGURE_ORDER, MODEL_DISPLAY  # noqa: E402
 
-# ---------------------------------------------------------------- ordering
+# Ordering
 DOMAIN_ORDER = DOMAINS
 ALL_MODELS = FIGURE_ORDER
 TIER_MODELS = EXAMPLE_MODELS
@@ -33,7 +33,7 @@ TIER_MODELS = EXAMPLE_MODELS
 BRANCH_MODELS = ("deepseek_v32", "gemma3_12b")
 assert set(BRANCH_MODELS) == set(BRANCHING_MODELS)
 
-# ---------------------------------------------------------------- colors
+# Colors
 # Okabe-Ito framing palette.
 FRAMING_STYLE = {
     "threshold": {"color": "#0072B2", "marker": "o", "label": "Threshold"},

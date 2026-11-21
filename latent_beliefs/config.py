@@ -50,7 +50,7 @@ WEREWOLF_REPLAY_DIR = _dir(
 # Static inputs shipped with the code (hand-authored prompt text, etc.).
 ASSETS_DIR = PACKAGE_ROOT / "latent_beliefs" / "assets"
 
-# ---------------------------------------------------------------- build tree
+# Build directories
 SOURCES_DIR = BUILD_DIR / "sources"  # case sets and ground truth
 PROMPTS_DIR = BUILD_DIR / "prompts"  # exact prompt texts sent to models
 COLLECTION_DIR = BUILD_DIR / "collection"  # batch inputs/outputs

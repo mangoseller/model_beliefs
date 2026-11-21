@@ -170,7 +170,7 @@ def prepare_followups(
         print(f"{experiment.key}/followups/{model}: prepared {len(inputs)} records")
 
 
-# ---------------------------------------------------------------- AWS
+# AWS requests
 class BedrockBatch:
     def __init__(self, args: argparse.Namespace, experiment: str, stage: str):
         import boto3

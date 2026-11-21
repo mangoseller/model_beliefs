@@ -40,21 +40,9 @@ import numpy as np
 from second_order import config as C
 from second_order import datasets as DS
 
-DEFAULTS = {
-    "items": 1024, "min_parse_rate": 0.8, "max_truncated_rate": 0.1, "bespoke_share": 0.1,
-    "candidates": [
-        {"max_num_seqs": 256, "max_num_batched_tokens": 8192, "gpu_memory_utilization": 0.92,
-         "enable_prefix_caching": True},
-        {"max_num_seqs": 512, "max_num_batched_tokens": 16384, "gpu_memory_utilization": 0.92,
-         "enable_prefix_caching": True},
-        {"max_num_seqs": 1024, "max_num_batched_tokens": 32768, "gpu_memory_utilization": 0.92,
-         "enable_prefix_caching": True},
-    ],
-}
-
 
 def settings() -> dict:
-    return {**DEFAULTS, **(C.load().get("tuning") or {})}
+    return C.section_settings("tuning")
 
 
 def benchmark_items(model: str, n: int, seed: int) -> list[dict]:

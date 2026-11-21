@@ -63,8 +63,6 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "runs"
 DEFAULT_MODELS = ("qwen3_8b", "qwen3_14b")
-STAGES = ("fetch_data", "fetch_models", "checks", "paper", "tune", "generate", "activations", "fits", "analyze",
-          "report", "package")
 ZENODO_RECORD = "23350428"
 ZENODO_FILE = "llm_beliefs_replication_results.tar.gz"
 MODEL_FILES = ["*.json", "*.safetensors", "*.txt", "*.model", "*.jinja", "*.py", "*.tiktoken", "LICENSE*"]
@@ -72,7 +70,7 @@ EXCLUDE_FROM_TARBALL = ("paper/prompts", "paper/parsed", "paper/sources", "data/
 SO_ENV = ("SO_CONFIG", "SO_DATA_DIR", "SO_RESULTS_DIR", "SO_FIGURES_DIR", "SO_DATASETS_DIR")
 
 
-# ---------------------------------------------------------------- run state
+# Run state
 class Run:
     def __init__(self, args: argparse.Namespace):
         self.args = args
@@ -165,7 +163,7 @@ def capture(command: list[str]) -> str:
         return f"(unavailable: {exc})"
 
 
-# ---------------------------------------------------------------- config
+# Run configuration
 def write_config(run: Run) -> dict:
     """The run's config: the repository config with this run's choices (kept on resume)."""
     if run.config_path.exists():
@@ -189,7 +187,7 @@ def write_config(run: Run) -> dict:
     return cfg
 
 
-# ---------------------------------------------------------------- stages
+# Run stages
 def fetch_paper_data(run: Run) -> None:
     release = ROOT / "data" / "release"
     if not (release / "MANIFEST.sha256").exists():
@@ -539,6 +537,7 @@ STAGE_FUNCTIONS = {
     "paper": stage_paper, "tune": stage_tune, "generate": stage_generate, "activations": stage_activations,
     "fits": stage_fits, "analyze": stage_analyze, "report": stage_report, "package": stage_package,
 }
+STAGES = tuple(STAGE_FUNCTIONS)
 # Run even after a failed stage: collect background fits, analyse whatever finished, report, package.
 ALWAYS_RUN = ("fits", "analyze", "report", "package")
 # On a resumed run, skipped when they already succeeded (unless named in --stages): slow, and redone
@@ -546,7 +545,7 @@ ALWAYS_RUN = ("fits", "analyze", "report", "package")
 ONCE = ("paper", "tune")
 
 
-# ---------------------------------------------------------------- driver
+# Command-line entry point
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)

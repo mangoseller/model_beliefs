@@ -99,7 +99,7 @@ def family_of(name: str) -> str | None:
     return GENERIC_FAMILIES[name] if name in GENERIC_FAMILIES else output_family(name)
 
 
-# ---------------------------------------------------------------- model
+# Model
 class SharedFamilyLatentModel(ProbabilisticLatentModel):
     """Latent model whose listed binary outputs share one link per family.
 
@@ -189,7 +189,7 @@ def predict_binary(model: ProbabilisticLatentModel, weights: torch.Tensor, spec:
         return (weights @ torch.sigmoid(model.binary_logits(spec))).cpu().numpy()
 
 
-# ---------------------------------------------------------------- data
+# Data
 def source_column_mapping(cfg: D.DomainConfig) -> dict[str, str]:
     """Generic decision name -> the domain's dataset column."""
 
@@ -253,7 +253,7 @@ def source_counts(train_counts: Mapping[str, int], validation_counts: Mapping[st
     }
 
 
-# ---------------------------------------------------------------- metrics
+# Metrics
 def smoothed_constant_probability(actual: np.ndarray) -> float:
     return float((np.sum(actual) + 0.5) / (len(actual) + 1.0))
 
@@ -314,7 +314,7 @@ def exact_binary_metrics(actual: np.ndarray, predicted: np.ndarray) -> dict[str,
     }
 
 
-# ---------------------------------------------------------------- fit stages
+# Fit stages
 def fit_parser(description: str, default_output: Path) -> argparse.ArgumentParser:
     """Arguments shared by every holdout fitting stage (canonical defaults)."""
 

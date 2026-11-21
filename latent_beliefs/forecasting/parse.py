@@ -72,7 +72,7 @@ def read_csv_by(path: Path, key: str) -> dict[str, dict[str, str]]:
         return {str(row[key]): row for row in csv.DictReader(handle)}
 
 
-# ---------------------------------------------------------------- probability
+# Probability
 def finite_number(value: Any) -> float | None:
     try:
         number = float(value)
@@ -248,7 +248,7 @@ def parse_probability(text: str) -> tuple[float | None, str | None]:
     return None, None
 
 
-# ------------------------------------------------------------------- choices
+# Choices
 _CHOICE_TEXT = {
     "very unlikely": "A",
     "somewhat unlikely": "B",
@@ -450,7 +450,7 @@ def parse_choice(text: str) -> tuple[str | None, str | None]:
     return choice, method
 
 
-# ------------------------------------------------------------- per response
+# Per-response parsing
 def parse_output(task_id: str, text: str) -> dict[str, Any]:
     """Strictly parse one response to the forecasting prompt ``task_id``.
 
@@ -472,7 +472,7 @@ def parse_output(task_id: str, text: str) -> dict[str, Any]:
     return {"value": value, "method": method, "probability": probability, "choice": choice}
 
 
-# ---------------------------------------------------------------------- main
+# Command-line entry point
 def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:

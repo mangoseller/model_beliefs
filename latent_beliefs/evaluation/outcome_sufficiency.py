@@ -45,7 +45,7 @@ OUTCOME_COLUMN = {"werewolf": "label_is_werewolf", "forecasting": "gold_positive
 CKD_CASES_PATH = SOURCES_DIR / "ckd" / "cases.csv"
 
 
-# ---------------------------------------------------------------- estimator
+# Estimator
 def smoother_matrix(x, query, bandwidth):
     """Local-linear smoother as a linear operator (before clipping to [0, 1])."""
     x, query = np.asarray(x), np.asarray(query)
@@ -135,7 +135,7 @@ def joint_bootstrap(z, y, decisions, bandwidths, rho, draws, seed):
     return np.asarray(values)
 
 
-# ---------------------------------------------------------------- inputs
+# Inputs
 def load_ckd_labels(path: Path = CKD_CASES_PATH) -> pd.DataFrame:
     """CKD ground truth per case: ``source_prompt_id`` (``<cohort>__<prompt_id>``) and ``ckd``."""
 
@@ -177,7 +177,7 @@ def load_cells(fit_dir: Path, ckd_cases: Path):
     return cells
 
 
-# ---------------------------------------------------------------- analysis
+# Analysis
 def analyze_cell(job):
     cell, draws, seed = job
     z, y, ds = (cell[k] for k in ("z", "y", "decisions"))
