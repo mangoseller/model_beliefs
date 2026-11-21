@@ -1,4 +1,4 @@
-# Example prompts (Phase 2)
+# Example prompts
 
 Withheld set S4: hypertension_self_reported, diabetes_self_reported, ridageyr.  C/D layout: `plan`.  Cases: original500__prompt_0001, original500__prompt_0002, original500__prompt_0003.
 

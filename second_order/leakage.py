@@ -1,4 +1,4 @@
-"""Leakage estimators and the paired case bootstrap (plan, Phase 5).  Method-agnostic.
+"""Leakage estimators and the paired case bootstrap.  Method-agnostic.
 
 Inputs are rows of the shared belief format.  Everything is computed per
 (framing, pair), where a pair names how the agent's copy differs from the
@@ -128,9 +128,7 @@ def _cov(a: np.ndarray, b: np.ndarray) -> float:
 
 def cal_values(W: dict[str, np.ndarray], key: str, default: np.ndarray | None = None) -> np.ndarray:
     """A column's calibrated values (``key:cal``) if stored, else its values, else ``default``."""
-    if f"{key}:cal" in W:
-        return W[f"{key}:cal"]
-    return W[key] if key in W else default
+    return W.get(f"{key}:cal", W.get(key, default))
 
 
 def pair_keys(framing: str, pair: str, available) -> dict[str, str | None]:

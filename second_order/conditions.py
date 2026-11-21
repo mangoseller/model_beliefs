@@ -1,11 +1,11 @@
-"""Conditions of the second-order experiment, as data (plan: Design, Build specification).
+"""Conditions of the second-order experiment, as data.
 
 Every condition is one row of ``CONDITIONS``.  A condition says whose belief
 is asked for, which profile the model is shown, and which profile the agent
 (John or the user) holds.  Prompts, fit groups, analysis sets and figures all
 read this table; no other module hard-codes a condition list.
 
-Roles (the letters the plan uses):
+Roles (the letters of the Methods write-up):
 
 * ``A``  the model's own belief from the full profile.
 * ``B``  the model's own belief from the agent's copy.
@@ -146,8 +146,8 @@ def render_profile(case: pd.Series, withheld: Iterable[str] = (), *, flip: str |
     """The profile block.  With no arguments it is identical to ``patient_profile``.
 
     ``withheld`` fields are dropped (``missing="removed"``) or kept in place
-    with the value ``Not recorded`` (``missing="not_recorded"``, the plan's
-    option (a)).  ``flip`` names one binary field shown with the opposite value.
+    with the value ``Not recorded`` (``missing="not_recorded"``).  ``flip``
+    names one binary field shown with the opposite value.
     """
     withheld = set(withheld)
     unknown = (withheld | ({flip} if flip else set())) - set(PROFILE_FEATURES)

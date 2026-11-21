@@ -1,4 +1,4 @@
-"""Estimator and cache tests (plan: tests before real data)."""
+"""Estimator and cache tests."""
 
 from __future__ import annotations
 

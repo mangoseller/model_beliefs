@@ -1,4 +1,4 @@
-"""Prompt-construction and parser tests for the second-order conditions (plan, Phase 2)."""
+"""Prompt-construction and parser tests for the second-order conditions."""
 
 from __future__ import annotations
 

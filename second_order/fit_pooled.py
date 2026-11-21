@@ -1,4 +1,4 @@
-"""Pooled latent fits and latent export (plan, Phase 3).
+"""Pooled latent fits and latent export.
 
 A pooled fit shares item parameters and one latent prior across conditions
 whose instructions are identical (``conditions.fit_family``): the model's own

@@ -16,7 +16,7 @@ def main() -> None:
     ids = [c for c in cases().index if c not in set(pilot_cases())][:3]
     conds = list(CONDITIONS)
     lines = [
-        "# Example prompts (Phase 2)\n\n",
+        "# Example prompts\n\n",
         f"Withheld set {cfg['withheld_set']}: {', '.join(withheld_fields())}.  C/D layout: `{cfg['layout']}`.  "
         f"Cases: {', '.join(ids)}.\n\n",
         f"False-belief field: {cfg['flip_field']}.  Withheld fields rendered as: {cfg['missing_fields']}.\n\n"

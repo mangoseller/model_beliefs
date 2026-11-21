@@ -1,4 +1,4 @@
-"""The shared belief format every method writes and Phase 5 reads.
+"""The shared belief format every method writes and the analysis reads.
 
 ``data/beliefs/{model}/{method}.parquet`` (CKD) and
 ``data/beliefs/{model}/{dataset}_{method}.parquet`` (other datasets), one row

@@ -48,7 +48,8 @@ A failed stage is recorded, and later stages are skipped unless you pass
 ## Checks that run without model calls
 
 ```sh
-$PY -m unittest tests.test_prompts_second_order tests.test_leakage tests.test_bespoke tests.test_generation
+$PY -m unittest tests.test_prompts_second_order tests.test_leakage tests.test_bespoke tests.test_generation \
+    tests.test_runner
 $PY -m unittest tests.test_pipeline                                  # end to end on the synthetic backend (minutes)
 $PY -m second_order.bespoke                                          # the bespoke item file: Bayes answers, warnings
 $PY -m second_order.example_prompts                                  # docs/example_prompts.md

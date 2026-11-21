@@ -12,7 +12,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# second_order/ and the latent_beliefs replication package (pinned versions: environment.yml)
+# second_order/ and the latent_beliefs replication package; run_experiment.sh installs the pinned
+# versions from requirements/ (experiment.txt, and gpu.txt for vLLM).
 second-order = [
     "pandas",
     "pyyaml",
@@ -21,6 +22,8 @@ second-order = [
     "matplotlib",
     "xgboost",
     "requests",
+    "tqdm",
+    "huggingface_hub",
 ]
 vllm = ["vllm"]
 

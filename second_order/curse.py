@@ -203,7 +203,6 @@ def bayes_table(model: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-FAMILY = {"self": "own belief", "john": "John's belief", "user": "the user's belief"}
 DECISION_CURVE_CONDITIONS = ("A", "D_john", "M_S4", "C_john", "B", "D_F", "M_F", "C_F", "B_F")
 
 

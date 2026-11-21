@@ -1,4 +1,4 @@
-"""Phase 3 driver: parse -> matrices -> pooled and separate fits -> latents -> beliefs.
+"""Parse, fit and export beliefs: responses -> matrices -> pooled and separate fits -> latents -> beliefs.
 
     python -m second_order.phase3 --model gemma3_4b_mlx --smoke
     python -m second_order.phase3 --model openai_terra            # main case set

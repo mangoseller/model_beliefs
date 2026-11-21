@@ -74,6 +74,7 @@ the design and its checks are in the
 | Latent fits, calibration and the shared belief format | Built |
 | Estimators λ, ρ, φ, τ, the assumption checks and the case bootstrap (tested) | Built |
 | `second_order.curse` report and figures | Built |
+| One-command runner: setup, inference tuning and smoke test, generation, frozen activations, fits, report, tarball | Built; run end to end on the synthetic model (CPU); GPU stages not yet run |
 | End-to-end recovery of the planted parameters on the synthetic backend | Passing (`tests.test_pipeline`) |
 | Data collection for Qwen3 8B and 14B | Not started (needs a CUDA machine) |
 
@@ -95,7 +96,8 @@ and bin edges). Download it from Zenodo
 Checks that make no model calls:
 
 ```bash
-python -m unittest tests.test_prompts_second_order tests.test_leakage tests.test_bespoke tests.test_generation
+python -m unittest tests.test_prompts_second_order tests.test_leakage tests.test_bespoke tests.test_generation \
+    tests.test_runner
 python -m unittest tests.test_pipeline          # end to end on the synthetic backend (a few minutes)
 python -m second_order.bespoke                  # check the bespoke item file
 python -m second_order.example_prompts          # writes docs/example_prompts.md
@@ -209,12 +211,16 @@ second_order/                the experiment (see STRUCTURE.md)
   beliefs.py                   the shared belief format
   leakage.py                   λ (= β_C/β_D), ρ, φ, τ and their checks, with the case bootstrap
   curse.py, figures.py, report.py  tables, RESULTS.md and figures
+  runner.py, runner_record.py  the one-command run and its record (run_experiment.sh)
+  tune.py, freeze.py           inference tuning and smoke test; frozen activations
   deprecated/                  the earlier RQ1-RQ3 design (see below)
-tests/                       prompt, parser, estimator, cache and end-to-end tests
+run_experiment.sh            bootstrap for a fresh GPU instance; requirements/ pins its packages
+tests/                       prompt, parser, estimator, cache, runner and end-to-end tests
 docs/                        runbook, implementation notes, bespoke schema, orientation, example prompts
 latent_beliefs/              the replication package (unchanged)
 model_beliefs/, scripts/, datasets/   first-order readouts on small models (see below)
 outputs/                     second_order tables and reports (git-ignored)
+runs/                        one folder and tarball per run_experiment.sh run (git-ignored)
 results/                     write-ups of runs (tracked)
 ```
 
@@ -249,7 +255,7 @@ current study imports it.
   organised and the baseline it reproduces.
 - [`docs/example_prompts.md`](docs/example_prompts.md): rendered CKD prompts
   for every condition.
-- [`STRUCTURE.md`](STRUCTURE.md): a map of both packages.
+- [`STRUCTURE.md`](STRUCTURE.md): a map of the packages.
 - [`docs/REPLICATION.md`](docs/REPLICATION.md): reproducing the original
   paper's figures and tables.
 

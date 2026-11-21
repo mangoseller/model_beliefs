@@ -91,6 +91,31 @@ The earlier halves-based companions are kept as `kappa_halves` and
   planted λ (both settings, both datasets, both methods), φ, τ, the
   comprehension accuracy and a Bayesian own belief are recovered.
 
+### The runner
+
+`run_experiment.sh` and `second_order/runner.py` run everything; the RUNBOOK
+lists the stages.
+
+- **The run's config.** Every run writes its own `config.yaml` (the
+  repository config plus the run's choices). Every stage reads it, so it is
+  the record of what ran.
+- **Pinned snapshots.** The fetch stage pins the Hugging Face snapshot hash
+  of each model in that config, and later stages run offline against those
+  files.
+- **Tuning.** `tune` times vLLM engine settings: concurrent sequences, the
+  per-step token budget, the KV-cache memory share, prefix caching. These
+  change speed, not the sampling distribution, so they are not part of the
+  cache's settings check.
+- **Smoke test.** The same benchmark calls are checked for parse rate and
+  truncation, so a broken setup stops before the long generation.
+- **Frozen activations.** `freeze` replays each prompt and its cached
+  response through transformers. A response is re-tokenised from its text,
+  which can differ from vLLM's original token split by a token at the
+  boundary; the positions are found from character offsets. Activations
+  are bfloat16 bit patterns (no rounding). The CKD profile and bespoke
+  evidence come before the agent paragraph, so `evidence_end` is the same
+  token across conditions that show the same evidence.
+
 ## The earlier RQ1–RQ3 design (deprecated)
 
 The sections below describe the condition table, prompts, generation,
@@ -267,6 +292,10 @@ positives and needs reading by a person.
     full-length synthetic run (500 cases) takes about an hour per model on
     CPU and has not been run end to end.
   - The `hf` backend seeds per batch, so a resumed run is not bit-reproducible.
+  - The runner's GPU stages (vLLM tuning and generation, freezing at full
+    scale) have not yet run on a GPU. The rest of the runner has run end to
+    end on the synthetic model, and freezing has run with Qwen3-0.6B on CPU.
+    Start with `bash run_experiment.sh --smoke`.
 - Shared: batch submission; a drift check of cached condition A against
   fresh samples; an answer-only (no reasoning) arm; a robustness fit on cases
   with at least 12 of 16 outputs parsed.
