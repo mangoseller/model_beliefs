@@ -14,8 +14,8 @@ delta (the slope estimators draw their power from the spread), share
 with |delta| > 0.5, counts of positive and negative delta, parse rate, and the
 number of B responses that remark on missing fields.
 
-    python -m second_order.pilot generate --model gemma3_4b_mlx [--approve]
-    python -m second_order.pilot report
+    python -m second_order.deprecated.pilot generate --model gemma3_4b_mlx [--approve]
+    python -m second_order.deprecated.pilot report
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ import pandas as pd
 
 from latent_beliefs.ckd.parse import parse_response
 from second_order import config as C
+from second_order.beliefs import clip_logit as logit
 from second_order.conditions import render_profile, withheld_fields
 from second_order.prompts_second_order import cases, first_order_prompt
 from second_order.run_generation import Item, lookup, pilot_cases, run
@@ -68,11 +69,6 @@ def items(model: str) -> list[Item]:
             for r in range(samples):
                 result.append(Item(model, case_id, f"B_{name}", "probability", r, prompt))
     return result
-
-
-def logit(p: np.ndarray) -> np.ndarray:
-    p = np.clip(p, 0.01, 0.99)
-    return np.log(p) - np.log1p(-p)
 
 
 def table(model: str) -> tuple[pd.DataFrame, pd.DataFrame]:

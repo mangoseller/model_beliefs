@@ -159,37 +159,51 @@ command-line interface (`python -m second_order.<module>`); settings are in
 `configs/second_order.yaml`.
 
 ```
- condition table --> prompts --> generation (cache) --> responses --> pooled fits --> beliefs
-                                                                          |             |
-                                              activations --> probes -----+------------>|
-                                                                                        v
-                                                              leakage, coherence --> analyze --> figures
+ condition table --> prompts (CKD, bespoke) --> generation (cache) --> responses --> pooled fits (CKD) --> beliefs
+                                                     |                    |                                  |
+                                          comprehension follow-ups --> scoring                               v
+                                                                                       leakage --> curse --> figures
 ```
 
 | Module | Role |
 |---|---|
-| `config.py` | Paths, the config loader, and each model's scheduled conditions |
-| `conditions.py` | The condition table (roles A, B, C, M, D; pairs S4, S1, H, F; framings) and profile rendering: withheld fields, the flipped field |
-| `prompts_second_order.py` | Prompts for every condition, built from the first-order prompt with minimal edits |
+| `config.py` | Paths (with `SO_*` overrides), the config loader, each model's scheduled conditions, layouts, runs and datasets |
+| `conditions.py` | The condition table (roles A, B, C, M, D; pairs S4, F and S1, H; framings; the settings partial = S4 and false = F) and profile rendering: withheld fields, the flipped field |
+| `prompts_second_order.py` | CKD prompts for every condition, built from the first-order prompt with minimal edits; CKD comprehension questions |
+| `bespoke.py` | The bespoke dataset: item file (schema in `docs/BESPOKE.md`), exact Bayes answers, prompts for every condition, comprehension questions, JSON-only parsing |
+| `datasets.py` | CKD and bespoke behind one interface (outputs, cases, prompts, parsing, samples) |
+| `comprehension.py` | Comprehension follow-ups: the question format, output names and the strict parser |
 | `example_prompts.py` | Renders `docs/example_prompts.md` |
-| `run_generation.py` | Cached, resumable generation (Bedrock, OpenAI, local MLX) with a cost-approval gate |
-| `pilot.py` | Phase 1 pilot: how far each withheld set and the flip move the model's own answer |
-| `responses.py` | Parses cached responses with the first-order parser; complete-case matrices; retention |
+| `run_generation.py` | Cached, resumable generation (vLLM, transformers, synthetic, Bedrock, OpenAI, MLX) with a cost-approval gate; second runs, samples and two-turn comprehension items; the cache refuses responses made with other prompts or settings |
+| `synthetic.py` | The `synthetic` backend: response text from known λ, φ and noise |
+| `responses.py` | Parses cached responses (after removing `<think>` blocks); complete-case matrices; seeded splits for local models; retention; comprehension scoring |
 | `fit_pooled.py` | One pooled latent fit per family (own belief, John, user); posteriors for each output subset |
 | `measurement.py` | Sampling from a fitted measurement model; shrinkage calibration |
-| `phase3.py` | Driver: parse, fit, export latents and beliefs, retention, transcripts |
+| `phase3.py` | Driver: parse, fit, export latents and beliefs, retention, comprehension, transcripts |
 | `beliefs.py` | The shared belief format every method writes and the analysis reads |
-| `leakage.py` | The matched-control λ, κ, tracking τ, contrasts, the ratio rule and the paired case bootstrap |
-| `coherence.py` | Reports-to-decisions coherence per condition and its contrasts |
-| `analyze.py` | Tables by research question, method agreement, anomalies, `RESULTS.md` |
-| `figures.py` | Figures by research question, from `results/` only |
-| `activations.py` | Replays prompts and responses through an open-weight model and stores residual-stream activations |
-| `probes.py` | Report and truth probes with controls; probe readouts in the belief format |
-| `simulate.py` | Synthetic recovery of the estimators through the full fit |
+| `leakage.py` | λ (= β_C/β_D, the matched-control estimator), ρ, φ and τ from a second run, the affine checks, the halves-based κ and τ, contrasts, the ratio rule and the paired case bootstrap |
+| `curse.py` | Curse-of-knowledge tables (λ, ρ, φ, τ, checks, placebo, Bayes, comprehension) and `results/curse/RESULTS.md` |
+| `figures.py` | `curse_estimates`, `curse_scatter` and `retention` from `results/curse/`; shared plot style |
+| `report.py` | Model display names and markdown tables |
 | `baseline_check.py` | Confirms the first-order baseline still reproduces |
 
+`second_order/deprecated/` holds the earlier RQ1–RQ3 design, still runnable
+(`python -m second_order.deprecated.<module>`) and imported by nothing else:
+
+| Module | Role |
+|---|---|
+| `analyze.py` | Tables by research question, method agreement, anomalies, `results/RESULTS.md` |
+| `coherence.py` | Reports-to-decisions coherence per condition and its contrasts |
+| `rq_figures.py` | Figures by research question, from `results/` only |
+| `activations.py` | Replays prompts and responses through an open-weight model and stores residual-stream activations |
+| `probes.py` | Report and truth probes with controls; probe readouts in the belief format |
+| `pilot.py` | Phase 1 pilot: how far each withheld set and the flip move the model's own answer |
+| `simulate.py` | Latent-level synthetic recovery of the estimators through the full fit |
+| `estimator_bias_check.py` | Idealised comparison of the original and matched-control estimators |
+
 Outputs: `data/generation_cache/`, `data/responses/`, `data/latents/`,
-`data/beliefs/`, `data/activations/`, `results/`, `figures/` and `RESULTS.md`,
-all ignored by git. `scripts/estimator_bias_check.py` is a standalone
-comparison of the two leakage estimators; `tests/` holds the prompt, parser,
-estimator and cache tests.
+`data/beliefs/`, `data/activations/`, `results/` (the curse-of-knowledge tables
+in `results/curse/`) and `figures/`, all ignored by git. The bespoke item file
+is local too (`data/bespoke/items.yaml` by default);
+`tests/fixtures/bespoke_items.yaml` is a small example used by the tests.
+`tests/` holds the prompt, parser, estimator, cache and end-to-end tests.

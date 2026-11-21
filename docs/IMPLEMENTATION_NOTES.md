@@ -6,6 +6,96 @@ code is mapped in `docs/ORIENTATION.md`. `latent_beliefs/` is untouched, and
 `python -m second_order.baseline_check` confirms the first-order numbers
 still reproduce.
 
+## The curse-of-knowledge experiment
+
+The current study (Qwen3 8B and 14B) measures the leakage rate λ in two
+settings, partial evidence (pair `S4`) and false belief (pair `F`). It uses
+two datasets, CKD and the bespoke items (`docs/BESPOKE.md`), and two belief
+methods, the latent fit ("Bayesian marginalization") and the stated
+probability (direct elicitation).
+
+- **Conditions.** `A B C_john M_S4 D_john` (partial) and `B_F C_F M_F D_F`
+  (false belief); `experiment.conditions`.
+- **`D_F`** is the false-belief setting's own D. C_F, M_F and D_F all frame
+  the agent's evidence as reported by a colleague
+  (`false_belief_framing: reported`). M_F and D_F share one sentence, so M
+  and D still differ only in the evidence shown. Runs without D_F fall back
+  to the shared D.
+- **Same suffix.** Own-belief prompts use `self_layout: matched`: the layout
+  of the prompts about the agent, without the agent paragraph. A, B, C, M
+  and D therefore end with the same question and answer format. Models whose
+  A comes from the release keep the first-order layout.
+- **Second run.** A, B and B_F run twice (`experiment.replicates`). The two
+  independent gaps x and x′ give the reliability ρ. In the latent fit the
+  second run is extra rows of the "self" family.
+- **Samples.** Bespoke items get `bespoke.samples` samples per condition and
+  run. A belief is the mean sample logit; its `sd` is the standard error.
+- **Comprehension.** After each C answer (CKD: the numeric probability only),
+  a second turn asks which evidence the agent had. The turn replays the C
+  prompt and response verbatim on every backend. Answers are parsed
+  strictly and scored. Only answered follow-ups count: an unparseable answer
+  is wrong, and a follow-up not yet generated is missing. `results/curse/`
+  reports accuracy, and estimates restricted per C condition to correct
+  answers. CKD drops the case from that setting only; bespoke drops the
+  sample.
+- **Bespoke parsing.** Answers are read from the JSON object only. The
+  first-order fallback (a number after the word "probability") would read
+  "the probability that ... Bag 1" as 1.
+- **Generation** for the Qwen models is local:
+  - `vllm`: one seed per item, temperature 1, thinking off;
+  - `hf` fallback;
+  - `synthetic`: text written from known parameters.
+
+  Each Qwen model has its own seeded train/validation/test split
+  (`split: own`), because there is no first-order Qwen3 8B/14B data to
+  borrow one from.
+
+### Estimators
+
+With x = l_A − l_B:
+
+- β_D is the slope of (l_D − l_M) on x, and β_C the slope of (l_C − l_M) on x.
+- λ = β_C / β_D. This is identical to the matched-control λ = 1 − T_C/T_M
+  already in `leakage.py`, because β_D = T_M and β_C = T_M − T_C exactly.
+- ρ = Cov(x, x′) / Var(x).
+- φ = β_D / ρ and τ = (β_D − β_C) / ρ = φ(1 − λ).
+
+φ, τ and ρ use `value_calibrated`. For latents, the posterior means of the
+"self" and "john" fits shrink by different amounts, and that would scale φ;
+λ is a ratio of slopes from one fit and is unaffected. φ is reported per
+setting, pooled across settings (`phi_pooled`: within-setting slopes, so each
+setting keeps its intercept), and as the false − partial difference.
+
+The earlier halves-based companions are kept as `kappa_halves` and
+`tau_halves`.
+
+### Checks of the modelling assumptions
+
+| Assumption | Check |
+|---|---|
+| 1, affine | Slopes of l_D on l_A and of l_M on l_B, each instrumented by the second run. Both estimate φ without using the gap. Quadratic terms of both gap regressions. |
+| 2, partial linearity | λ for positive and negative gaps separately; λ by thirds of \|x\|. |
+| 3, independent noise | ρ comes from independent calls. On the bespoke set, placebo items should show zero gaps. |
+| All | `bespoke.checks` keeps Bayes answers inside [0.05, 0.95], where the 0.01/0.99 logit clip does not bind. |
+
+### Validation
+
+- Unit tests recover λ, ρ, φ and τ under measurement noise large enough to
+  attenuate β_D. They also check that φ reads calibrated values and that the
+  ratio rule blanks φ when the second run carries no signal.
+- `tests.test_pipeline` runs the whole pipeline on the synthetic backend:
+  generation, parsing (with planted parse failures and `<think>` tags),
+  latent fits, beliefs, estimators, report and figures. It checks that the
+  planted λ (both settings, both datasets, both methods), φ, τ, the
+  comprehension accuracy and a Bayesian own belief are recovered.
+
+## The earlier RQ1–RQ3 design (deprecated)
+
+The sections below describe the condition table, prompts, generation,
+fits and estimators shared by both designs, then the deprecated design's own
+analyses: coherence, probes and the pilot, whose code is in
+`second_order/deprecated/`.
+
 ## Conditions
 
 All conditions live in one table, `second_order/conditions.py`. Each has a
@@ -91,21 +181,23 @@ lists conditions.
   someone else cancel; x comes from different model calls, so its noise is
   independent of the outcomes and scales both slopes equally.
 - **Companions.** A mean-based position (a uniform shift toward the model's
-  own view shows there, not in λ); κ, how strongly answers about the agent
-  follow evidence when nothing is hidden; tracking τ = κ(1 − λ), available
-  without a matched control; λ within thirds of |x|; contrasts between
-  pairs (F − H, user − John, ladder rungs against S4).
+  own view shows there, not in λ); κ (`kappa_halves`), how strongly answers
+  about the agent follow evidence when nothing is hidden; tracking
+  τ = κ(1 − λ) (`tau_halves`), available without a matched control; λ within
+  thirds of |x|; contrasts between pairs (F − H, user − John, ladder rungs
+  against S4). These are the halves-based forms; the curse-of-knowledge
+  experiment's φ and τ come from a second run (above).
 - **Ratio rule.** A ratio is left blank when its denominator's interval
   includes 0.
 - **Original estimator.** The first build placed C between the model's own
   B and A, normalised by the same slope for D (`*_original`). It is kept as
   a secondary number. It is biased when answers about the agent are
   compressed or shifted relative to the model's own, most of all for
-  flipped fields; `scripts/estimator_bias_check.py` shows this in an
+  flipped fields; `second_order/deprecated/estimator_bias_check.py` shows this in an
   idealised simulation.
 - **Methods.** The same ratio is computed from latents, from the stated
   numeric probability, and from probe readings (with the behavioural gap as
-  the regressor). κ and τ need independent halves and exist for latents
+  the regressor). `kappa_halves` and `tau_halves` need independent halves and exist for latents
   only.
 - **Uncertainty.** Paired case bootstrap, 95% percentile intervals, item
   parameters held fixed.
@@ -168,11 +260,17 @@ positives and needs reading by a person.
 
 ## Known gaps
 
-- Batch submission, a drift check of cached condition A against fresh
-  samples, and an answer-only (no reasoning) arm.
-- A robustness fit on cases with at least 12 of 16 outputs parsed; a
-  coherence measure that does not depend on the spread of beliefs.
-- Probe selection and gates specific to RQ3, and the steering and
-  attention-blocking experiments.
-- A smoke run under the current prompts: responses cached before the
-  prompt changes no longer match and are rejected by the cache check.
+- Curse-of-knowledge experiment:
+  - `tests.test_pipeline` uses shortened latent fits on 150 cases. A
+    full-length synthetic run (500 cases) takes about an hour per model on
+    CPU and has not been run end to end.
+  - The `hf` backend seeds per batch, so a resumed run is not bit-reproducible.
+- Shared: batch submission; a drift check of cached condition A against
+  fresh samples; an answer-only (no reasoning) arm; a robustness fit on cases
+  with at least 12 of 16 outputs parsed.
+- Deprecated design:
+  - a coherence measure that does not depend on the spread of beliefs;
+  - probe selection and gates specific to RQ3, and the steering and
+    attention-blocking experiments;
+  - a smoke run under the current prompts: responses cached before the
+    prompt changes no longer match and are rejected by the cache check.

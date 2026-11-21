@@ -11,6 +11,9 @@ optimiser (`fit_model`) and settings of the first-order main fit:
 patience 500, early stopping on validation rows.  Item parameters are
 estimated on train-split rows only.
 
+Second runs of the own-belief conditions (``replicate`` 1) are rows of the
+"self" fit like any other; they share its item parameters and prior.
+
 Posteriors of logit z are exported for every complete row from five output
 subsets: all 16, the three probability reports (``prob``), the 13 decisions
 (``dec``), plain + threshold decisions (``dec_h1``, 5 outputs) and bet + cost
@@ -29,6 +32,7 @@ import torch
 
 from latent_beliefs.latent.domains import CKD_SPECS, likelihood_values
 from latent_beliefs.latent.model import FitConfig, ProbabilisticLatentModel, fit_model, restore_model
+from second_order import config as C
 
 SPEC_NAMES = [s.name for s in CKD_SPECS]
 DEC_H1 = ["decision_no_threshold", "threshold_05pct", "template_01_threshold_10pct",
@@ -65,7 +69,8 @@ def stable_seed(base: int, *parts: str) -> int:
 
 def fit_group(wide: pd.DataFrame, conditions: Sequence[str], seed: int,
               config: FitConfig | None = None) -> tuple[ProbabilisticLatentModel, dict[str, Any]]:
-    config = config or FitConfig(progress_every=0)
+    # ``latent_fit`` in the config may override FitConfig fields (the end-to-end test shortens fits).
+    config = config or FitConfig(progress_every=0, **(C.load().get("latent_fit") or {}))
     rows = wide[wide.condition.isin(conditions) & wide.complete]
     train, val = rows[rows.split == "train"], rows[rows.split == "val"]
     if train.empty or val.empty:
@@ -130,7 +135,8 @@ def fit_all(model_key: str, wide: pd.DataFrame, *, kind: str, base_seed: int,
             post[f"cal_{c.subset}"] = (post[f"ell_{c.subset}"] - c.intercept) / c.slope
             info[f"calibration_slope_{c.subset}"] = c.slope
             info[f"calibration_intercept_{c.subset}"] = c.intercept
-        part = pd.concat([rows[["model", "case_id", "condition", "framing", "split"]], post], axis=1)
+        keep = [c for c in ("model", "case_id", "condition", "replicate", "framing", "split") if c in rows]
+        part = pd.concat([rows[keep], post], axis=1)
         part["numeric_probability"] = rows["probability"].to_numpy()
         part["fit"] = kind
         part["fit_group"] = "+".join(group)

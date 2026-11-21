@@ -21,16 +21,40 @@ towards the model's own view shows there, not in lambda).
 For probes, pass ``regressor=`` latent beliefs: the outcomes are probe
 readings and x is the behavioural gap.
 
-Tracking and compression (latent method only; needs independent halves)
------------------------------------------------------------------------
-With x_p = l_A^prob - l_B^prob and calibrated decision-only latents:
+In the Methods notation this is the Wald estimator lambda = beta_C / beta_D,
+with beta_C the slope of (l_C - l_M) on x and beta_D the slope of (l_D - l_M)
+on x: beta_D = T_M and beta_C = T_M - T_C exactly, so the two forms agree.
+Both slopes are reported.
 
-    R     = slope of (l_A^dec - l_B^dec) on x_p     (what a full response looks like)
-    tau   = [slope of (l_D^dec - l_C^dec) on x_p] / R      = kappa (1 - lambda)
-    kappa = [slope of (l_D^dec - l_M^dec) on x_p] / R      (needs M)
+Reliability, responsiveness and theory-of-mind score (any method; needs a second run)
+------------------------------------------------------------------------------------
+With x' = l_A' - l_B' from a second, independent run of A and B (``replicate`` 1,
+columns ``A@r1:...``):
 
-Pairs without a matched control report tau, and lambda with kappa borrowed
-from S4 (``contrasts``).
+    var_delta = Cov(x, x')            rho = var_delta / Var(x)
+    phi = beta_D / rho                (how the agent's belief responds to evidence)
+    tau = (beta_D - beta_C) / rho = slope of (l_D - l_C) on x, over rho  = phi (1 - lambda)
+
+computed on calibrated values (``value_calibrated``; equal to ``value`` except
+for latents, whose posterior means shrink differently in the two fits).
+Checks of the affine assumption: the reliability-corrected slopes of l_D on
+l_A and of l_M on l_B (instrumented by the second run; both estimate phi),
+quadratic terms of the two gap regressions (zero under the model), and lambda
+separately for positive and negative gaps.  The contrast ``F_minus_S4``
+reports false-belief minus partial differences and phi pooled across the two
+settings (within-setting slopes, so the settings' intercepts may differ).
+
+Tracking and compression from independent halves (latent method only)
+---------------------------------------------------------------------
+The earlier companions of phi and tau, from halves of one run instead of a
+second run.  With x_p = l_A^prob - l_B^prob and calibrated decision-only latents:
+
+    R            = slope of (l_A^dec - l_B^dec) on x_p     (what a full response looks like)
+    tau_halves   = [slope of (l_D^dec - l_C^dec) on x_p] / R      = kappa (1 - lambda)
+    kappa_halves = [slope of (l_D^dec - l_M^dec) on x_p] / R      (needs M)
+
+Pairs without a matched control report tau_halves, and lambda with kappa
+borrowed from S4 (``contrasts``).
 
 Also reported: the original cross-framing estimator (``*_original``; biased
 when kappa != 1, kept as a secondary number), a noise check ``lambda_0``, the
@@ -60,18 +84,24 @@ HALVES = {
 }
 # Ratio statistic -> the denominator whose interval must exclude 0.
 DENOMINATOR = {
-    "lambda": "T_M", "mean_position": "mean_D_minus_M", "tau": "R", "kappa": "R",
+    "lambda": "T_M", "mean_position": "mean_D_minus_M", "tau_halves": "R", "kappa_halves": "R",
+    "phi": "rho", "tau": "rho", "phi_D_on_A": "cov_A_A1", "phi_M_on_B": "cov_B_B1",
+    "phi_pooled": "rho_pooled", "lambda_x_positive": "T_M_positive", "lambda_x_negative": "T_M_negative",
     "normalised_lambda_original": "lambda_D_original", "lambda_borrowed_kappa": "R",
     "lambda_proportionality_low": "T_M_low", "lambda_proportionality_mid": "T_M_mid",
     "lambda_proportionality_high": "T_M_high",
 }
 X = "x|"  # prefix of regressor columns supplied from another method
+SECOND_RUN = "@r1"  # suffix of the second run's columns (replicate 1)
+MIN_SIGN_CASES = 8  # cases needed on each side of 0 for lambda by the sign of the gap
 
 
 def wide(beliefs: pd.DataFrame, prefix: str = "") -> pd.DataFrame:
-    """case_id x '{condition}:{half}' (value), plus ':sd' and ':cal' (value_calibrated)."""
+    """case_id x '{condition}[@r{run}]:{half}' (value), plus ':sd' and ':cal' (value_calibrated)."""
     b = beliefs.copy()
-    b["col"] = prefix + b["condition"] + ":" + b["half"]
+    run = (pd.to_numeric(b["replicate"], errors="coerce").fillna(0).astype(int) if "replicate" in b
+           else pd.Series(0, index=b.index))
+    b["col"] = prefix + b["condition"] + run.map(lambda r: f"@r{r}" if r else "") + ":" + b["half"]
     parts = [b.pivot_table(index="case_id", columns="col", values="value", aggfunc="first")]
     for column, suffix in (("sd", "sd"), ("value_calibrated", "cal")):
         extra = b.pivot_table(index="case_id", columns="col", values=column, aggfunc="first",
@@ -92,19 +122,41 @@ def _ratio(num: float, den: float) -> float:
     return num / den if den != 0 else np.nan
 
 
+def _cov(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.cov(a, b, ddof=1)[0, 1])
+
+
+def cal_values(W: dict[str, np.ndarray], key: str, default: np.ndarray | None = None) -> np.ndarray:
+    """A column's calibrated values (``key:cal``) if stored, else its values, else ``default``."""
+    if f"{key}:cal" in W:
+        return W[f"{key}:cal"]
+    return W[key] if key in W else default
+
+
+def pair_keys(framing: str, pair: str, available) -> dict[str, str | None]:
+    """``pair_conditions``, falling back to the shared D for runs without the pair's own D."""
+    k = dict(pair_conditions(framing, pair))
+    if not any(str(c).startswith(f"{k['D']}:") for c in available):
+        k["D"] = pair_conditions(framing, pair, shared_d=True)["D"]
+    return k
+
+
 def needed_columns(method: str, framing: str, pair: str, has_regressor: bool,
                    available: set[str]) -> list[str]:
     """Columns a case must have to enter this pair's analysis set.
 
     The matched control is required only if it was run (its column exists).
     """
-    k = dict(pair_conditions(framing, pair))
+    k = pair_keys(framing, pair, available)
     h = HALVES[method]
     if k["M"] and f"{k['M']}:{h['full']}" not in available:
         k["M"] = None
     cols = [f"{k[r]}:{h['full']}" for r in ("C", "D")] + ([f"{k['M']}:{h['full']}"] if k["M"] else [])
     own = [f"{k[r]}:{h['full']}" for r in ("A", "B")]
     cols += [X + c for c in own] if has_regressor else own
+    second = [f"{k[r]}{SECOND_RUN}:{h['full']}" for r in ("A", "B")]
+    if not has_regressor and all(c in available for c in second):
+        cols += second
     if "dec" in h:
         cols += [f"{k[r]}:{half}" for r in ("A", "B") for half in (h["prob"], h["dec"])]
         cols += [f"{k[r]}:{h['dec']}" for r in ("C", "D")] + ([f"{k['M']}:{h['dec']}"] if k["M"] else [])
@@ -120,7 +172,7 @@ def pair_statistics(W: dict[str, np.ndarray], method: str, framing: str, pair: s
     check on the pooled fit, and the only valid choice for per-condition fits,
     where each condition has its own prior and raw posterior means do not share shrinkage.
     """
-    k = pair_conditions(framing, pair)
+    k = pair_keys(framing, pair, W)
     h = HALVES[method]
     full = h["full"]
     has_m = k["M"] is not None and f"{k['M']}:{full}" in W
@@ -144,11 +196,17 @@ def pair_statistics(W: dict[str, np.ndarray], method: str, framing: str, pair: s
         m = W[f"{k['M']}:{full}{oc}"]
         out["intercept_M"], out["T_M"] = ols(d - m, x)
         out["lambda"] = 1 - _ratio(out["T_C"], out["T_M"])
+        out["beta_D"], out["beta_C"] = out["T_M"], ols(c - m, x)[1]  # lambda = beta_C / beta_D
+        out["curvature_D"], out["curvature_C"] = ols(d - m, x, x**2)[2], ols(c - m, x, x**2)[2]
+        for name, sel in (("positive", x > 0), ("negative", x < 0)):
+            if sel.sum() >= MIN_SIGN_CASES and (~sel).sum() >= MIN_SIGN_CASES:
+                t_m = ols((d - m)[sel], x[sel])[1]
+                out[f"T_M_{name}"] = t_m
+                out[f"lambda_x_{name}"] = _ratio(ols((c - m)[sel], x[sel])[1], t_m)
         out["mean_D_minus_M"] = float(np.mean(d - m))
         out["mean_position"] = _ratio(float(np.mean(c - m)), out["mean_D_minus_M"])
-        cal = ":cal" if f"{k['M']}:{full}:cal" in W else ""
-        own_b = W[f"{k['B']}:{full}{cal}"] if f"{k['B']}:{full}{cal}" in W else b
-        out["anchor_mean_M_minus_B"] = float(np.mean(W[f"{k['M']}:{full}{cal}"] - own_b))
+        own_b = cal_values(W, f"{k['B']}:{full}", default=b)
+        out["anchor_mean_M_minus_B"] = float(np.mean(cal_values(W, f"{k['M']}:{full}") - own_b))
         out["sd_C"], out["sd_M"], out["sd_D"] = (float(np.std(v, ddof=1)) for v in (c, m, d))
         # Proportionality: lambda within thirds of |x| (same cases in T_C and T_M).
         edges = np.quantile(np.abs(x), [1 / 3, 2 / 3])
@@ -163,17 +221,38 @@ def pair_statistics(W: dict[str, np.ndarray], method: str, framing: str, pair: s
     # ---- descriptive: C on the model's own two beliefs (attenuated; not a test)
     _, out["two_weight_wA"], out["two_weight_wB"] = ols(c, a, b)
 
+    # ---- the Methods estimators: rho from a second run, phi and tau (calibrated values)
+    a1_key, b1_key = f"A{SECOND_RUN}:{full}", f"{k['B']}{SECOND_RUN}:{full}"
+    if not px and a1_key in W and b1_key in W:
+        ca, cb, ca1, cb1 = (cal_values(W, key) for key in (f"A:{full}", f"{k['B']}:{full}", a1_key, b1_key))
+        xc, x1c = ca - cb, ca1 - cb1
+        cd, cc = cal_values(W, f"{k['D']}:{full}"), cal_values(W, f"{k['C']}:{full}")
+        out["var_delta"] = _cov(xc, x1c)
+        out["rho"] = _ratio(out["var_delta"], float(np.var(xc, ddof=1)))
+        out["tau"] = _ratio(ols(cd - cc, xc)[1], out["rho"])
+        out["cov_A_A1"] = _cov(ca, ca1)
+        out["phi_D_on_A"] = _ratio(_cov(cd, ca1), out["cov_A_A1"])
+        out["intercept_D_on_A"] = float(np.mean(cd) - out["phi_D_on_A"] * np.mean(ca))
+        if has_m:
+            cm = cal_values(W, f"{k['M']}:{full}")
+            out["beta_D_calibrated"] = ols(cd - cm, xc)[1]
+            out["beta_C_calibrated"] = ols(cc - cm, xc)[1]
+            out["phi"] = _ratio(out["beta_D_calibrated"], out["rho"])
+            out["cov_B_B1"] = _cov(cb, cb1)
+            out["phi_M_on_B"] = _ratio(_cov(cm, cb1), out["cov_B_B1"])
+            out["intercept_M_on_B"] = float(np.mean(cm) - out["phi_M_on_B"] * np.mean(cb))
+
     # ---- tracking, compression, noise check, original estimator (independent halves)
     if "dec" in h and not px:
         def cal(cond: str, half: str) -> np.ndarray:
-            return W[f"{cond}:{half}:cal"]
+            return cal_values(W, f"{cond}:{half}")
 
         xp = W[f"A:{h['prob']}"] - W[f"{k['B']}:{h['prob']}"]
         r = ols(cal("A", h["dec"]) - cal(k["B"], h["dec"]), xp)[1]
         out["R"] = r
-        out["tau"] = _ratio(ols(cal(k["D"], h["dec"]) - cal(k["C"], h["dec"]), xp)[1], r)
+        out["tau_halves"] = _ratio(ols(cal(k["D"], h["dec"]) - cal(k["C"], h["dec"]), xp)[1], r)
         if has_m:
-            out["kappa"] = _ratio(ols(cal(k["D"], h["dec"]) - cal(k["M"], h["dec"]), xp)[1], r)
+            out["kappa_halves"] = _ratio(ols(cal(k["D"], h["dec"]) - cal(k["M"], h["dec"]), xp)[1], r)
         out["lambda_0"] = ols(cal(k["B"], h["null1"]) - cal(k["B"], h["null2"]), xp)[1]
         x_orig = a - W[f"{k['B']}:{h['prob']}"]
         b_dec = cal(k["B"], h["dec"])
@@ -186,6 +265,7 @@ def pair_statistics(W: dict[str, np.ndarray], method: str, framing: str, pair: s
 # Cross-pair contrasts, each on the cases complete for both sides:
 # (name, framing_1, pair_1, framing_2, pair_2, research question)
 CONTRASTS = (
+    ("F_minus_S4", "john", "F", "john", "S4", "curse"),
     ("F_minus_H", "john", "F", "john", "H", "RQ1c"),
     ("user_minus_john", "user", "S4", "john", "S4", "RQ1d"),
     ("S1_vs_S4", "john", "S1", "john", "S4", "RQ2"),
@@ -198,14 +278,33 @@ def contrast_statistics(W: dict[str, np.ndarray], method: str, name: str, f1: st
     s1 = pair_statistics(W, method, f1, p1, calibrated)
     s2 = pair_statistics(W, method, f2, p2, calibrated)
     out: dict[str, float] = {}
-    for stat in ("lambda", "tau", "T_C", "mean_position"):
+    for stat in ("lambda", "tau", "phi", "rho", "tau_halves", "T_C", "mean_position"):
         if stat in s1 and stat in s2:
             out[f"diff_{stat}"] = s1[stat] - s2[stat]
     # A pair without its own matched control borrows kappa from S4 (John only).
-    if p2 == "S4" and f1 == f2 == "john" and "tau" in s1 and "kappa" in s2:
+    if p2 == "S4" and f1 == f2 == "john" and "tau_halves" in s1 and "kappa_halves" in s2:
         out["R"] = s1["R"]
-        out["lambda_borrowed_kappa"] = 1 - _ratio(s1["tau"], s2["kappa"])
+        out["lambda_borrowed_kappa"] = 1 - _ratio(s1["tau_halves"], s2["kappa_halves"])
+    if "phi" in s1 and "phi" in s2:
+        out.update(pooled_phi(W, method, [(f1, p1), (f2, p2)]))
     return out
+
+
+def pooled_phi(W: dict[str, np.ndarray], method: str, pairs: list[tuple[str, str]]) -> dict[str, float]:
+    """phi with one responsiveness shared by several pairs: within-pair slopes, pooled rho."""
+    full = HALVES[method]["full"]
+    sxy = sxx = cxx1 = 0.0
+    for framing, pair in pairs:
+        k = pair_keys(framing, pair, W)
+        x = cal_values(W, f"A:{full}") - cal_values(W, f"{k['B']}:{full}")
+        x1 = cal_values(W, f"A{SECOND_RUN}:{full}") - cal_values(W, f"{k['B']}{SECOND_RUN}:{full}")
+        y = cal_values(W, f"{k['D']}:{full}") - cal_values(W, f"{k['M']}:{full}")
+        n1 = len(x) - 1
+        sxy += _cov(y, x) * n1
+        sxx += float(np.var(x, ddof=1)) * n1
+        cxx1 += _cov(x, x1) * n1
+    beta, rho = _ratio(sxy, sxx), _ratio(cxx1, sxx)
+    return {"beta_D_pooled": beta, "rho_pooled": rho, "phi_pooled": _ratio(beta, rho)}
 
 
 def bootstrap(frame: pd.DataFrame, fn: Callable[[dict[str, np.ndarray]], dict[str, float]], *,

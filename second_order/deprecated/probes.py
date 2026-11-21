@@ -20,7 +20,7 @@
   ell as targets, where responses exist; cosine with the report probe and
   cross-performance.
 
-    python -m second_order.probes --model gemma3_4b
+    python -m second_order.deprecated.probes --model gemma3_4b
 """
 
 from __future__ import annotations
@@ -34,11 +34,11 @@ from sklearn.linear_model import LogisticRegression, Ridge
 from sklearn.metrics import r2_score, roc_auc_score
 
 from latent_beliefs.ckd.cases import PROFILE_FEATURES
-from latent_beliefs.latent.domains import CKD_SPECS, likelihood_values
+from latent_beliefs.latent.domains import CKD_SPECS
 from latent_beliefs.latent.model import load_fit, restore_cell
 from second_order import beliefs as BL
 from second_order import config as C
-from second_order.activations import HALF, POSITIONS
+from second_order.deprecated.activations import HALF, POSITIONS
 from second_order.conditions import CONDITIONS, withheld_fields
 from second_order.fit_pooled import posteriors
 from second_order.prompts_second_order import cases

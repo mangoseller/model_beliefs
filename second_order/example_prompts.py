@@ -20,11 +20,14 @@ def main() -> None:
         f"Withheld set {cfg['withheld_set']}: {', '.join(withheld_fields())}.  C/D layout: `{cfg['layout']}`.  "
         f"Cases: {', '.join(ids)}.\n\n",
         f"False-belief field: {cfg['flip_field']}.  Withheld fields rendered as: {cfg['missing_fields']}.\n\n"
-        "Condition A is the first-order prompt, byte-identical to the released prompts (tested).  Each B is A "
-        "with the agent's copy as the profile.  C and D differ only in the agent's copy description.  Each M "
-        "is D with the agent's copy as the profile, the same bytes as the matching B (tested).  John and user "
-        "prompts differ only in person words (tested).  Answer formats and options are cut verbatim from the "
-        "first-order prompt.\n\n## Contents\n\n",
+        f"Own-belief prompts (A, B*) use the `{cfg['self_layout']}` layout: `matched` puts them in the layout "
+        "of the prompts about the agent, so every condition ends with the same question-and-format suffix; with "
+        "`first_order`, A is byte-identical to the released prompts (tested).  Each B is A with the agent's copy "
+        "as the profile.  C and D differ only in the agent's copy description.  Each M is D with the agent's copy "
+        "as the profile, the same bytes as the matching B (tested).  False-belief conditions (C_F, M_F, D_F) use "
+        f"the `{cfg.get('false_belief_framing', 'copy')}` framing; M_F and D_F share one sentence.  John and "
+        "user prompts differ only in person words (tested).  Answer formats and options are cut verbatim from "
+        "the first-order prompt.\n\n## Contents\n\n",
     ]
     for case_id in ids:
         lines.append(f"- {case_id}: " + ", ".join(f"[{c}](#{case_id.lower()}-{c.lower()})" for c in conds) + "\n")

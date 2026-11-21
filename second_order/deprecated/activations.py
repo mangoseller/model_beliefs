@@ -19,9 +19,9 @@ Per-item files ``data/activations/{model}/items/{condition}/{case}__{replay}.npz
 are resumable; ``pack`` consolidates them into one ``[items, hidden]`` array
 per position and layer for probe fitting.
 
-    python -m second_order.activations extract --model gemma3_4b --act-model gemma3_4b_mlx \
+    python -m second_order.deprecated.activations extract --model gemma3_4b --act-model gemma3_4b_mlx \
         --conditions A B C_john D_john M_S4 B_F C_F M_F [--cases all|smoke]
-    python -m second_order.activations pack --model gemma3_4b
+    python -m second_order.deprecated.activations pack --model gemma3_4b
 """
 
 from __future__ import annotations
@@ -31,13 +31,12 @@ import hashlib
 import json
 import re
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from second_order import config as C
-from second_order.prompts_second_order import build_prompt, profile_end_offset
+from second_order.prompts_second_order import profile_end_offset, prompt_for
 from second_order.run_generation import Item, lookup, select_cases, smoke_cases
 
 REPLAYS = ("probability", "likert", "probability_bin_quintile", "decision_no_threshold")
@@ -188,12 +187,13 @@ def extract(model: str, act_model: str, conditions: list[str], case_ids: list[st
     n_layers = len(ex.core.layers) if backend == "mlx" else ex.n_layers
     hidden = int(ex.core.args.hidden_size) if backend == "mlx" else ex.hidden
     provenance = {"response_model": model, "activation_model": act_model, "backend": backend,
-                  "checkpoint": str(C.model_config(act_model)["path"]), "layers": n_layers,
+                  "checkpoint": str(C.model_config(act_model)["path"]), "revision": ex.revision,
+                  "layers": n_layers,
                   "hidden": hidden, "positions": POSITIONS, "replays": REPLAYS,
                   "location": "post transformer block, before final RMSNorm", "dtype": "float32"}
     root.mkdir(parents=True, exist_ok=True)
     (root / "provenance.json").write_text(json.dumps(provenance, indent=2))
-    items = [Item(model, case_id, condition, output, 0, build_prompt(case_id, condition, output))
+    items = [Item(model, case_id, condition, output, 0, prompt_for(model, case_id, condition, output))
              for condition in conditions for case_id in case_ids for output in REPLAYS]
     records = lookup(items)
     started, done, checked = time.time(), 0, (root / "identity_check.json").exists()

@@ -1,10 +1,9 @@
-"""Figures by research question, regenerated from ``results/`` only (no model calls).
+"""Figures of the curse-of-knowledge experiment, regenerated from ``results/curse/`` only (no model calls).
 
-RQ1: ``rq1_lambda_vs_capability`` (lambda for pair S4 against capability, with kappa),
-     ``rq1_scatter`` (the two regressions behind lambda), ``rq1c_pairs`` (lambda per pair).
-RQ2: ``rq2_coherence`` (coherence by condition), and the ladder rungs in ``rq1c_pairs``.
-RQ3: ``rq3_lambda_by_method`` (latent, direct, probes), ``rq3_probe_layers``.
-Plus ``retention``.
+``curse_estimates`` (lambda, phi and tau per model, dataset, method and setting, with
+Camerer et al.'s w), ``curse_scatter`` (the two regressions behind lambda) and
+``retention``.  The style helpers here are shared with the deprecated RQ figures
+(``second_order.deprecated.rq_figures``).
 
     python -m second_order.figures
 """
@@ -19,14 +18,15 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from second_order import config as C  # noqa: E402
-from second_order.analyze import GEMMA_PARAMS, OPEN_WEIGHT, display  # noqa: E402
+from second_order.report import display  # noqa: E402
 
 INK, INK2, MUTED, GRID = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e1"
-FRAMING_COLOR = {"john": "#2a78d6", "user": "#eb6834", "self": "#52514e"}
-CONDITION_ORDER = ["A", "B", "D_john", "M_S4", "C_john", "D_user", "C_user"]
-CONDITION_COLOR = {"A": "#52514e", "B": "#8a8984", "D_john": "#7fb0eb", "M_S4": "#1baf7a", "C_john": "#2a78d6",
-                   "D_user": "#f3a37f", "C_user": "#eb6834"}
+CONDITION_ORDER = ["A", "B", "B_F", "D_john", "M_S4", "C_john", "D_F", "M_F", "C_F", "D_user", "C_user"]
+CONDITION_COLOR = {"A": "#52514e", "B": "#8a8984", "B_F": "#b8b7b2", "D_john": "#7fb0eb", "M_S4": "#1baf7a",
+                   "C_john": "#2a78d6", "D_F": "#f3a37f", "M_F": "#7ccfae", "C_F": "#eb6834",
+                   "D_user": "#f9cdb8", "C_user": "#c4521f"}
 PAIR_COLOR = {"S4": "#2a78d6", "S1": "#7fb0eb", "H": "#1baf7a", "F": "#eb6834"}
+SETTING_COLOR = {"partial": PAIR_COLOR["S4"], "false": PAIR_COLOR["F"]}
 
 
 def style(ax, title=None):
@@ -56,154 +56,22 @@ def errbar(ax, x, r, color, marker="o", hollow=False, label=None):
                 color=color, mfc="white" if hollow else color, ms=6, elinewidth=1.2, capsize=0, label=label)
 
 
-def rq2_coherence(coh):
-    co = coh[(coh.statistic == "mean_c_index") & (coh.direction == "reports_to_decisions")
-             & coh.condition.isin(CONDITION_ORDER)]
-    if co.empty:
-        return
-    co = co.assign(variant=co.get("variant", pd.Series(index=co.index, dtype=object)).fillna(co.method))
-    variants = sorted(co.variant.unique())
-    models = list(co.model.unique())
-    fig, axes = plt.subplots(1, len(variants), figsize=(3.4 * len(variants), 3.2), squeeze=False, sharey=True)
-    n = len(CONDITION_ORDER)
-    for ax, v in zip(axes[0], variants):
-        d = co[co.variant == v]
-        for mi, model in enumerate(models):
-            for ci, cond in enumerate(CONDITION_ORDER):
-                r = d[(d.model == model) & (d.condition == cond)]
-                if len(r):
-                    errbar(ax, mi + (ci - (n - 1) / 2) * 0.11, r.iloc[0], CONDITION_COLOR[cond],
-                           label=cond if mi == 0 else None)
-        ax.set_xticks(range(len(models)), [display(m) for m in models], rotation=30, ha="right", fontsize=7)
-        style(ax, v)
-    axes[0][0].set_ylabel("Mean c-index, reports → decisions (test)", fontsize=8, color=INK2)
-    axes[0][-1].legend(fontsize=7, frameon=False, loc="lower right")
-    save(fig, "rq2_coherence")
-
-
-def headline(leak):
-    """All complete cases, pooled fit with raw outcomes, selected probe layers."""
-    L = leak[(leak.case_set == "all_complete")]
-    if "selected_layer" in L:
-        L = L[L.selected_layer.map(lambda v: True if pd.isna(v) else bool(v))]
-    return L[(L.method != "latent") | ((L.fit == "pooled") & (L.outcome_values == "raw"))]
-
-
-def stat(L, statistic, framing="john", pair="S4"):
-    return L[(L.statistic == statistic) & (L.framing == framing) & (L.pair == pair)]
-
-
-def rq1_lambda_vs_capability(leak):
-    L = headline(leak)
-    L = L[L.method.isin(["latent", "direct"])]
-    if stat(L, "T_C").empty:
-        return
-    floor = float(C.load()["analysis"]["capability_floor"])
-    fig, axes = plt.subplots(1, 3, figsize=(10.5, 3.2), squeeze=False)
-    for ax, method in zip(axes[0][:2], ("latent", "direct")):
-        for model, g in L[L.method == method].groupby("model"):
-            cap = g.capability_condition_A_c_index.iloc[0]
-            lam, kap = stat(g, "lambda"), stat(g, "kappa")
-            if lam.empty:
-                continue
-            r = lam.iloc[0]
-            if np.isfinite(r.estimate):
-                errbar(ax, cap, r, PAIR_COLOR["S4"], hollow=cap < floor)
-            else:  # blanked by the ratio rule: shown, not dropped
-                ax.plot(cap, 0, "x", color=MUTED, ms=7)
-            if len(kap) and np.isfinite(kap.iloc[0].estimate):
-                ax.plot(cap, kap.iloc[0].estimate, "_", color=INK2, ms=12, mew=2)
-            ax.annotate(display(model), (cap, r.estimate if np.isfinite(r.estimate) else 0), fontsize=6,
-                        color=INK2, xytext=(4, 2), textcoords="offset points")
-        ax.axhline(0, color=MUTED, lw=0.8)
-        ax.axhline(1, color=MUTED, lw=0.8, ls=":")
-        ax.set_xlabel("Condition A c-index (reports → decisions)", fontsize=8, color=INK2)
-        style(ax, f"RQ1a/b: λ for pair S4, John ({method})")
-    ax = axes[0][2]
-    g = stat(L[(L.method == "latent") & L.model.isin(GEMMA_PARAMS)], "lambda")
-    for _, r in g[np.isfinite(g.estimate)].iterrows():
-        errbar(ax, GEMMA_PARAMS[r.model], r, PAIR_COLOR["S4"])
-    ax.set_xscale("log")
-    ax.set_xticks([4, 12, 27], ["4", "12", "27"])
-    ax.minorticks_off()
-    ax.set_xlim(3, 36)
-    ax.set_xlabel("Gemma 3 parameters (B)", fontsize=8, color=INK2)
-    style(ax, "λ by Gemma size (latent)")
-    fig.text(0.01, -0.05, "Circle with 95% interval: λ = 1 − T_C / T_M (hollow: condition A c-index below the "
-             "capability floor).  Bar: κ.  ×: λ blank because T_M's interval includes 0.", fontsize=7, color=INK2)
-    axes[0][0].set_ylabel("λ (0 = no leakage, 1 = own belief)", fontsize=8, color=INK2)
-    save(fig, "rq1_lambda_vs_capability")
-
-
-def rq1_scatter(scatter, leak):
-    if scatter.empty:
-        return
-    scatter = scatter[(scatter.framing == "john") & scatter.pair.isin(["S4", "F"])]
-    models, pairs = list(scatter.model.unique()), ["S4", "F"]
-    if not models:
-        return
-    fig, axes = plt.subplots(len(models), 2, figsize=(7, 3 * len(models)), squeeze=False)
-    L = headline(leak)
-    for i, model in enumerate(models):
-        for j, pair in enumerate(pairs):
-            ax = axes[i][j]
-            d = scatter[(scatter.model == model) & (scatter.pair == pair)]
-            if d.empty:
-                ax.set_axis_off()
-                continue
-            s = L[(L.model == model) & (L.method == "latent") & (L.framing == "john")
-                  & (L.pair == pair)].set_index("statistic")
-            xs = np.linspace(d.x_A_minus_B.min(), d.x_A_minus_B.max(), 10)
-            for col, slope, icpt, color, label in (("y_D_minus_M", "T_M", "intercept_M", MUTED, "D − M (no leakage)"),
-                                                   ("y_D_minus_C", "T_C", "intercept_C", PAIR_COLOR[pair], "D − C")):
-                if d[col].notna().any():
-                    ax.scatter(d.x_A_minus_B, d[col], s=8, color=color, alpha=0.6, label=label, lw=0)
-                if slope in s.index:
-                    ax.plot(xs, s.loc[icpt].estimate + s.loc[slope].estimate * xs, color=color, lw=2)
-            ax.set_xlabel("ℓ_A − ℓ_B (the model's own gap)", fontsize=8, color=INK2)
-            ax.set_ylabel("ℓ_D − ℓ (answers about John)", fontsize=8, color=INK2)
-            ax.legend(fontsize=7, frameon=False)
-            style(ax, f"{display(model)}, pair {pair}")
-    save(fig, "rq1_scatter")
-
-
-def rq1c_pairs(leak):
-    """λ per pair (S4, F, H with a matched control) and tracking τ per pair, John, latent."""
-    L = headline(leak)
-    L = L[(L.method == "latent") & (L.framing == "john")]
-    if L.empty:
-        return
-    models = list(L.model.unique())
-    fig, axes = plt.subplots(1, 2, figsize=(max(7, 1.3 * len(models) + 3), 3.2), squeeze=False)
-    for ax, statistic, title in ((axes[0][0], "lambda", "RQ1c: λ by pair"),
-                                 (axes[0][1], "tau", "RQ2 ladder: tracking τ = κ(1 − λ) by pair")):
-        pairs = [p for p in ("S4", "S1", "H", "F") if len(L[(L.statistic == statistic) & (L.pair == p)])]
-        for mi, model in enumerate(models):
-            for pi, pair in enumerate(pairs):
-                r = L[(L.model == model) & (L.statistic == statistic) & (L.pair == pair)]
-                if len(r) and np.isfinite(r.iloc[0].estimate):
-                    errbar(ax, mi + (pi - (len(pairs) - 1) / 2) * 0.16, r.iloc[0], PAIR_COLOR[pair],
-                           label=pair if mi == 0 else None)
-        ax.axhline(0, color=MUTED, lw=0.8)
-        ax.set_xticks(range(len(models)), [display(m) for m in models], rotation=30, ha="right", fontsize=7)
-        ax.legend(fontsize=7, frameon=False)
-        style(ax, title)
-    save(fig, "rq1c_pairs")
-
-
 def retention(ret):
     if ret.empty:
         return
-    models = list(ret.model.unique())
+    # One group of bars per model (and dataset, when the table has several).
+    ret = ret.assign(group=[display(m) if not d or d == "ckd" else f"{display(m)} · {d}"
+                            for m, d in zip(ret.model, ret.get("dataset", pd.Series("", index=ret.index)))])
+    groups = list(ret.group.unique())
     conds = [c for c in dict.fromkeys(CONDITION_ORDER + list(ret.condition)) if c in set(ret.condition)]
-    fig, ax = plt.subplots(figsize=(max(4, 1.2 * len(models) * len(conds) / 4), 3))
+    fig, ax = plt.subplots(figsize=(max(4, 1.2 * len(groups) * len(conds) / 4), 3))
     w = 0.8 / len(conds)
     for ci, cond in enumerate(conds):
-        d = ret[ret.condition == cond].set_index("model").reindex(models)
-        ax.bar(np.arange(len(models)) + ci * w, d.retention, width=w * 0.9,
+        d = ret[ret.condition == cond].set_index("group").reindex(groups)
+        ax.bar(np.arange(len(groups)) + ci * w, d.retention, width=w * 0.9,
                color=CONDITION_COLOR.get(cond, "#6250d6"), label=cond)
     ax.axhline(0.9, color=INK2, lw=1, ls="--")
-    ax.set_xticks(np.arange(len(models)) + 0.4 - w / 2, [display(m) for m in models], fontsize=7)
+    ax.set_xticks(np.arange(len(groups)) + 0.4 - w / 2, groups, fontsize=7)
     ax.set_ylim(0, 1.02)
     ax.set_ylabel("Complete-case retention", fontsize=8, color=INK2)
     ax.legend(fontsize=7, frameon=False, ncol=4, loc="lower left")
@@ -211,69 +79,74 @@ def retention(ret):
     save(fig, "retention")
 
 
-def rq3_lambda_by_method(leak):
-    L = headline(leak)
-    L = L[L.model.isin(OPEN_WEIGHT) & (L.statistic == "lambda") & (L.framing == "john") & L.pair.isin(["S4", "F"])]
-    if L.empty:
+def curse_estimates(est):
+    """lambda, phi and tau with 95% intervals, one row per model, dataset and method."""
+    L = est[(est.case_set == "all") & (est.setting != "false_minus_partial")]
+    groups = list(L.groupby(["model", "dataset", "method"], sort=False).size().index)
+    if not groups:
         return
-    L = L.assign(label=L.apply(lambda r: r.method if r.method != "probe" else f"probe {r.probe_type} {r.position}",
-                               axis=1))
-    models = list(L.model.unique())
-    fig, axes = plt.subplots(1, len(models), figsize=(3.6 * len(models), 3), squeeze=False, sharey=True)
-    for ax, model in zip(axes[0], models):
-        d = L[L.model == model]
-        labels = sorted(d.label.unique())
-        for li, lab in enumerate(labels):
-            for pair, off in (("S4", -0.12), ("F", 0.12)):
-                r = d[(d.label == lab) & (d.pair == pair)]
-                if len(r) and np.isfinite(r.iloc[0].estimate):
-                    errbar(ax, li + off, r.iloc[0], PAIR_COLOR[pair], label=pair if li == 0 else None)
-        ax.axhline(0, color=MUTED, lw=0.8)
-        ax.axhline(1, color=MUTED, lw=0.8, ls=":")
-        ax.set_xticks(range(len(labels)), labels, rotation=30, ha="right", fontsize=7)
-        style(ax, display(model))
-    axes[0][0].set_ylabel("λ (behavioural or probe)", fontsize=8, color=INK2)
-    axes[0][-1].legend(fontsize=7, frameon=False)
-    save(fig, "rq3_lambda_by_method")
+    w = float(C.load()["experiment"]["camerer_w"])
+    fig, axes = plt.subplots(1, 3, figsize=(10, 0.45 * len(groups) + 1.6), sharey=True)
+    panels = (("lambda", "Leakage λ (dotted: Camerer et al. w)", (0, w, 1)), ("phi", "Responsiveness φ", (1,)),
+              ("tau", "Theory-of-mind score τ = φ(1 − λ)", (1,)))
+    for ax, (statistic, title, refs) in zip(axes, panels):
+        for ref in refs:
+            ax.axvline(ref, color=MUTED, lw=0.8, ls=":" if ref == w and statistic == "lambda" else "-")
+        for i, (model, dataset, method) in enumerate(groups):
+            for j, setting in enumerate(("partial", "false")):
+                r = L[(L.model == model) & (L.dataset == dataset) & (L.method == method) & (L.setting == setting)
+                      & (L.statistic == statistic)]
+                if r.empty or not np.isfinite(r.estimate.iloc[0]):
+                    continue
+                r = r.iloc[0]
+                ax.errorbar(r.estimate, i + (j - 0.5) * 0.3, xerr=[[r.estimate - r.ci_lower], [r.ci_upper - r.estimate]],
+                            fmt="o", color=SETTING_COLOR[setting], ms=5, elinewidth=1.2, capsize=0,
+                            label=setting if i == 0 else None)
+        style(ax, title)
+        ax.grid(axis="x", color=GRID, linewidth=0.8)
+        ax.grid(axis="y", visible=False)
+    axes[0].set_yticks(range(len(groups)), [f"{display(m)} · {d} · {k}" for m, d, k in groups], fontsize=7)
+    axes[0].invert_yaxis()
+    axes[0].legend(fontsize=7, frameon=False, loc="lower right")
+    save(fig, "curse_estimates")
 
 
-def rq3_probe_layers(leak):
-    L = leak[(leak.method == "probe") & (leak.case_set == "all_complete") & (leak.probe_type == "report")
-             & (leak.statistic == "lambda") & (leak.framing == "john")] if "probe_type" in leak else pd.DataFrame()
-    if L.empty:
+def curse_scatter(scatter, est):
+    """Per model, dataset and method: l_C - l_M and l_D - l_M against x = l_A - l_B, by setting."""
+    if scatter.empty:
         return
-    models = list(L.model.unique())
-    positions = sorted(L.position.unique())
-    fig, axes = plt.subplots(len(models), len(positions), figsize=(3.6 * len(positions), 2.8 * len(models)),
-                             squeeze=False, sharey=True)
-    for i, model in enumerate(models):
-        for j, pos in enumerate(positions):
+    groups = list(scatter.groupby(["model", "dataset", "method"], sort=False).size().index)
+    fig, axes = plt.subplots(len(groups), 2, figsize=(7.5, 2.8 * len(groups)), squeeze=False)
+    for i, (model, dataset, method) in enumerate(groups):
+        for j, setting in enumerate(("partial", "false")):
             ax = axes[i][j]
-            for pair in ("S4", "F"):
-                d = L[(L.model == model) & (L.position == pos) & (L.pair == pair)]
-                d = d.drop_duplicates("layer").sort_values("layer")
-                ax.fill_between(d.layer, d.ci_lower, d.ci_upper, color=PAIR_COLOR[pair], alpha=0.15, lw=0)
-                ax.plot(d.layer, d.estimate, color=PAIR_COLOR[pair], lw=2, label=pair)
-            ax.axhline(0, color=MUTED, lw=0.8)
-            ax.axhline(1, color=MUTED, lw=0.8, ls=":")
-            ax.set_xlabel("Layer", fontsize=8, color=INK2)
-            style(ax, f"{display(model)}, report probe, {pos}")
-            ax.legend(fontsize=7, frameon=False)
-        axes[i][0].set_ylabel("Probe λ", fontsize=8, color=INK2)
-    save(fig, "rq3_probe_layers")
+            d = scatter[(scatter.model == model) & (scatter.dataset == dataset) & (scatter.method == method)
+                        & (scatter.setting == setting)]
+            if len(d) < 3:
+                ax.set_visible(False)
+                continue
+            x = d.x_A_minus_B.to_numpy()
+            grid = np.linspace(x.min(), x.max(), 20)
+            for column, color, label in (("y_D_minus_M", MUTED, "D − M (slope β_D)"),
+                                         ("y_C_minus_M", SETTING_COLOR[setting], "C − M (slope β_C)")):
+                ax.scatter(x, d[column], s=6, color=color, alpha=0.5, lw=0)
+                slope, intercept = np.polyfit(x, d[column], 1)
+                ax.plot(grid, intercept + slope * grid, color=color, lw=1.5, label=f"{label} = {slope:.2f}")
+            lam = est[(est.model == model) & (est.dataset == dataset) & (est.method == method)
+                      & (est.setting == setting) & (est.statistic == "lambda") & (est.case_set == "all")]
+            tag = f", λ = {lam.estimate.iloc[0]:.2f}" if len(lam) and np.isfinite(lam.estimate.iloc[0]) else ""
+            style(ax, f"{display(model)} · {dataset} · {method} · {setting}{tag}")
+            ax.set_xlabel("l_A − l_B (logits)", fontsize=8, color=INK2)
+            ax.legend(fontsize=6.5, frameon=False, loc="upper left")
+    save(fig, "curse_scatter")
 
 
 def main() -> None:
-    leak, coh = read("leakage.csv"), read("coherence.csv")
-    if not coh.empty:
-        rq2_coherence(coh)
-    if not leak.empty:
-        rq1_lambda_vs_capability(leak)
-        rq1_scatter(read("scatter_points.csv"), leak)
-        rq1c_pairs(leak)
-        rq3_lambda_by_method(leak)
-        rq3_probe_layers(leak)
-    retention(read("retention.csv"))
+    est = read("curse/estimates.csv")
+    if not est.empty:
+        curse_estimates(est)
+        curse_scatter(read("curse/scatter.csv"), est)
+    retention(read("curse/retention.csv"))
     print(f"figures written to {C.FIGURES}")
 
 
