@@ -246,10 +246,12 @@ def final_choice(text: str) -> str | None:
 
 
 def parse_probability(text: str | None) -> tuple[float | None, str | None]:
-    """Accept only the terminal JSON answer. Fenced JSON is also supported."""
+    """Accept only the terminal JSON answer. Fenced JSON, and Markdown emphasis around it, are also accepted."""
     if not text:
         return None, "invalid"
     answer = text.strip()
+    if not answer.endswith("```"):
+        answer = answer.rstrip("*_` \t\n")  # **{"probability": 0.75}** (Qwen3 8B, 18 of 27 misses in the smoke run)
     if answer.endswith("```"):
         fence = re.search(r"```(?:json)?\s*([^`]*)```$", answer, re.I)
         if not fence:

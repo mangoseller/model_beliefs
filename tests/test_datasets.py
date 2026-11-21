@@ -201,7 +201,9 @@ class Parsing(unittest.TestCase):
 
     def test_probabilities_are_read_from_the_json_only(self):
         for text, value in (('reasoning\n{"probability": 0.42}', 0.42), ('```json\n{"probability": 0.0}\n```', 0.0),
-                            ('{"probability": 0.9} then {"probability": 0.3}', 0.3), ('"probability": "65%"', None)):
+                            ('{"probability": 0.9} then {"probability": 0.3}', 0.3), ('"probability": "65%"', None),
+                            ('Final:\n\n**{"probability": 0.75}**', 0.75), ('`{"probability": 0.2}`', 0.2),
+                            ('assigns a **probability of 0.18** to it.', None)):
             self.assertEqual(DS.parse_probability(text)[0], value, text)
         for text in ("We need the probability that the marbles were drawn from Bag A, after Draw 2.\nFinal: 0.9",
                      "The probability for a 46-year-old is low.", '{"answer": 0.4}', "", None):
