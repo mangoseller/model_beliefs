@@ -63,6 +63,9 @@ class Freeze(unittest.TestCase):
         self.assertEqual(F.token_at(offsets, 4), 1)
         self.assertEqual(F.token_at(offsets, 9), 3)
         self.assertEqual(F.token_at(offsets, 0), -1)
+        merged = [(0, 4), (4, 7), (7, 12)]  # e.g. a ' {"' token that starts before the answer's brace
+        self.assertEqual(F.token_before(merged, 5), 0)
+        self.assertEqual(F.token_before(merged, 7), 1)
         text = 'thinking {"probability": 0.2} wait {"probability": 0.3}'
         self.assertEqual(F.answer_start("probability", text), text.rindex("{"))
         self.assertEqual(F.answer_start("likert", "x\nChoice: A\nmore\nChoice: B"), len("x\nChoice: A\nmore\n"))

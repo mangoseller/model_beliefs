@@ -25,18 +25,26 @@ judgement as the model, holds a different copy.
 | What John thinks; the model sees only John's copy | M | 13% |
 | What John thinks; the model sees the real chart, John has his copy | C | 25% |
 
-**Leakage λ** is where C sits between M and D, in log-odds: 0 means the model fully takes John's
-perspective, 1 means it gives its own belief as John's. Here λ ≈ 0.84; for people, Camerer,
-Loewenstein and Weber (1989) find about 0.51.
+**Leakage** $\lambda$ is where C sits between M and D in log-odds $\ell$: $\lambda = 0$ means the
+model fully takes John's perspective, $\lambda = 1$ means it gives its own belief as John's. Here
+$\lambda = (\ell_C - \ell_M)/(\ell_D - \ell_M) \approx 0.84$; for people, Camerer, Loewenstein and
+Weber (1989) find about 0.51.
 
 ![What λ, φ and τ measure](docs/figures/curse_schematic.png)
 
-Across cases, with x = l_A − l_B:
+Across cases, with $x = \ell_A - \ell_B$ the model's own update and $x'$ the same gap from an
+independent second run of A and B:
 
-- λ = β_C / β_D, the slopes of l_C − l_M and l_D − l_M on x;
-- ρ = Cov(x, x′) / Var(x), the reliability of x, from a second run of A and B;
-- φ = β_D / ρ, how strongly John's belief follows the evidence;
-- τ = φ(1 − λ), a theory-of-mind score.
+$$
+\lambda = \frac{\beta_C}{\beta_D}, \qquad
+\rho = \frac{\operatorname{Cov}(x, x')}{\operatorname{Var}(x)}, \qquad
+\varphi = \frac{\beta_D}{\rho}, \qquad
+\tau = \frac{\beta_D - \beta_C}{\rho} = \varphi\,(1 - \lambda),
+$$
+
+where $\beta_C$ and $\beta_D$ are the slopes of $\ell_C - \ell_M$ and $\ell_D - \ell_M$ on $x$. $\rho$
+is the reliability of $x$, $\varphi$ how strongly John's belief follows the evidence, and $\tau$ a
+theory-of-mind score.
 
 Two settings: **partial evidence** (John's copy lacks three fields) and **false belief** (a
 colleague read John one line wrongly). Two datasets:

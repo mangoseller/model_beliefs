@@ -322,9 +322,13 @@ def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, An
     s = sampling(model)
     params = [SamplingParams(n=1, temperature=s["temperature"], top_p=s["top_p"], top_k=s["top_k"],
                              max_tokens=s["max_tokens"], seed=item_seed(seed, i)) for i in items]
+    # Render each conversation with the model's chat template here (thinking on or off), as
+    # LLM.chat would; LLM.chat in vLLM 0.8.5 takes no chat-template arguments.
+    tok = llm.get_tokenizer()
+    prompts = [{"prompt_token_ids": tok.apply_chat_template(i.chat(), add_generation_prompt=True, tokenize=True,
+                                                            **template_kwargs(model))} for i in items]
     started = time.time()
-    outputs = llm.chat([i.chat() for i in items], params, use_tqdm=False,
-                       chat_template_kwargs=template_kwargs(model) or None)
+    outputs = llm.generate(prompts, params, use_tqdm=False)
     elapsed = time.time() - started
     records = []
     for item, out in zip(items, outputs):
@@ -498,7 +502,11 @@ def select_cases(n: int | str, *, exclude: Iterable[str] = (), seed_offset: int 
 
 
 def dataset_cases(dataset: str, cases: str | None, smoke: bool) -> list[str]:
-    """Case ids of one dataset: the smoke set, a file of ids, an integer or 'all'."""
+    """Case ids of one dataset: the smoke set, a file of ids, an integer or 'all'.
+
+    An integer (or ``--smoke``) selects CKD cases only; the bespoke dataset always runs every item
+    unless a file of ids names some.
+    """
     from second_order import datasets as DS
 
     if dataset == "ckd" and smoke:
@@ -508,7 +516,7 @@ def dataset_cases(dataset: str, cases: str | None, smoke: bool) -> list[str]:
         return [c for c in wanted if DS.dataset_of(c) == dataset]
     if dataset == "ckd":
         return select_cases(cases or C.load()["main_cases"])
-    return DS.case_ids(dataset, cases or "all")
+    return DS.case_ids(dataset)
 
 
 def main() -> None:

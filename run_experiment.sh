@@ -27,18 +27,20 @@ LOCAL="$HOME/.local"
 PATH_LINE='export PATH="$HOME/.local/bin:$HOME/.local/node/bin:$PATH"'
 
 install_agent_clis() {
+  # Called as `install_agent_clis || ...`, where bash ignores set -e: each step checks itself.
   # Node.js (for npm) unless the machine already has it: the official Linux build into ~/.local/node.
   if ! command -v npm >/dev/null 2>&1; then
     local arch
     case "$(uname -m)" in x86_64) arch=x64 ;; aarch64 | arm64) arch=arm64 ;; *) echo "unsupported CPU $(uname -m)"; return 1 ;; esac
-    mkdir -p "$LOCAL"
-    curl -fsSL "https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-linux-$arch.tar.xz" | tar -xJ -C "$LOCAL"
-    ln -sfn "$LOCAL/node-$NODE_VERSION-linux-$arch" "$LOCAL/node"
+    mkdir -p "$LOCAL" || return 1
+    curl -fsSL "https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-linux-$arch.tar.xz" | tar -xJ -C "$LOCAL" || return 1
+    ln -sfn "$LOCAL/node-$NODE_VERSION-linux-$arch" "$LOCAL/node" || return 1
   fi
   export PATH="$LOCAL/bin:$LOCAL/node/bin:$PATH"
-  npm install --global --prefix "$LOCAL" @anthropic-ai/claude-code @openai/codex
+  npm install --global --prefix "$LOCAL" @anthropic-ai/claude-code @openai/codex || return 1
+  command -v claude >/dev/null && command -v codex >/dev/null || return 1
   grep -qxF "$PATH_LINE" "$HOME/.bashrc" 2>/dev/null || echo "$PATH_LINE" >> "$HOME/.bashrc"
-  echo "installed: claude $(claude --version 2>/dev/null | head -1); codex $(codex --version 2>/dev/null | head -1)"
+  echo "installed: claude $(claude --version | head -1); codex $(codex --version | head -1)"
 }
 
 if [ "${INSTALL_AGENTS:-1}" = 1 ]; then
@@ -50,12 +52,16 @@ if ! command -v uv >/dev/null 2>&1; then
   export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 fi
 [ -x "$VENV/bin/python" ] || uv venv --python 3.11 "$VENV"
-uv pip install --python "$VENV/bin/python" -r requirements/experiment.txt
 if [ "${CPU_ONLY:-0}" = 1 ]; then
+  uv pip install --python "$VENV/bin/python" -r requirements/experiment.txt
   # The latent fits need torch even without a GPU: the CPU build of the same version.
   uv pip install --python "$VENV/bin/python" torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+elif [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; then
+  # Every package pinned, vLLM's dependencies at versions from its release (requirements/lock-cuda.txt).
+  uv pip install --python "$VENV/bin/python" -r requirements/lock-cuda.txt
+  export HF_HUB_ENABLE_HF_TRANSFER=1
 else
-  uv pip install --python "$VENV/bin/python" -r requirements/gpu.txt
+  uv pip install --python "$VENV/bin/python" -r requirements/experiment.txt -r requirements/gpu.txt
   export HF_HUB_ENABLE_HF_TRANSFER=1
 fi
 

@@ -85,8 +85,14 @@ def answer_start(output: str, text: str) -> int:
 
 
 def token_at(offsets: list[tuple[int, int]], char_end: int) -> int:
-    """Index of the last token that starts before ``char_end`` (-1 if none)."""
+    """Index of the last token that starts before ``char_end``: the token holding its last character."""
     found = [k for k, (start, end) in enumerate(offsets) if start < char_end and end > start]
+    return found[-1] if found else -1
+
+
+def token_before(offsets: list[tuple[int, int]], char: int) -> int:
+    """Index of the last token that ends at or before ``char`` (none of it reaches that character)."""
+    found = [k for k, (start, end) in enumerate(offsets) if end <= char and end > start]
     return found[-1] if found else -1
 
 
@@ -129,7 +135,7 @@ class Replayer:
         answer = answer_start(item.output, response) if response else -1
         index = [token_at(offsets, prompt_at + evidence) if evidence >= 0 and prompt_at >= 0 else -1,
                  n_prompt - 1,
-                 token_at(offsets, len(template) + answer) if answer >= 0 else -1]
+                 token_before(offsets, len(template) + answer) if answer >= 0 else -1]
         with torch.inference_mode():
             out = self.lm(torch.tensor([ids], device=self.lm.device), output_hidden_states=True)
         acts = np.zeros((len(POSITIONS), self.layers, self.hidden), dtype=np.uint16)

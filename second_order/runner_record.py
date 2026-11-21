@@ -73,6 +73,14 @@ The implementation's own description (leakage.py):
 """
 
 
+def available(compute):
+    """``compute()``, or a note of why it is unavailable (e.g. the data stage failed)."""
+    try:
+        return compute()
+    except Exception as exc:
+        return {"unavailable": repr(exc)}
+
+
 def constants() -> dict:
     cfg = C.load()
     models = list(cfg["experiment"]["models"])
@@ -85,7 +93,7 @@ def constants() -> dict:
             "replicates": cfg["experiment"]["replicates"], "comprehension": cfg["experiment"]["comprehension"],
             "camerer_w": cfg["experiment"]["camerer_w"], "agent": "John",
         },
-        "ckd": {
+        "ckd": available(lambda: {
             "cases": cfg["main_cases"], "withheld_fields_partial": {f: field_label(f) for f in fields_s4},
             "flipped_field_false_belief": {flip: field_label(flip)}, "missing_fields": cfg["missing_fields"],
             "layout": cfg["layout"], "self_layout": cfg["self_layout"],
@@ -93,9 +101,9 @@ def constants() -> dict:
             "outputs": {o: {"kind": output_kind(o), **{k: v for k, v in specs()[o].items() if k != "builder"}}
                         for o in OUTPUTS},
             "probability_bin_boundaries": bin_boundaries(),
-        },
+        }),
         "bespoke": {"items_file": str(C.bespoke_items_path()), "samples": cfg["bespoke"]["samples"],
-                    "answer_format": FORMAT, "items": bespoke_table().to_dict(orient="records")},
+                    "answer_format": FORMAT, "items": available(lambda: bespoke_table().to_dict(orient="records"))},
         "generation": {m: {"backend": C.model_config(m)["backend"], "weights": C.model_config(m).get("path"),
                            "revision": C.model_config(m).get("revision"), "sampling": sampling(m),
                            "chat_template": template_kwargs(m), "settings_signature": settings_signature(m),
@@ -195,6 +203,17 @@ def write_report(run_dir: Path) -> None:
                  f"{', PLACEHOLDER' if items.get('placeholder') else ''}; copy in `record/bespoke_items.yaml`.")
     parts.append("\n".join(setup) + "\n\n")
 
+    try:
+        parts.append(settings_table(consts))
+    except (KeyError, TypeError) as exc:
+        parts.append(f"## Settings\n\nUnavailable ({exc!r}); see `config.yaml` and `record/constants.json`.\n\n")
+    parts.append("## Estimators\n\nIn full in `record/estimator.md`. With x = l_A − l_B (log-odds): λ = β_C / β_D "
+                 "(slopes of l_C − l_M and l_D − l_M on x), ρ = Cov(x, x′) / Var(x) from the second run, "
+                 "φ = β_D / ρ, τ = (β_D − β_C) / ρ = φ(1 − λ); paired case bootstrap, ratio rule.\n\n")
+    write_results(parts, run_dir, manifest, use)
+
+
+def settings_table(consts: dict) -> str:
     d, ck, gen = consts["design"], consts["ckd"], consts["generation"]
     rows = [("Settings", ", ".join(f"{k} = pair {v}" for k, v in d["settings"].items())),
             ("Conditions", ", ".join(d["conditions"])),
@@ -216,11 +235,11 @@ def write_report(run_dir: Path) -> None:
         rows.append((f"Generation, {display(m)}", f"{g['backend']}, temperature {s['temperature']}, top-p {s['top_p']}, "
                      f"top-k {s['top_k']}, max {s['max_tokens']} tokens, chat template {g['chat_template']}, "
                      f"no system prompt, settings hash {g['settings_signature']}"))
-    parts.append("## Settings\n\nEvery value is in `record/constants.json`; the full config is `config.yaml`.\n\n"
-                 + md_table(pd.DataFrame(rows, columns=["setting", "value"]), ["setting", "value"]) + "\n")
-    parts.append("## Estimators\n\nIn full in `record/estimator.md`. With x = l_A − l_B (log-odds): λ = β_C / β_D "
-                 "(slopes of l_C − l_M and l_D − l_M on x), ρ = Cov(x, x′) / Var(x) from the second run, "
-                 "φ = β_D / ρ, τ = (β_D − β_C) / ρ = φ(1 − λ); paired case bootstrap, ratio rule.\n\n")
+    return ("## Settings\n\nEvery value is in `record/constants.json`; the full config is `config.yaml`.\n\n"
+            + md_table(pd.DataFrame(rows, columns=["setting", "value"]), ["setting", "value"]) + "\n")
+
+
+def write_results(parts: list[str], run_dir: Path, manifest: dict, use: dict) -> None:
 
     results = run_dir / "outputs" / "curse" / "RESULTS.md"
     if results.exists():
@@ -260,9 +279,9 @@ def write_report(run_dir: Path) -> None:
                      f"them). In `{manifest['run_id']}_activations.tar`, not the main tarball.\n\n"
                      + md_table(pd.DataFrame([{"model": m, **v} for m, v in acts.items()]),
                                 ["model", "exit_code", "gb", "minutes"], 2) + "\n")
-    if use:
+    if use and "unavailable" not in use:
         rows = [{"model": m, "part": part, **{k: int(v) for k, v in u.items() if k != "first_to_last_response_hours"}}
-                for m, parts_ in use.items() for part, u in parts_.items() if part != "all"]
+                for m, calls in use.items() for part, u in calls.items() if part != "all"]
         parts.append("## Usage\n\n" + md_table(pd.DataFrame(rows), ["model", "part", "calls", "errors", "truncated",
                                                                     "input_tokens", "output_tokens"]) + "\n")
     parts.append("## Files\n\n"
@@ -285,10 +304,12 @@ def main() -> None:
     record.mkdir(parents=True, exist_ok=True)
     (record / "constants.json").write_text(json.dumps(constants(), indent=2, default=str))
     (record / "estimator.md").write_text(ESTIMATOR + leakage.__doc__)
-    (record / "usage.json").write_text(json.dumps(usage(run_dir), indent=2))
+    (record / "usage.json").write_text(json.dumps(available(lambda: usage(run_dir)), indent=2))
     models = list(C.load()["experiment"]["models"])
     if models:
-        (record / "example_prompts_ckd.md").write_text(example_prompts(models[0]))
+        prompts = available(lambda: example_prompts(models[0]))
+        (record / "example_prompts_ckd.md").write_text(prompts if isinstance(prompts, str)
+                                                         else f"Unavailable: {prompts['unavailable']}\n")
     write_report(run_dir)
     print(f"wrote {run_dir / 'RUN_REPORT.md'}")
 

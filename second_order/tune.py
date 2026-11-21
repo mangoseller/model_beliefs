@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -102,7 +103,7 @@ def smoke_stats(items, records) -> dict:
 
 def trial(model: str, engine: dict, items_path: Path, out: Path) -> None:
     """One engine configuration in this process: load, generate every benchmark item, time it."""
-    from second_order.run_generation import Item, generate_vllm, item_seed  # noqa: F401  (item_seed: same seeds)
+    from second_order.run_generation import Item, generate_vllm
 
     C.load()["models"][model]["engine"] = engine  # this process only
     items = [Item(**d) for d in json.loads(items_path.read_text())]
@@ -170,6 +171,7 @@ def tune(model: str, out: Path, n: int | None = None, candidates: list[dict] | N
                   f"truncated {result['smoke']['truncated_rate']:.1%} (load {result['load_seconds']} s)", flush=True)
         else:
             print(f"[tune {model}] trial {k} failed: {result.get('error')}", flush=True)
+    shutil.rmtree(work, ignore_errors=True)  # the benchmark items and per-trial files; results are in summary
     summary = choose(model, len(items), trials, s)
     if summary.get("engine"):
         print(f"[tune {model}] chosen: {summary['engine']}, batch {summary['batch_size']}; "

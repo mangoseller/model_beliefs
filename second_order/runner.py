@@ -85,10 +85,12 @@ class Run:
         self.fits: list[tuple[str, subprocess.Popen]] = []  # background phase3 jobs of this invocation
         self.heartbeat: Heartbeat | None = None
         self.manifest_path = self.dir / "manifest.json"
-        self.manifest = json.loads(self.manifest_path.read_text()) if self.manifest_path.exists() else {
-            "run_id": self.id, "created": now(), "stages": {}}
-        self.manifest.update({"last_invocation": now(), "argv": sys.argv[1:], "models": list(args.models),
-                              "smoke": bool(args.smoke)})
+        self.resumed = self.manifest_path.exists()
+        self.manifest = json.loads(self.manifest_path.read_text()) if self.resumed else {
+            "run_id": self.id, "created": now(), "stages": {}, "models": list(args.models), "smoke": bool(args.smoke)}
+        if self.resumed:  # a resumed run keeps the models and smoke setting it started with
+            args.models, args.smoke = self.manifest["models"], self.manifest["smoke"]
+        self.manifest.update({"last_invocation": now(), "argv": sys.argv[1:]})
         self.config_path = self.dir / "config.yaml"
         self.env = dict(os.environ, PYTHONPATH=str(ROOT) + os.pathsep + os.environ.get("PYTHONPATH", ""),
                         SO_CONFIG=str(self.config_path), SO_DATA_DIR=str(self.dir / "data"),
@@ -217,9 +219,15 @@ def stage_fetch_data(run: Run, cfg: dict) -> None:
     run.sh([sys.executable, "-m", "latent_beliefs.release", "verify"], "fetch_data")
     run.manifest["release_manifest_sha256"] = sha256(release / "MANIFEST.sha256")
 
-    items = Path(run.args.bespoke_items or os.environ.get("BESPOKE_ITEMS") or DEFAULT_ITEMS)
-    placeholder = not items.exists()
-    if placeholder:
+    previous = run.manifest.get("bespoke_items")
+    if previous and not run.args.bespoke_items:  # a resumed run keeps its item file
+        items = Path(previous["path"])
+        if not items.exists() or sha256(items) != previous["sha256"]:
+            raise RuntimeError(f"the run's bespoke item file {items} is missing or changed since the run started")
+    else:
+        items = Path(run.args.bespoke_items or os.environ.get("BESPOKE_ITEMS") or DEFAULT_ITEMS)
+    placeholder = previous["placeholder"] if previous and not run.args.bespoke_items else not items.exists()
+    if placeholder and not items.exists():
         if run.args.require_real_data:
             raise RuntimeError(f"bespoke item file {items} not found (--require-real-data)")
         run.log(f"WARNING: no bespoke item file at {items}; using the test fixture as a PLACEHOLDER")
@@ -260,8 +268,10 @@ def stage_checks(run: Run, cfg: dict) -> None:
     clean = {k: v for k, v in run.env.items() if k not in SO_ENV}  # the tests use the repository config
     run.sh([sys.executable, "-m", "unittest", "tests.test_prompts_second_order", "tests.test_leakage",
             "tests.test_bespoke", "tests.test_generation", "tests.test_runner"], "checks", env=clean)
-    (run.dir / "record" / "nvidia_smi.txt").write_text(capture(["nvidia-smi"]))
-    gpus = capture(["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"])
+    has_smi = shutil.which("nvidia-smi") is not None
+    (run.dir / "record" / "nvidia_smi.txt").write_text(capture(["nvidia-smi"]) if has_smi else "nvidia-smi not found\n")
+    gpus = capture(["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"]) \
+        if has_smi else ""
     free = shutil.disk_usage(ROOT).free / 1e9
     run.manifest["hardware"] = {"gpus": [g.strip() for g in gpus.splitlines() if g.strip()],
                                 "cpus": os.cpu_count(), "disk_free_gb": round(free, 1),
@@ -330,11 +340,14 @@ def stage_tune(run: Run, cfg: dict) -> None:
     failures = []
     for model in [m for m in run.args.models if cfg["models"][m]["backend"] == "vllm"]:
         out = run.dir / "record" / "tuning" / f"{model}.json"
+        out.unlink(missing_ok=True)  # never read a previous invocation's result
         extra = ["--items", "256", "--candidates", "2"] if run.args.smoke else []
         run.log(f"tuning {model}: timing engine settings on a sample of real calls (log: logs/tune_{model}.log)")
         code = run.py("second_order.tune", "--model", model, "--out", str(out), *extra, log=f"tune_{model}",
                       check=False, echo=True)
-        summary = json.loads(out.read_text()) if out.exists() else {"error": f"tune exited with {code}"}
+        summary = json.loads(out.read_text()) if out.exists() else {}
+        if code and not summary.get("error"):
+            summary["error"] = f"tune exited with {code} (log: logs/tune_{model}.log)"
         if summary.get("engine"):
             cfg["models"][model]["engine"] = summary["engine"]
             cfg["models"][model]["batch_size"] = summary["batch_size"]
@@ -460,30 +473,53 @@ def stage_report(run: Run, cfg: dict) -> None:
     run.py("second_order.runner_record", str(run.dir), log="report")
 
 
+def write_archive(target: Path, add) -> str:
+    """Write a tar archive atomically (a temporary file renamed on success); returns its SHA-256."""
+    partial = target.with_name(target.name + ".partial")
+    with tarfile.open(partial, "w:gz" if target.name.endswith(".gz") else "w") as archive:
+        add(archive)
+    os.replace(partial, target)
+    digest = sha256(target)
+    target.with_name(target.name + ".sha256").write_text(f"{digest}  {target.name}\n")
+    return digest
+
+
 def stage_package(run: Run, cfg: dict) -> None:
-    target = RUNS / f"{run.id}.tar.gz"
-    run.manifest["tarball"] = str(target)
-    run.save()
+    for model, job in run.fits:  # never archive files a background fit is still writing
+        if job.poll() is None:
+            run.log(f"waiting for phase3 {model} before packaging")
+            job.wait()
 
     def keep(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
         rel = info.name.split("/", 1)[1] if "/" in info.name else ""
         return None if any(rel == p or rel.startswith(p + "/") for p in EXCLUDE_FROM_TARBALL) else info
 
-    with tarfile.open(target, "w:gz") as archive:
-        archive.add(run.dir, arcname=run.id, filter=keep)
-    digest = sha256(target)
-    (RUNS / f"{run.id}.tar.gz.sha256").write_text(f"{digest}  {target.name}\n")
+    target = RUNS / f"{run.id}.tar.gz"
+    digest = write_archive(target, lambda archive: archive.add(run.dir, arcname=run.id, filter=keep))
+    run.manifest["tarball"] = str(target)
     run.log(f"packaged {target} ({target.stat().st_size / 1e6:.0f} MB, sha256 {digest[:16]}...)")
-    acts = run.dir / "data" / "activations"
-    if acts.exists() and any(acts.rglob("acts.npy")):
-        extra = RUNS / f"{run.id}_activations.tar"  # bfloat16 bits barely compress
-        with tarfile.open(extra, "w") as archive:
-            archive.add(acts, arcname=f"{run.id}/data/activations")
+    # Activations: only folders whose freeze finished (meta.json says complete); bf16 bits barely compress.
+    complete = [m.parent for m in (run.dir / "data" / "activations").rglob("meta.json")
+                if json.loads(m.read_text()).get("complete")]
+    if complete:
+        extra = RUNS / f"{run.id}_activations.tar"
+        digest = write_archive(extra, lambda archive: [archive.add(f, arcname=f"{run.id}/{f.relative_to(run.dir)}")
+                                                       for f in complete])
         run.manifest["activations_tarball"] = str(extra)
-        run.log(f"packaged {extra} ({extra.stat().st_size / 1e9:.2f} GB): the frozen activations")
+        run.log(f"packaged {extra} ({extra.stat().st_size / 1e9:.2f} GB, sha256 {digest[:16]}...): "
+                f"{len(complete)} complete activation sets")
 
 
-STAGE_FUNCTIONS = {name: globals()[f"stage_{name}"] for name in STAGES}
+STAGE_FUNCTIONS = {
+    "fetch_data": stage_fetch_data, "fetch_models": stage_fetch_models, "checks": stage_checks,
+    "paper": stage_paper, "tune": stage_tune, "generate": stage_generate, "activations": stage_activations,
+    "fits": stage_fits, "analyze": stage_analyze, "report": stage_report, "package": stage_package,
+}
+# Run even after a failed stage: collect background fits, analyse whatever finished, report, package.
+ALWAYS_RUN = ("fits", "analyze", "report", "package")
+# On a resumed run, skipped when they already succeeded (unless named in --stages): slow, and redone
+# identically (the tuned engine settings are already in the run's config).
+ONCE = ("paper", "tune")
 
 
 # ---------------------------------------------------------------- driver
@@ -492,7 +528,7 @@ def main() -> None:
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
     parser.add_argument("--run-id", default=None, help="resume this run (runs/<run_id>)")
-    parser.add_argument("--stages", nargs="+", choices=STAGES, default=list(STAGES))
+    parser.add_argument("--stages", nargs="+", choices=STAGES, default=None, help="default: all")
     parser.add_argument("--skip", nargs="+", choices=STAGES, default=[])
     parser.add_argument("--smoke", action="store_true", help="20 CKD cases, 3 bespoke samples, short fits")
     parser.add_argument("--cases", default=None, help="CKD cases: 'all' or an integer (default: config)")
@@ -503,17 +539,24 @@ def main() -> None:
                         help="fail instead of using the placeholder bespoke items")
     parser.add_argument("--no-parallel-fits", action="store_true", help="run each phase3 before the next model")
     parser.add_argument("--continue-on-error", action="store_true",
-                        help="run later stages after a failed one (report and package always run)")
+                        help="run every later stage after a failed one (fits, analyze, report and "
+                             "package always run)")
     args = parser.parse_args()
     run = Run(args)
     cfg = write_config(run)
     run.log(f"run {run.id}: models {', '.join(args.models)}; directory {run.dir}")
     failed = False
     run_started = time.time()
-    selected = [s for s in STAGES if s in args.stages and s not in args.skip]
+    selected = [s for s in STAGES if s in (args.stages or STAGES) and s not in args.skip]
+    if run.resumed and args.stages is None:
+        done = [s for s in ONCE if run.manifest["stages"].get(s, {}).get("status") == "ok"]
+        if done:
+            run.log(f"resuming: {', '.join(done)} already done (name them in --stages to redo)")
+        selected = [s for s in selected if s not in done]
     for number, stage in enumerate(selected, 1):
-        if failed and stage not in ("report", "package") and not args.continue_on_error:
+        if failed and stage not in ALWAYS_RUN and not args.continue_on_error:
             run.manifest["stages"][stage] = {"status": "skipped after an earlier failure"}
+            run.save()
             continue
         run.log(f"[stage {number}/{len(selected)}] {stage}: start")
         started = time.time()
@@ -521,7 +564,7 @@ def main() -> None:
         try:
             STAGE_FUNCTIONS[stage](run, cfg)
             record["status"] = "ok"
-        except Exception as exc:  # recorded; report and package still run
+        except Exception as exc:  # recorded; the ALWAYS_RUN stages still run
             failed = True
             record.update(status="failed", error=repr(exc), traceback=traceback.format_exc())
             run.log(f"stage {stage}: FAILED: {exc!r}")
