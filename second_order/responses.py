@@ -206,5 +206,5 @@ def accuracy_summary(frame: pd.DataFrame, by: list[str]) -> pd.DataFrame:
     """Accuracy over answered checks, per group."""
     if frame.empty:
         return pd.DataFrame()
-    g = frame.dropna(subset=["correct"]).groupby(by)
+    g = frame.dropna(subset=["correct"]).fillna({c: "" for c in by}).groupby(by)
     return pd.DataFrame({"answered": g.size(), "accuracy": g.correct.mean()}).reset_index()
