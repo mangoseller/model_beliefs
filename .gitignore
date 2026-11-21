@@ -16,7 +16,7 @@ __pycache__/
 # second-order experiment and replication package (see README.md)
 build/
 outputs/
-figures/
+/figures/
 experiments/
 plans/
 runs/
