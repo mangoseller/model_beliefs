@@ -25,7 +25,7 @@ from second_order import beliefs as BL
 from second_order import config as C
 from second_order.report import display, md_table
 from second_order.deprecated.coherence import coherence_table, latent_predictions, link_predictions
-from second_order.conditions import CONDITIONS, CORE_CONDITIONS, framing_pairs, pair_conditions
+from second_order.conditions import CONDITIONS, framing_pairs, pair_conditions
 from second_order.leakage import leakage_table
 from second_order.prompts_second_order import prompt_for
 from second_order.run_generation import pilot_cases
@@ -178,7 +178,9 @@ def run_coherence(model: str, resamples: int, seed: int) -> pd.DataFrame:
     for method in [m for m in methods if m in ("latent", "direct", "probe")]:
         b = BL.read(model, method)
         b = b[b.replicate == 0]
-        cases_all = analysis_set(model, b[b.condition.isin(CORE_CONDITIONS)], CORE_CONDITIONS)
+        # The paired bootstrap resamples the same cases in every condition it predicts, so the
+        # case set is the cases complete in all of them (not only the core conditions).
+        cases_all = analysis_set(model, b, conditions)
         if method == "latent":
             params_path = C.LATENTS / f"{model}_parameters.parquet"
             if not params_path.exists():
@@ -192,7 +194,7 @@ def run_coherence(model: str, resamples: int, seed: int) -> pd.DataFrame:
             (f"probe_{t}_{p}", part) for t, p, _, _, part in probe_variants(model, b, all_layers=False)]
         for name, part in variants:
             part = part[(part.half == "all") & part.condition.isin(conditions)]
-            ids = analysis_set(model, part, [c for c in CORE_CONDITIONS if c in conditions])
+            ids = analysis_set(model, part, sorted(set(part.condition)))
             test = sorted(set(wide[(wide.split == "test")].case_id) & set(ids))
             preds = link_predictions(part, wide, test)
             t = coherence_table(preds["predictions"], method=method, model=model, n_cases=len(test),

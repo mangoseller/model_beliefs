@@ -85,7 +85,6 @@ def _rows() -> dict[str, Condition]:
 
 
 CONDITIONS = _rows()
-CORE_CONDITIONS = ("A", "B", "C_john", "D_john", "M_S4")  # RQ1a/b, RQ2 coherence, RQ3 (S4)
 
 
 def pair_conditions(framing: str, pair: str, *, shared_d: bool = False) -> dict[str, str | None]:
