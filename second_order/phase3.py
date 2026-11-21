@@ -11,7 +11,7 @@ Writes, for CKD:
   data/latents/{model}_parameters.parquet
   data/beliefs/{model}/latent.parquet, direct.parquet
   results/fits/{model}_fit_summary.csv, {model}_anchor_check.csv
-  docs/transcripts_C/{model}/{condition}.md   (20 random transcripts per C condition)
+  results/transcripts_C/{model}/{condition}.md   (20 random transcripts per C condition)
 for the bespoke dataset (numeric probability only, no latent fit):
   data/responses/{model}/bespoke/{condition}.parquet
   data/beliefs/{model}/bespoke_direct.parquet   (mean sample logit per item, condition and run)
@@ -36,7 +36,7 @@ from second_order.run_generation import dataset_cases
 
 
 def write_transcripts(model: str, long: pd.DataFrame, seed: int, n: int) -> None:
-    folder = C.DOCS / "transcripts_C" / model
+    folder = C.RESULTS / "transcripts_C" / model
     folder.mkdir(parents=True, exist_ok=True)
     for condition in [c for c in CONDITIONS if CONDITIONS[c].role == "C"]:
         part = long[(long.condition == condition) & long.text.notna()]

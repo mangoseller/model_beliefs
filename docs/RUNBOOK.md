@@ -8,60 +8,60 @@ PY=python
 export PYTHONPATH=.        # add the folders holding pyarrow and MLX if they are installed outside the environment
 ```
 
-The pinned environment is unchanged; `second_order/` additionally needs
-`pyarrow`, and local runs need MLX and `mlx-lm` (Apple silicon) or `torch`,
-`transformers` and `accelerate` (CUDA). All settings are in
-`configs/second_order.yaml`.
+The pinned environment is unchanged. `second_order/` additionally needs
+`pyarrow` and `pyyaml`. Local generation needs `vllm`, or `torch` with
+`transformers` and `accelerate` (CUDA); MLX needs `mlx-lm` (Apple silicon).
+All settings are in `configs/second_order.yaml`.
+
+The `SO_CONFIG`, `SO_DATA_DIR`, `SO_RESULTS_DIR`, `SO_FIGURES_DIR` and
+`SO_BESPOKE_ITEMS` environment variables redirect a run (`second_order/config.py`).
 
 ## Checks that run without model calls
 
 ```sh
 $PY -m unittest tests.test_prompts_second_order tests.test_leakage tests.test_bespoke tests.test_generation
 $PY -m unittest tests.test_pipeline                                  # end to end on the synthetic backend (minutes)
-$PY -m second_order.baseline_check --out-dir build/second_order_baseline   # first-order numbers still reproduce
-$PY -m second_order.simulate --lambdas 0 0.3 0.7 1                   # synthetic recovery (--kappa, --rho, --hedge set the scenario)
-$PY scripts/estimator_bias_check.py                                  # idealised comparison of the two estimators
+$PY -m second_order.bespoke                                          # the bespoke item file: Bayes answers, warnings
 $PY -m second_order.example_prompts                                  # docs/example_prompts.md
+./reproduce.sh analysis                                              # the original paper's figures and tables
+$PY -m second_order.baseline_check --out-dir build/second_order_baseline   # first-order CKD numbers still reproduce
 ```
 
-## Generation
+`./reproduce.sh analysis` writes to `build/`, or to `LB_BUILD_DIR` if it is
+set. Off the pinned macOS environment, the CKD c-indices match the paper to
+within about 0.01, and R² matches exactly (README, "Reproducing the original
+paper").
 
-Responses are cached per item in `data/generation_cache/<model>.jsonl`. The
-key is `sha256([model, case, condition, output, replicate])`. Reruns skip
-cached items. A run over 1,000 calls prints its call count and cost
-estimate, then stops unless `--approve` is passed. Add `--dry-run` to see
-only the estimate.
+## The generation cache
+
+- **Cache file.** Responses are cached per item in
+  `data/generation_cache/<model>.jsonl`.
+- **Key.** `sha256([model, case, condition, output, replicate])`, with
+  `sample` appended when it is nonzero.
+- **Reruns** skip cached items.
+- **Refused records.** A cached record is refused if its prompt hash differs
+  from the prompt now built. It is also refused if it was generated with
+  other settings: sampling, chat-template arguments (such as `enable_thinking`)
+  or weights.
+- **Cost gate.** A run over 1,000 calls prints its call count and cost
+  estimate, then stops unless `--approve` is passed. Add `--dry-run` to see
+  only the estimate.
+
+Every backend sends the whole conversation, so the two-turn comprehension
+follow-ups work on all of them.
 
 | Backend | Needs |
 |---|---|
+| `vllm` (Qwen3 8B, 14B) | CUDA. One seed per item. |
+| `hf` (transformers fallback, `*_hf` entries) | CUDA or CPU. One seed per batch, so a resumed run is not bit-reproducible. |
+| `synthetic` | Nothing; text from known parameters (`second_order/synthetic.py`). |
 | `bedrock` (7 open-weight models) | `boto3` credentials with `bedrock-runtime:Converse` in the region that serves the models (`AWS_PROFILE`, `AWS_REGION`). Synchronous Converse calls, 8 threads. |
 | `openai` (GPT-5.6 Luna and Terra) | `OPENAI_API_KEY`. Responses API, reasoning effort medium. |
 | `mlx` (local 4-bit Gemma) | Apple silicon. Batch 24 for 4B (a batch of 48 ran out of GPU memory in 16 GB). |
 
 The settings match condition A's collection: temperature 1, 4,096 output
-tokens, one user message, no system prompt. The first-order data were
-collected with the **batch** APIs. Synchronous calls are the same models and
-settings but cost about twice as much. Batch submission is not implemented
-yet.
-
-```sh
-# Phase 1 pilot (50 flagged cases, numeric probability x 3 per set H, S1-S4 and the flip F; A topped up to 3)
-$PY -m second_order.pilot generate --model openai_terra --approve
-$PY -m second_order.pilot generate --model qwen3_32b --approve
-$PY -m second_order.pilot report          # results/pilot/pilot_summary.csv
-
-# Phase 3 main run, per model. With no --conditions, a model runs its scheduled conditions
-# (config `schedule`): B, C_john, D_john, M_S4, B_F, C_F, M_F, B_H, C_H, M_H for all models, plus
-# B_S1, C_S1, C_user, D_user for three. A comes from the release cache.
-$PY -m second_order.run_generation --model openai_terra --dry-run
-$PY -m second_order.run_generation --model openai_terra --approve
-$PY -m second_order.phase3 --model openai_terra     # parse, fits, latents, beliefs, retention, transcripts
-
-# Smoke run (plan: one model through Phase 5 first)
-$PY -m second_order.run_generation --model gemma3_4b_mlx --smoke --approve   # local; regenerates A too
-$PY -m second_order.phase3 --model gemma3_4b_mlx --smoke
-
-```
+tokens, no system prompt. A model entry may override `temperature`, `top_p`,
+`top_k`, `max_tokens` and `enable_thinking`.
 
 ## Curse-of-knowledge experiment (Qwen3 8B and 14B)
 
@@ -98,9 +98,10 @@ Approximate calls per model:
 vLLM serves the model locally, with one seed per item, temperature 1, at most
 4,096 tokens and thinking off. Qwen3 14B in bf16 needs about 30 GB of GPU
 memory (`tensor_parallel_size` in the model entry spreads it over GPUs).
-`--dataset ckd` or `--dataset bespoke` runs one dataset; `--stage comprehension`
-runs only the follow-ups, once the C answers are cached. Generation resumes
-from the cache after an interruption.
+
+- `--dataset ckd` or `--dataset bespoke` runs one dataset.
+- `--stage comprehension` runs only the follow-ups, once the C answers are cached.
+- Generation resumes from the cache after an interruption.
 
 The rest needs no GPU (copy `data/generation_cache/` back if the GPU is elsewhere):
 
@@ -108,42 +109,72 @@ The rest needs no GPU (copy `data/generation_cache/` back if the GPU is elsewher
 $PY -m second_order.phase3 --model qwen3_8b      # parse, latent fits (CKD), beliefs, retention, comprehension
 $PY -m second_order.phase3 --model qwen3_14b
 $PY -m second_order.curse                        # results/curse/*.csv and results/curse/RESULTS.md
-$PY -m second_order.figures                      # figures/curse_estimates, curse_scatter (+ the RQ figures)
+$PY -m second_order.figures                      # figures/curse_estimates, curse_scatter, retention
 ```
+
+Latent fits run on CPU but slowly, roughly an hour per model for 500 cases.
+On a CUDA machine, phase 3 is faster.
 
 Variants:
 
 - `qwen3_8b_hf` uses transformers instead of vLLM.
-- `qwen3_0_6b_hf` is a CPU-sized smoke test of the chat template and parsing,
-  e.g. `--model qwen3_0_6b_hf --dataset bespoke --cases 2`.
+- `qwen3_0_6b_hf` is a CPU-sized smoke test of the chat template, the
+  follow-up turn and parsing, e.g. `--model qwen3_0_6b_hf --dataset bespoke --cases 2`.
 - `synthetic` writes text from known λ, φ and noise; it is what
   `tests.test_pipeline` runs.
 
-The `SO_CONFIG`, `SO_DATA_DIR`, `SO_RESULTS_DIR`, `SO_FIGURES_DIR` and
-`SO_BESPOKE_ITEMS` environment variables redirect a run (`second_order/config.py`).
+## Deprecated: the earlier RQ1–RQ3 design
 
-## Phase 4: activations and probes
-
-On this Mac (MLX, Gemma 3 4B and 12B, 4-bit):
+These modules live in `second_order/deprecated/` and still run. The current
+study does not use them.
 
 ```sh
-$PY -m second_order.activations extract --model gemma3_4b --act-model gemma3_4b_mlx \
+# Idealised estimator checks
+$PY -m second_order.deprecated.simulate --lambdas 0 0.3 0.7 1       # latent-level recovery (--kappa, --rho, --hedge)
+$PY -m second_order.deprecated.estimator_bias_check                 # original vs matched-control estimator
+
+# Phase 1 pilot (50 flagged cases, numeric probability x 3 per set H, S1-S4 and the flip F; A topped up to 3)
+$PY -m second_order.deprecated.pilot generate --model openai_terra --approve
+$PY -m second_order.deprecated.pilot generate --model qwen3_32b --approve
+$PY -m second_order.deprecated.pilot report                         # results/pilot/pilot_summary.csv
+
+# Main run on the hosted models. With no --conditions, a model runs its scheduled conditions
+# (config `schedule`): B, C_john, D_john, M_S4, B_F, C_F, M_F, B_H, C_H, M_H for all models, plus
+# B_S1, C_S1, C_user, D_user for three. A comes from the release cache, so these models need
+# build/datasets/ckd.csv (from ./reproduce.sh analysis) for their splits.
+$PY -m second_order.run_generation --model openai_terra --dry-run
+$PY -m second_order.run_generation --model openai_terra --approve
+$PY -m second_order.phase3 --model openai_terra
+
+# Smoke run on a local MLX model (regenerates A too)
+$PY -m second_order.run_generation --model gemma3_4b_mlx --smoke --approve
+$PY -m second_order.phase3 --model gemma3_4b_mlx --smoke
+
+# Analysis and figures by research question (no model calls)
+$PY -m second_order.deprecated.analyze            # results/*.csv, results/disagreements/, results/RESULTS.md
+$PY -m second_order.deprecated.rq_figures         # figures/rq1_*, rq1c_*, rq2_*, rq3_*, retention
+```
+
+The hosted models' default schedule still includes C_john and C_F, so
+`run_generation` also asks their comprehension follow-ups. Pass
+`--stage main` to skip them.
+
+### Activations and probes (RQ3)
+
+On a Mac (MLX, Gemma 3 4B and 12B, 4-bit):
+
+```sh
+$PY -m second_order.deprecated.activations extract --model gemma3_4b --act-model gemma3_4b_mlx \
     --conditions A B C_john D_john M_S4 B_F C_F M_F       # P3 only where responses are cached
-$PY -m second_order.activations pack --model gemma3_4b
-$PY -m second_order.probes --model gemma3_4b              # results/probes/gemma3_4b/, data/beliefs/gemma3_4b/probe.parquet
+$PY -m second_order.deprecated.activations pack --model gemma3_4b
+$PY -m second_order.deprecated.probes --model gemma3_4b   # results/probes/gemma3_4b/, data/beliefs/gemma3_4b/probe.parquet
 ```
 
-On a CUDA instance, for Gemma 3 27B, Qwen3 32B and Llama 3.1 70B: install
-`torch`, `transformers` and `accelerate`. Copy over `data/generation_cache/`,
-`data/release/` and `build/datasets/ckd.csv`. Then use the `*_hf` config
-entries, e.g.
-`--model gemma3_27b --act-model gemma3_27b_hf`. Activations need about 1 MB
-per item for a 4B model, scaling with layers × hidden size. 70B needs about
-2 × 80 GB GPUs in bf16.
+On a CUDA instance, for Gemma 3 27B, Qwen3 32B and Llama 3.1 70B:
 
-## Analysis and figures (no model calls)
+1. Install `torch`, `transformers` and `accelerate`.
+2. Copy over `data/generation_cache/`, `data/release/` and `build/datasets/ckd.csv`.
+3. Use the `*_hf` config entries, e.g. `--model gemma3_27b --act-model gemma3_27b_hf`.
 
-```sh
-$PY -m second_order.analyze            # results/*.csv, results/disagreements/, RESULTS.md
-$PY -m second_order.figures            # figures/rq1_*, rq1c_*, rq2_*, rq3_*, retention (.pdf, .png), from results/ only
-```
+Activations need about 1 MB per item for a 4B model, scaling with layers ×
+hidden size. 70B needs about 2 × 80 GB GPUs in bf16.

@@ -147,12 +147,12 @@ def _option_values(output: str, options: tuple[str, ...]) -> dict[float, str]:
 
 
 def respond(model: str, item, seed: int) -> str:
-    from second_order.comprehension import OUTPUT
+    from second_order.comprehension import is_followup
     from second_order import datasets as DS
 
     t = truth(model)
     rng = rng_for(seed, item.key)
-    if item.output == OUTPUT:
+    if is_followup(item.output):
         q = DS.comprehension(item.dataset, item.case_id, item.condition)
         right = rng.random() < float(t["comprehension_accuracy"])
         pick = q.answer if right else int(rng.choice([i for i in range(len(q.options)) if i != q.answer]))

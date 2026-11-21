@@ -14,8 +14,8 @@ delta (the slope estimators draw their power from the spread), share
 with |delta| > 0.5, counts of positive and negative delta, parse rate, and the
 number of B responses that remark on missing fields.
 
-    python -m second_order.pilot generate --model gemma3_4b_mlx [--approve]
-    python -m second_order.pilot report
+    python -m second_order.deprecated.pilot generate --model gemma3_4b_mlx [--approve]
+    python -m second_order.deprecated.pilot report
 """
 
 from __future__ import annotations

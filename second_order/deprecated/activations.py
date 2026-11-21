@@ -19,9 +19,9 @@ Per-item files ``data/activations/{model}/items/{condition}/{case}__{replay}.npz
 are resumable; ``pack`` consolidates them into one ``[items, hidden]`` array
 per position and layer for probe fitting.
 
-    python -m second_order.activations extract --model gemma3_4b --act-model gemma3_4b_mlx \
+    python -m second_order.deprecated.activations extract --model gemma3_4b --act-model gemma3_4b_mlx \
         --conditions A B C_john D_john M_S4 B_F C_F M_F [--cases all|smoke]
-    python -m second_order.activations pack --model gemma3_4b
+    python -m second_order.deprecated.activations pack --model gemma3_4b
 """
 
 from __future__ import annotations

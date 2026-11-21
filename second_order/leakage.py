@@ -236,6 +236,7 @@ def pair_statistics(W: dict[str, np.ndarray], method: str, framing: str, pair: s
         if has_m:
             cm = cal_values(W, f"{k['M']}:{full}")
             out["beta_D_calibrated"] = ols(cd - cm, xc)[1]
+            out["beta_C_calibrated"] = ols(cc - cm, xc)[1]
             out["phi"] = _ratio(out["beta_D_calibrated"], out["rho"])
             out["cov_B_B1"] = _cov(cb, cb1)
             out["phi_M_on_B"] = _ratio(_cov(cm, cb1), out["cov_B_B1"])

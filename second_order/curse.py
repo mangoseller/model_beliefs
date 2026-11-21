@@ -35,11 +35,11 @@ import pandas as pd
 
 from second_order import beliefs as BL
 from second_order import config as C
-from second_order.analyze import display, md_table
+from second_order.report import display, md_table
 from second_order.bespoke import bayes_answer, load as load_items, logit
 from second_order.conditions import CONDITIONS, SETTING_OF, SETTINGS, pair_conditions
 from second_order.leakage import leakage_table, pair_keys
-from second_order.responses import comprehension_summary, responses_path
+from second_order.responses import comprehension_summary, responses_path, scored
 
 OUT = C.RESULTS / "curse"
 METHODS = ("latent", "direct")
@@ -79,28 +79,39 @@ def comprehension_rows(model: str, dataset: str) -> pd.DataFrame:
 
 
 def comprehension_pass(model: str, dataset: str, b: pd.DataFrame) -> pd.DataFrame | None:
-    """Beliefs restricted to answers whose comprehension follow-up was correct (None if no follow-ups)."""
+    """Beliefs with each C condition restricted to answers whose follow-up was answered correctly.
+
+    Filtering is per C condition, so each setting loses only the cases (CKD) or samples
+    (bespoke) that failed its own follow-up.  None if no follow-up has been answered.
+    """
     comp = comprehension_rows(model, dataset)
     if comp.empty:
         return None
+    comp = comp.assign(correct=scored(comp))
+    if comp.correct.notna().sum() == 0:
+        return None
+    good = comp[comp.correct == 1]
+    checked = comp.condition.unique()
     if dataset == "ckd":
-        passed = comp.groupby("case_id").correct.all()
-        return b[b.case_id.isin(set(passed[passed].index))]
+        every = comp.dropna(subset=["correct"]).groupby(["case_id", "condition"]).correct.min()
+        passed = set(every[every == 1].index)
+        keep = ~b.condition.isin(checked) | pd.Series(list(zip(b.case_id, b.condition)), index=b.index).isin(passed)
+        return b[keep]
     # bespoke: recompute the C means from the samples whose follow-up was correct
     rows = []
-    for condition in comp.condition.unique():
+    for condition in checked:
         path = responses_path(model, dataset, condition)
         if not path.exists():
             continue
         long = pd.read_parquet(path)
-        good = comp[(comp.condition == condition) & comp.correct][["case_id", "replicate", "sample"]]
-        rows.append(long.merge(good, on=["case_id", "replicate", "sample"]))
+        rows.append(long.merge(good[good.condition == condition][["case_id", "replicate", "sample"]],
+                               on=["case_id", "replicate", "sample"]))
     if not rows:
         return None
     kept = BL.sample_mean_rows(pd.concat(rows, ignore_index=True))
     kept = kept[kept.case_id.isin(set(b.case_id))]
     kept["dataset"] = dataset
-    return pd.concat([b[~b.condition.isin(comp.condition.unique())], kept[b.columns]], ignore_index=True)
+    return pd.concat([b[~b.condition.isin(checked)], kept[b.columns]], ignore_index=True)
 
 
 def estimates(model: str, resamples: int, seed: int) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -126,7 +137,8 @@ def estimates(model: str, resamples: int, seed: int) -> tuple[pd.DataFrame, pd.D
                 t.insert(3, "case_set", name)
                 t.insert(4, "setting", t.pair.map(lambda p: SETTING_OF.get(p, "false_minus_partial")))
                 tables.append(t)
-            W = b[b.replicate == 0].pivot_table(index="case_id", columns="condition", values="value")
+            main = b[(b.replicate == 0) & (b.half == "all")]
+            W = main.pivot_table(index="case_id", columns="condition", values="value", aggfunc="first")
             for setting, pair in SETTINGS.items():
                 k = pair_keys("john", pair, [f"{c}:" for c in W.columns])
                 if any(k[r] not in W for r in "ABCMD"):
@@ -258,8 +270,12 @@ def write_results_md(models, est, placebo, bayes, comp, retention) -> None:
     else:
         parts.append("## Leakage, responsiveness and theory of mind\n\nlambda = beta_C / beta_D (0: no leakage, 1: "
                      "the agent is given the model's own belief); rho = Cov(x, x') / Var(x) from the second run; "
-                     "phi = beta_D / rho; tau = (beta_D - beta_C) / rho = phi (1 - lambda).\n\n"
-                     + headline_md(est, ["lambda", "phi", "rho", "tau", "beta_C", "beta_D"]) + "\n")
+                     "phi = beta_D / rho; tau = (beta_D - beta_C) / rho = phi (1 - lambda).  rho, phi and tau use "
+                     "calibrated values (for latent beliefs, the posterior means de-shrunk per fit; the slopes "
+                     "they use are beta_D_calibrated and beta_C_calibrated), so for latent rows phi is not "
+                     "beta_D / rho with the raw beta_D shown; lambda is the same either way.\n\n"
+                     + headline_md(est, ["lambda", "phi", "rho", "tau", "beta_C", "beta_D", "beta_C_calibrated",
+                                         "beta_D_calibrated"]) + "\n")
         passed = est[est.case_set == "comprehension_pass"]
         if not passed.empty:
             parts.append("### Answers whose comprehension follow-up was correct\n\n"

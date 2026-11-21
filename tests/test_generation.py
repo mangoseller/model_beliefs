@@ -19,7 +19,7 @@ from second_order import config as C  # noqa: E402
 from second_order import datasets as DS  # noqa: E402
 from second_order import run_generation as G  # noqa: E402
 from second_order import synthetic as S  # noqa: E402
-from second_order.comprehension import OUTPUT, parse_choice  # noqa: E402
+from second_order.comprehension import OUTPUT, followup_output, parse_choice  # noqa: E402
 from second_order.prompts_second_order import OUTPUTS, cases  # noqa: E402
 from second_order.responses import visible_text  # noqa: E402
 
@@ -93,12 +93,50 @@ class Comprehension(TempCache):
         self.assertEqual(missing, 0)
         self.assertEqual(len(items), len(parents))
         for item, parent in zip(items, parents):
-            self.assertEqual(item.output, OUTPUT)
+            self.assertEqual(item.output, followup_output("probability"))
             self.assertEqual(item.messages[0], ("user", parent.prompt))
             self.assertEqual(item.messages[1], ("assistant", f"answer {parent.case_id}"))
             self.assertEqual(item.messages[2][1], DS.comprehension("ckd", parent.case_id, parent.condition).question)
         # only the scheduled C conditions get follow-ups
         self.assertEqual(G.comprehension_items("synthetic", "ckd", CKD_CASES, ["A", "C_F"])[0][0].condition, "C_F")
+
+    def test_changed_generation_settings_are_refused(self):
+        item = G.experiment_items("synthetic", "ckd", CKD_CASES[:1], ["B"], ("probability",))[0]
+        G.Cache("synthetic").append([{"key": item.key, "prompt_sha": item.prompt_sha, "text": "x", "ok": True,
+                                      "settings_sha": "stale"}])
+        with self.assertRaises(ValueError):
+            G.lookup([item])
+
+    def test_current_settings_and_old_records_are_accepted(self):
+        a, b = G.experiment_items("synthetic", "ckd", CKD_CASES[:1], ["B"], ("probability", "likert"))[:2]
+        G.Cache("synthetic").append([
+            {"key": a.key, "prompt_sha": a.prompt_sha, "text": "x", "ok": True,
+             "settings_sha": G.settings_signature("synthetic")},
+            {"key": b.key, "prompt_sha": b.prompt_sha, "text": "y", "ok": True}])  # written before the check
+        self.assertEqual([r["text"] for r in G.lookup([a, b])], ["x", "y"])
+
+    def test_follow_ups_of_different_outputs_have_different_keys(self):
+        from second_order.comprehension import followup_output, is_followup
+
+        k1 = G.item_key("m", "c", "C_john", followup_output("probability"), 0)
+        k2 = G.item_key("m", "c", "C_john", followup_output("likert"), 0)
+        self.assertNotEqual(k1, k2)
+        self.assertTrue(is_followup(followup_output("likert")))
+        self.assertFalse(is_followup("probability"))
+
+    def test_unanswered_follow_ups_are_missing_not_wrong(self):
+        import pandas as pd
+
+        from second_order.responses import comprehension_summary, scored
+
+        frame = pd.DataFrame({"model": "m", "dataset": "ckd", "condition": "C_john", "case_id": ["a", "b", "c", "d"],
+                              "status": ["parsed", "parsed", "parse_failure", "not_generated"],
+                              "choice": [1, 0, float("nan"), float("nan")], "answer": 1})
+        self.assertEqual(scored(frame).tolist()[:3], [1.0, 0.0, 0.0])
+        self.assertTrue(np.isnan(scored(frame).iloc[3]))
+        row = comprehension_summary(frame).iloc[0]
+        self.assertAlmostEqual(row.accuracy, 1 / 3)
+        self.assertEqual((row.answered, row.cases_all_correct), (3, 1))
 
     def test_changed_prompt_is_refused(self):
         item = G.experiment_items("synthetic", "ckd", CKD_CASES[:1], ["B"], ("probability",))[0]
@@ -142,7 +180,8 @@ class Synthetic(unittest.TestCase):
     def test_comprehension_answers_parse(self):
         parent = G.experiment_items("synthetic", "bespoke", BESPOKE_CASES[:1], ["C_john"])[0]
         q = DS.comprehension("bespoke", parent.case_id, "C_john")
-        item = G.Item("synthetic", parent.case_id, "C_john", OUTPUT, 0, q.question, 0, "bespoke",
+        item = G.Item("synthetic", parent.case_id, "C_john", followup_output("probability"), 0, q.question, 0,
+                      "bespoke",
                       (("user", parent.prompt), ("assistant", "r"), ("user", q.question)))
         self.assertIsNotNone(parse_choice(S.respond("synthetic", item, 1), q.options))
 

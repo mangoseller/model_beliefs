@@ -40,7 +40,10 @@ class SyntheticPipeline(unittest.TestCase):
         steps = [["second_order.run_generation", "--model", "synthetic", "--cases", "150", "--approve"],
                  ["second_order.phase3", "--model", "synthetic", "--cases", "150"],
                  ["second_order.curse", "--models", "synthetic", "--resamples", "100"],
-                 ["second_order.figures"]]
+                 ["second_order.figures"],
+                 # the deprecated RQ analysis still runs on current outputs
+                 ["second_order.deprecated.analyze", "--models", "synthetic", "--resamples", "20"],
+                 ["second_order.deprecated.rq_figures"]]
         for step in steps:
             done = subprocess.run([sys.executable, "-m", *step], cwd=ROOT, env=env, capture_output=True, text=True)
             if done.returncode:
@@ -90,6 +93,13 @@ class SyntheticPipeline(unittest.TestCase):
         own = bayes[(bayes.beliefs == "own") & (bayes.condition == "all")].iloc[0]
         self.assertAlmostEqual(own.slope_on_bayes, 1.0, delta=0.15)  # the simulated model is Bayesian
 
+    def test_deprecated_rq_analysis_still_runs(self):
+        leak = pd.read_csv(self.results.parent / "leakage.csv")
+        lam = leak[(leak.method == "direct") & (leak.framing == "john") & (leak.pair == "S4")
+                   & (leak.statistic == "lambda") & (leak.case_set == "all_complete")]
+        self.assertAlmostEqual(lam.estimate.iloc[0], self.truth["lambda_partial"], delta=0.2)
+        self.assertTrue((self.figures / "rq1c_pairs.png").exists())
+
     def test_report_figures_and_retention(self):
         text = (self.results / "RESULTS.md").read_text()
         for heading in ("Leakage, responsiveness", "placebo", "Comprehension", "Anomalies"):
@@ -97,8 +107,13 @@ class SyntheticPipeline(unittest.TestCase):
         for name in ("curse_estimates", "curse_scatter"):
             self.assertTrue((self.figures / f"{name}.png").exists(), name)
         ret = pd.read_csv(self.results / "retention.csv")
-        self.assertTrue((ret.retention > 0.8).all())
-        self.assertTrue((ret.parse_failures > 0).any())  # the planted failures are counted, not imputed
+        # Only the planted failures (1% of responses) are lost: counted, never imputed.  A CKD call
+        # is complete only if all 16 outputs parse, so its retention is about 0.99 ** 16.
+        rate = ret.parse_failures.sum() / ret.responses.sum()
+        self.assertAlmostEqual(rate, self.truth["parse_failure_rate"], delta=0.004)
+        self.assertEqual(int(ret.call_errors.sum()), 0)
+        ckd = ret[ret.dataset == "ckd"]
+        self.assertAlmostEqual(ckd.cases_complete.sum() / ckd.cases_generated.sum(), 0.99**16, delta=0.04)
 
 
 if __name__ == "__main__":

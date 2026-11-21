@@ -1,6 +1,6 @@
 """Phase 5 analysis from the shared belief format, organised by research question.  No model calls.
 
-    python -m second_order.analyze [--models ...] [--resamples 2000]
+    python -m second_order.deprecated.analyze [--models ...] [--resamples 2000]
 
 RQ1 (separation): ``results/leakage.csv``: lambda, kappa, tau and their checks per
   model, method, framing and pair, plus the contrasts F - H (RQ1c) and user - John (RQ1d).
@@ -8,8 +8,8 @@ RQ2 (coherence and the ladder): ``results/coherence.csv``; ladder rows of ``leak
 RQ3 (internal): the ``probe`` rows of ``leakage.csv`` (outcomes are probe readings, the
   regressor is the behavioural latent gap).
 Also ``results/{agreement,retention,scatter_points}.csv``, ``results/disagreements/{model}.md``
-and ``RESULTS.md`` (tables, figure references, anomalies; no interpretation).
-Figures: ``python -m second_order.figures``.
+and ``results/RESULTS.md`` (tables, figure references, anomalies; no interpretation).
+Figures: ``python -m second_order.deprecated.rq_figures``.
 """
 
 from __future__ import annotations
@@ -21,25 +21,18 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from latent_beliefs.models import MODEL_DISPLAY
 from second_order import beliefs as BL
 from second_order import config as C
-from second_order.coherence import coherence_table, latent_predictions, link_predictions
+from second_order.report import display, md_table
+from second_order.deprecated.coherence import coherence_table, latent_predictions, link_predictions
 from second_order.conditions import CONDITIONS, CORE_CONDITIONS, framing_pairs, pair_conditions
 from second_order.leakage import leakage_table
 from second_order.prompts_second_order import prompt_for
 from second_order.run_generation import pilot_cases
 
-LOCAL_DISPLAY = {"gemma3_4b_mlx": "Gemma 3 4B (local 4-bit)", "gemma3_12b_mlx": "Gemma 3 12B (local 4-bit)",
-                 "qwen3_8b": "Qwen3 8B", "qwen3_14b": "Qwen3 14B", "qwen3_8b_hf": "Qwen3 8B (transformers)",
-                 "qwen3_0_6b_hf": "Qwen3 0.6B (smoke)", "synthetic": "Synthetic"}
 GEMMA_PARAMS = {"gemma3_4b": 4, "gemma3_12b": 12, "gemma3_27b": 27, "gemma3_4b_mlx": 4, "gemma3_12b_mlx": 12}
 OPEN_WEIGHT = {"gemma3_4b", "gemma3_12b", "gemma3_27b", "llama31_70b", "qwen3_32b", "deepseek_v32",
                "glm5", "gemma3_4b_mlx", "gemma3_12b_mlx"}
-
-
-def display(model: str) -> str:
-    return MODEL_DISPLAY.get(model) or LOCAL_DISPLAY.get(model, model)
 
 
 def selected_mask(frame: pd.DataFrame) -> pd.Series:
@@ -325,17 +318,6 @@ def write_disagreements(model: str, methods: dict[str, pd.DataFrame]) -> None:
     (folder / f"{model}.md").write_text("".join(lines))
 
 
-def md_table(frame: pd.DataFrame, cols: list[str], digits: int = 3) -> str:
-    if frame.empty:
-        return "_(no rows)_\n"
-    f = frame[cols].copy()
-    for c in f.columns:
-        if f[c].dtype.kind == "f":
-            f[c] = f[c].map(lambda v: "" if pd.isna(v) else f"{v:.{digits}f}")
-    head = "| " + " | ".join(cols) + " |\n|" + "---|" * len(cols) + "\n"
-    return head + "".join("| " + " | ".join(str(v) for v in r) + " |\n" for r in f.to_numpy())
-
-
 def anomalies(models, leakage, coherence, retention) -> list[str]:
     out = []
     for _, r in retention.iterrows():
@@ -461,7 +443,7 @@ def write_results_md(models, leakage, coherence, agreement, retention) -> None:
             "anchor_mean_M_minus_B",
             "manipulation_median_abs_gap", "gap_sd", "normalised_lambda_original"]
     parts = [f"# Second-order belief experiment: results\n\nGenerated {dt.date.today().isoformat()} by "
-             "`python -m second_order.analyze`; figures by `python -m second_order.figures`.  Numbers only; "
+             "`python -m second_order.deprecated.analyze`; figures by `python -m second_order.deprecated.rq_figures`.  Numbers only; "
              "no interpretation.  Headline rows: all complete cases for the pair, pooled fit, raw outcomes.  "
              "`lambda` is the matched-control estimate (1 - T_C / T_M); a blank ratio means its denominator's "
              "interval includes 0.\n\n"]
@@ -525,8 +507,8 @@ def write_results_md(models, leakage, coherence, agreement, retention) -> None:
                      "condition", "estimate", "n_cases", "detail"] if c in ag]) + "\n")
     parts.append("## Anomalies and stop-point checks\n\n"
                  + "".join(f"- {a}\n" for a in anomalies(models, leakage, coherence, retention)) + "\n")
-    (C.ROOT / "RESULTS.md").write_text("".join(parts))
-    print("wrote RESULTS.md")
+    (C.RESULTS / "RESULTS.md").write_text("".join(parts))
+    print(f"wrote {C.RESULTS / 'RESULTS.md'}")
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ assumption 10).  Own-belief outputs come from one measurement model; outputs
 about the agent from another real model's fit, so the two fits have
 different item parameters, as with real prompts.
 
-    python -m second_order.simulate [--lambdas 0 0.3 0.7 1] [--n 500] [--kappa 0.7] [--rho -0.2]
+    python -m second_order.deprecated.simulate [--lambdas 0 0.3 0.7 1] [--n 500] [--kappa 0.7] [--rho -0.2]
 """
 
 from __future__ import annotations

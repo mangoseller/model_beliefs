@@ -17,7 +17,18 @@ import re
 from dataclasses import dataclass
 from typing import Sequence
 
-OUTPUT = "comprehension"  # output name of a follow-up item
+OUTPUT = "comprehension"  # output names of follow-up items: comprehension:<parent output>
+
+
+def followup_output(parent_output: str) -> str:
+    """Output name of the follow-up to one parent answer (distinct per parent output)."""
+    return f"{OUTPUT}:{parent_output}"
+
+
+def is_followup(output: str) -> bool:
+    return output.startswith(OUTPUT + ":")
+
+
 CHOICE = re.compile(r"^[\s*_#`>]*Choice[\s*_`]*:[\s*_`]*(.*?)[\s*_`]*$", flags=re.I | re.M)
 
 

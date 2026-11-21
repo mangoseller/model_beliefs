@@ -88,6 +88,15 @@ def item_key(model: str, case_id: str, condition: str, output: str, replicate: i
     return hashlib.sha256(json.dumps(fields).encode()).hexdigest()
 
 
+def settings_signature(model: str) -> str:
+    """Hash of what besides the prompt shapes a response: backend, weights, sampling, chat template."""
+    mcfg = C.model_config(model)
+    payload = {"backend": mcfg["backend"], "weights": mcfg.get("path") or mcfg.get("model_id"),
+               "sampling": sampling(model), "template": template_kwargs(model),
+               "reasoning_effort": mcfg.get("reasoning_effort"), "truth": mcfg.get("truth")}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
+
+
 def item_seed(seed: int, item: Item) -> int:
     return (int(seed) + int(item.key[:8], 16)) % (2**31)
 
@@ -139,6 +148,7 @@ def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
     """Cached response record for each item (released A for hosted models)."""
     by_model: dict[str, Cache] = {}
     released: dict[str, dict] = {}
+    signatures: dict[str, str] = {}
     out = []
     for item in items:
         cfg = C.model_config(item.model)
@@ -157,6 +167,12 @@ def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
         record = cache.get(item.key)
         if record is not None and record["prompt_sha"] != item.prompt_sha:
             raise ValueError(f"cached prompt differs for {item}: template changed?")
+        if record is not None and "settings_sha" in record:
+            if item.model not in signatures:
+                signatures[item.model] = settings_signature(item.model)
+            if record["settings_sha"] != signatures[item.model]:
+                raise ValueError(f"cached response for {item.key} was generated with other settings "
+                                 f"(sampling, chat template or weights) than {item.model} has now")
         out.append(record)
     return out
 
@@ -193,8 +209,7 @@ def generate_mlx(model: str, items: list[Item], seed: int) -> list[dict[str, Any
     if model not in _MLX:
         _MLX[model] = load(str(C.ROOT / mcfg["path"]))
     lm, tok = _MLX[model]
-    prompts = [tok.apply_chat_template([{"role": "user", "content": i.prompt}],
-                                       add_generation_prompt=True) for i in items]
+    prompts = [tok.apply_chat_template(i.chat(), add_generation_prompt=True) for i in items]
     batch_seed = (seed + int(items[0].key[:8], 16)) % (2**31)
     mx.random.seed(batch_seed)
     started = time.time()
@@ -226,7 +241,7 @@ def generate_bedrock(model: str, items: list[Item], seed: int) -> list[dict[str,
         try:
             response = client.converse(
                 modelId=model_id,
-                messages=[{"role": "user", "content": [{"text": item.prompt}]}],
+                messages=[{"role": m["role"], "content": [{"text": m["content"]}]} for m in item.chat()],
                 inferenceConfig={"maxTokens": int(cfg["generation"]["max_tokens"]),
                                  "temperature": float(cfg["generation"]["temperature"])},
             )
@@ -249,7 +264,8 @@ def generate_openai(model: str, items: list[Item], seed: int) -> list[dict[str, 
     headers = {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"}
 
     def call(item: Item) -> dict[str, Any]:
-        body = {"model": mcfg["model_id"], "input": item.prompt,
+        body = {"model": mcfg["model_id"],
+                "input": item.prompt if item.messages is None else item.chat(),
                 "reasoning": {"effort": mcfg.get("reasoning_effort", "medium")},
                 "temperature": float(cfg["generation"]["temperature"]),
                 "max_output_tokens": int(cfg["generation"]["max_tokens"])}
@@ -331,6 +347,8 @@ def generate_hf(model: str, items: list[Item], seed: int) -> list[dict[str, Any]
     texts = [tok.apply_chat_template(i.chat(), add_generation_prompt=True, tokenize=False, **template_kwargs(model))
              for i in items]
     enc = tok(texts, return_tensors="pt", padding=True, add_special_tokens=False).to(lm.device)
+    # One seed per batch (batched sampling cannot take per-item seeds), so a resumed run with
+    # different batches is not bit-reproducible; vllm seeds every item.
     batch_seed = item_seed(seed, items[0])
     torch.manual_seed(batch_seed)
     started = time.time()
@@ -395,6 +413,7 @@ def run(items: list[Item], *, approve: bool = False, label: str = "") -> None:
     batch = int(C.model_config(model).get("batch_size", 32))
     seed = int(C.load()["seed"])
     cache = Cache(model)
+    signature = settings_signature(model)
     done = 0
     started = time.time()
     # Group by output so batches have similar lengths.
@@ -404,7 +423,8 @@ def run(items: list[Item], *, approve: bool = False, label: str = "") -> None:
         results = generate(model, chunk, seed)
         cache.append({"key": i.key, "model": i.model, "dataset": i.dataset, "case_id": i.case_id,
                       "condition": i.condition, "output": i.output, "replicate": i.replicate,
-                      "sample": i.sample, "prompt_sha": i.prompt_sha, "backend": backend,
+                      "sample": i.sample, "prompt_sha": i.prompt_sha, "settings_sha": signature,
+                      "backend": backend,
                       "time": time.time(), **r} for i, r in zip(chunk, results))
         done += len(chunk)
         rate = (time.time() - started) / done
@@ -433,7 +453,7 @@ def comprehension_items(model: str, dataset: str, case_ids: list[str],
                         conditions: list[str]) -> tuple[list[Item], int]:
     """Follow-up items for every cached C answer that gets one; also the number still missing a parent."""
     from second_order import datasets as DS
-    from second_order.comprehension import OUTPUT
+    from second_order.comprehension import followup_output
 
     wanted = [c for c in C.load()["experiment"]["comprehension"]["conditions"] if c in conditions]
     parents = experiment_items(model, dataset, case_ids, wanted, DS.comprehension_outputs(dataset))
@@ -444,7 +464,8 @@ def comprehension_items(model: str, dataset: str, case_ids: list[str],
             continue
         question = DS.comprehension(dataset, parent.case_id, parent.condition).question
         messages = (("user", parent.prompt), ("assistant", record["text"] or ""), ("user", question))
-        items.append(Item(model, parent.case_id, parent.condition, OUTPUT, parent.replicate, question,
+        items.append(Item(model, parent.case_id, parent.condition, followup_output(parent.output),
+                          parent.replicate, question,
                           parent.sample, dataset, messages))
     return items, missing
 

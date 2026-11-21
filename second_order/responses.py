@@ -157,7 +157,11 @@ def retention(long: pd.DataFrame) -> pd.DataFrame:
 
 def comprehension(model: str, dataset: str, case_ids: list[str], conditions: list[str],
                   write: bool = True) -> pd.DataFrame:
-    """Parsed and scored comprehension answers: one row per follow-up."""
+    """Parsed and scored comprehension answers: one row per follow-up.
+
+    ``correct`` is scored for answered follow-ups only (parsed, or unparseable = wrong);
+    follow-ups not generated yet and call errors are missing, not wrong.
+    """
     items, _ = comprehension_items(model, dataset, case_ids, conditions)
     rows = []
     for item, record in zip(items, lookup(items)):
@@ -166,11 +170,12 @@ def comprehension(model: str, dataset: str, case_ids: list[str], conditions: lis
         status = ("not_generated" if record is None else "call_error" if not record["ok"]
                   else "parsed" if choice is not None else "parse_failure")
         rows.append({"model": model, "dataset": dataset, "case_id": item.case_id, "condition": item.condition,
-                     "replicate": item.replicate, "sample": item.sample, "status": status,
-                     "choice": np.nan if choice is None else choice, "answer": q.answer,
-                     "correct": bool(choice == q.answer), "text": None if record is None else record["text"]})
-    frame = pd.DataFrame(rows, columns=["model", "dataset", "case_id", "condition", "replicate", "sample",
-                                        "status", "choice", "answer", "correct", "text"])
+                     "output": item.output.split(":", 1)[1], "replicate": item.replicate, "sample": item.sample,
+                     "status": status, "choice": np.nan if choice is None else choice, "answer": q.answer,
+                     "text": None if record is None else record["text"]})
+    frame = pd.DataFrame(rows, columns=["model", "dataset", "case_id", "condition", "output", "replicate",
+                                        "sample", "status", "choice", "answer", "text"])
+    frame["correct"] = scored(frame)
     if write and not frame.empty:
         path = responses_path(model, dataset, "comprehension")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -178,13 +183,24 @@ def comprehension(model: str, dataset: str, case_ids: list[str], conditions: lis
     return frame
 
 
+ANSWERED = ("parsed", "parse_failure")
+
+
+def scored(frame: pd.DataFrame) -> pd.Series:
+    """1.0 correct, 0.0 wrong or unparseable, NaN not answered (from status, choice and answer)."""
+    correct = (frame.status == "parsed") & (frame.choice == frame.answer)
+    return correct.astype(float).where(frame.status.isin(ANSWERED))
+
+
 def comprehension_summary(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame()
+    frame = frame.assign(correct=scored(frame))
     g = frame.groupby(["model", "dataset", "condition"])
     return pd.DataFrame({
-        "follow_ups": g.size(), "parsed": g.status.apply(lambda s: int((s == "parsed").sum())),
-        "accuracy": g.correct.mean(),
-        "cases_all_correct": g.apply(lambda p: int(p.groupby("case_id").correct.all().sum())),
+        "follow_ups": g.size(), "answered": g.correct.count(),
+        "parsed": g.status.apply(lambda s: int((s == "parsed").sum())),
+        "accuracy": g.correct.mean(),  # over answered follow-ups
+        "cases_all_correct": g.apply(lambda p: int((p.groupby("case_id").correct.min() == 1).sum())),
         "cases": g.case_id.nunique(),
     }).reset_index()

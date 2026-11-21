@@ -7,5 +7,4 @@ experiments/
 plans/
 results/
 figures/
-RESULTS.md
-docs/transcripts_C/
+.ruff_cache/

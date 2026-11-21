@@ -32,9 +32,15 @@ probability (direct elicitation).
   run. A belief is the mean sample logit; its `sd` is the standard error.
 - **Comprehension.** After each C answer (CKD: the numeric probability only),
   a second turn asks which evidence the agent had. The turn replays the C
-  prompt and response verbatim. Answers are parsed strictly and scored.
-  `results/curse/` reports accuracy and estimates restricted to correct
-  answers.
+  prompt and response verbatim on every backend. Answers are parsed
+  strictly and scored. Only answered follow-ups count: an unparseable answer
+  is wrong, and a follow-up not yet generated is missing. `results/curse/`
+  reports accuracy, and estimates restricted per C condition to correct
+  answers. CKD drops the case from that setting only; bespoke drops the
+  sample.
+- **Bespoke parsing.** Answers are read from the JSON object only. The
+  first-order fallback (a number after the word "probability") would read
+  "the probability that ... Bag 1" as 1.
 - **Generation** for the Qwen models is local:
   - `vllm`: one seed per item, temperature 1, thinking off;
   - `hf` fallback;
@@ -82,6 +88,13 @@ The earlier halves-based companions are kept as `kappa_halves` and
   latent fits, beliefs, estimators, report and figures. It checks that the
   planted λ (both settings, both datasets, both methods), φ, τ, the
   comprehension accuracy and a Bayesian own belief are recovered.
+
+## The earlier RQ1–RQ3 design (deprecated)
+
+The sections below describe the condition table, prompts, generation,
+fits and estimators shared by both designs, then the deprecated design's own
+analyses: coherence, probes and the pilot, whose code is in
+`second_order/deprecated/`.
 
 ## Conditions
 
@@ -180,7 +193,7 @@ lists conditions.
   B and A, normalised by the same slope for D (`*_original`). It is kept as
   a secondary number. It is biased when answers about the agent are
   compressed or shifted relative to the model's own, most of all for
-  flipped fields; `scripts/estimator_bias_check.py` shows this in an
+  flipped fields; `second_order/deprecated/estimator_bias_check.py` shows this in an
   idealised simulation.
 - **Methods.** The same ratio is computed from latents, from the stated
   numeric probability, and from probe readings (with the behavioural gap as
@@ -247,11 +260,17 @@ positives and needs reading by a person.
 
 ## Known gaps
 
-- Batch submission, a drift check of cached condition A against fresh
-  samples, and an answer-only (no reasoning) arm.
-- A robustness fit on cases with at least 12 of 16 outputs parsed; a
-  coherence measure that does not depend on the spread of beliefs.
-- Probe selection and gates specific to RQ3, and the steering and
-  attention-blocking experiments.
-- A smoke run under the current prompts: responses cached before the
-  prompt changes no longer match and are rejected by the cache check.
+- Curse-of-knowledge experiment:
+  - `tests.test_pipeline` uses shortened latent fits on 150 cases. A
+    full-length synthetic run (500 cases) takes about an hour per model on
+    CPU and has not been run end to end.
+  - The `hf` backend seeds per batch, so a resumed run is not bit-reproducible.
+- Shared: batch submission; a drift check of cached condition A against
+  fresh samples; an answer-only (no reasoning) arm; a robustness fit on cases
+  with at least 12 of 16 outputs parsed.
+- Deprecated design:
+  - a coherence measure that does not depend on the spread of beliefs;
+  - probe selection and gates specific to RQ3, and the steering and
+    attention-blocking experiments;
+  - a smoke run under the current prompts: responses cached before the
+    prompt changes no longer match and are rejected by the cache check.

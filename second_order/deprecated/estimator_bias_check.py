@@ -8,7 +8,7 @@ fit: beliefs are the truth plus independent measurement noise.  "inside" applies
 to C as well; "outside" leaves C uncompressed, the case in which neither estimator
 recovers lambda.
 
-    python scripts/estimator_bias_check.py
+    python -m second_order.deprecated.estimator_bias_check
 """
 import numpy as np
 rng = np.random.default_rng(0)
