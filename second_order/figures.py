@@ -109,7 +109,7 @@ def curse_estimates(est):
     w = float(C.load()["experiment"]["camerer_w"])
     fig, axes = plt.subplots(1, 3, figsize=(10, 0.45 * len(groups) + 1.6), sharey=True)
     panels = (("lambda", "Leakage λ (dotted: Camerer et al. w)", (0, w, 1)), ("phi", "Responsiveness φ, pooled", (1,)),
-              ("tau", "Theory-of-mind score τ = φ(1 − λ)", (1,)))
+              ("tau", "Theory-of-mind score τ = (β_D − β_C)/ρ", (1,)))
     for ax, (statistic, title, refs) in zip(axes, panels):
         for ref in refs:
             ax.axvline(ref, color=MUTED, lw=0.8, ls=":" if ref == w and statistic == "lambda" else "-")

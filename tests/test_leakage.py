@@ -93,8 +93,27 @@ class MethodsEstimators(unittest.TestCase):
         for setting, lam in self.lam.items():
             tau = self.get(setting, "tau")
             self.assertAlmostEqual(tau, PHI * (1 - lam), delta=0.05)
-            self.assertAlmostEqual(tau, self.get("both", "phi") * (1 - self.get(setting, "lambda")),
-                                   places=8)
+            self.assertAlmostEqual(tau, (self.get(setting, "beta_D_calibrated") - self.get(setting, "beta_C_calibrated"))
+                                   / self.get(setting, "rho"), places=10)
+
+    def test_tau_shared_uses_the_shared_phi_and_the_identity(self):
+        for setting, lam in self.lam.items():
+            phi_lambda = self.get(setting, "beta_C_calibrated") / self.get(setting, "rho")
+            self.assertAlmostEqual(self.get(setting, "phi_lambda"), phi_lambda, places=10)
+            self.assertAlmostEqual(self.get(setting, "tau_shared"), self.get("both", "phi") - phi_lambda, places=10)
+            self.assertAlmostEqual(self.get(setting, "tau_shared"), PHI * (1 - lam), delta=0.05)
+        self.assertAlmostEqual(self.get("both", "diff_tau"),
+                               self.get("false", "tau") - self.get("partial", "tau"), places=10)
+
+    def test_tau_is_zero_not_blank_when_person_ignores_the_evidence(self):
+        t = table(methods_beliefs(self.lam, phi=0.0, n=400), resamples=200)
+        for setting in self.lam:
+            for stat in ("tau", "tau_shared"):
+                row = t.loc[(setting, stat)]
+                self.assertEqual(row.blank_reason, "", (setting, stat))
+                self.assertAlmostEqual(row.estimate, 0.0, delta=0.1)
+                self.assertLessEqual(row.ci_lower, 0.0)
+                self.assertGreaterEqual(row.ci_upper, 0.0)
 
     def test_phi_is_shared_by_the_settings(self):
         self.assertAlmostEqual(self.get("both", "phi"), PHI, delta=0.04)

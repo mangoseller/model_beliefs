@@ -79,7 +79,7 @@ $\beta_C$ and $\beta_D$ are the OLS slopes of $\ell_C - \ell_M$ and $\ell_D - \e
 |---|---|---|
 | Leakage | $\lambda = \beta_C / \beta_D$ | per setting and reference |
 | Reliability | $\rho = \mathrm{Cov}(x, x') / \mathrm{Var}(x)$ | per setting |
-| Theory-of-mind score | $\tau_s = \varphi_{\mathrm{pooled}}(1-\lambda_s)$ | per setting and reference |
+| Theory-of-mind score | $\tau_s = (\beta_{D,s} - \beta_{C,s}) / \rho_s$ | per setting and reference |
 | Responsiveness | $\varphi = \beta_D / \rho$ | shared by the two settings |
 
 The primary table uses patients complete across both settings when at least five qualify.
@@ -91,6 +91,10 @@ Each two-panel CKD layout figure uses the intersection for both layouts. The exp
 - **Shared φ.** The shared $\varphi$ is the pooled within-setting $\beta_D$ over the pooled
   $\rho$, so each setting keeps its own intercept. Each setting's own $\beta_D/\rho$ is
   reported as `phi_setting`; the difference between the two tests the sharing.
+- **τ with the shared φ.** The Methods identity $\ell_C - \ell_M = \varphi\lambda(\ell_A - \ell_B)$
+  gives $\varphi\lambda = \beta_C/\rho$, so `tau_shared` $= \varphi_{\mathrm{pooled}} - \beta_{C,s}/\rho_s$
+  and `phi_lambda` $= \beta_{C,s}/\rho_s$. Like τ, neither divides by $\beta_D$: a model whose
+  attributions ignore the evidence scores τ ≈ 0, and a failed manipulation (ρ ≈ 0) is blanked.
 - **Additions to the Methods:**
   - **Calibration.** Latent posterior means shrink toward the prior, by different
     amounts in the model's fit and in PERSON's, which would scale φ. So ρ, φ and τ use

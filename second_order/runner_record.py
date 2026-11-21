@@ -51,7 +51,7 @@ D_single):
 
     lambda = beta_C / beta_D            leakage (the Wald estimator), per setting
     rho    = Cov(x, x') / Var(x)        reliability of the gap, per setting
-    tau    = phi * (1 - lambda)         theory-of-mind score per setting, using the shared phi
+    tau    = (beta_D - beta_C) / rho    theory-of-mind score per setting (the Methods estimator)
     phi    = beta_D / rho               responsiveness, shared by the two settings: pooled
                                         within-setting beta_D over pooled rho
 
@@ -63,7 +63,7 @@ Uncertainty: paired bootstrap over patients (CKD) or items (bespoke), carrying a
 case's conditions and replicates together; 95% percentile intervals, item parameters
 held fixed. lambda also has a 95% Fieller confidence set from the bootstrap covariance of
 beta_C and beta_D, unbounded when beta_D is weak. Ratio rule: any other ratio is blanked
-when its denominator's interval includes 0 (tau: pooled rho and the setting’s beta_D; phi: pooled rho).
+when its denominator's interval includes 0 (tau: the setting's rho; phi: pooled rho). tau_shared = phi - beta_C / rho uses the shared phi.
 
 Also reported (CKD): lambda by assigned record order; false-record lambda for the
 randomized sicker and healthier edits (64 patients, bootstrap within label x direction);

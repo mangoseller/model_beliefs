@@ -9,13 +9,17 @@ per case x = l_A - l_B and x' the same gap from the second run (``replicate`` 1)
     (M and D standing for the reference's two conditions)
     lambda = beta_C / beta_D                (Wald estimator; 0 = no leakage, 1 = full leakage)
     rho    = Cov(x, x') / Var(x)            (reliability of x)
-    tau    = phi_pooled * (1 - lambda)      (theory-of-mind score)
+    tau    = (beta_D - beta_C) / rho        (theory-of-mind score, the Methods estimator)
 
 phi, the responsiveness, is shared by the two settings (Methods): ``phi`` =
 pooled beta_D / pooled rho, from within-setting slopes and covariances (so the
 settings' intercepts may differ).  Each setting's own beta_D / rho is reported
 as ``phi_setting``, a check of that assumption, with the difference
-``diff_phi_setting`` and the differences in lambda, tau and rho.
+``diff_phi_setting`` and the differences in lambda, tau and rho.  With the shared phi,
+the Methods identity l_C - l_M = phi lambda (l_A - l_B) gives phi lambda = beta_C / rho, so
+``phi_lambda`` = beta_C / rho and ``tau_shared`` = phi - beta_C / rho.  Neither tau
+divides by beta_D: a model whose attributions ignore the evidence (phi ~ 0) gets
+tau ~ 0, while a failed manipulation (rho ~ 0) is blanked by the ratio rule.
 
 rho, phi and tau are computed on calibrated values (``value_calibrated``):
 for latent beliefs the posterior means shrink by different amounts in the
@@ -52,7 +56,7 @@ from second_order.conditions import SETTINGS, references, setting_conditions
 # Ratio statistic -> the denominator whose interval must exclude 0.
 DENOMINATOR = {
     "mean_position": "mean_D_minus_M",
-    "phi_setting": "rho",
+    "phi_setting": "rho", "tau": "rho",
     "phi_D_on_A": "cov_A_A1", "phi_M_on_B": "cov_B_B1", "phi": "rho_pooled",
     "lambda_x_positive": "beta_D_positive", "lambda_x_negative": "beta_D_negative",
     "lambda_third_low": "beta_D_low", "lambda_third_mid": "beta_D_mid", "lambda_third_high": "beta_D_high",
@@ -60,11 +64,11 @@ DENOMINATOR = {
 RATIO_DENOMINATORS = {
     **{stat: (den,) for stat, den in DENOMINATOR.items()},
     "diff_lambda": ("beta_D_partial", "beta_D_false"),
-    "diff_tau": ("beta_D_partial", "beta_D_false", "rho_pooled"),
+    "diff_tau": ("rho_partial", "rho_false"),
     "diff_phi_setting": ("rho_partial", "rho_false"),
     "diff_lambda_layout": ("beta_D_single_record", "beta_D_two_record"),
-    **{f"{stat}_{setting}": ("rho_pooled", f"beta_D_{setting}")
-       for setting in SETTINGS for stat in ("tau", "phi_lambda")},
+    **{f"phi_lambda_{setting}": (f"rho_{setting}",) for setting in SETTINGS},
+    **{f"tau_shared_{setting}": ("rho_pooled", f"rho_{setting}") for setting in SETTINGS},
 }
 SECOND_RUN = "@r1"  # suffix of the second run's columns (replicate 1)
 MIN_SIGN_CASES = 8  # cases needed on each side of 0 for lambda by the sign of the gap
@@ -151,6 +155,7 @@ def setting_statistics(W: dict[str, np.ndarray], k: dict[str, str]) -> dict[str,
     out["rho"] = _ratio(out["var_delta"], out["var_x"])
     out["beta_C_calibrated"], out["beta_D_calibrated"] = slope(cc - cm, xc), slope(cd - cm, xc)
     out["phi_setting"] = _ratio(out["beta_D_calibrated"], out["rho"])
+    out["tau"] = _ratio(out["beta_D_calibrated"] - out["beta_C_calibrated"], out["rho"])
 
     # Affine form and anchoring using the second run as an instrument
     out["cov_A_A1"], out["cov_B_B1"] = _cov(ca, ca1), _cov(cb, cb1)
@@ -186,7 +191,7 @@ def shared_statistics(W: dict[str, np.ndarray], ks: dict[str, dict[str, str]],
     if per is None:
         per = {s: setting_statistics(W, k) for s, k in ks.items()}
     out = {f"diff_{stat}": per["false"][stat] - per["partial"][stat]
-           for stat in ("lambda", "rho", "phi_setting") if all(stat in v for v in per.values())}
+           for stat in ("lambda", "rho", "phi_setting", "tau") if all(stat in v for v in per.values())}
     for setting, stats in per.items():
         for key in ("beta_D", "rho"):
             if key in stats:
@@ -205,9 +210,8 @@ def shared_statistics(W: dict[str, np.ndarray], ks: dict[str, dict[str, str]],
     out["beta_D_pooled"], out["rho_pooled"] = _ratio(sxy, sxx), _ratio(cxx1, sxx)
     out["phi"] = _ratio(out["beta_D_pooled"], out["rho_pooled"])
     for setting, stats in per.items():
-        out[f"tau_{setting}"] = out["phi"] * (1 - stats["lambda"])
-        out[f"phi_lambda_{setting}"] = out["phi"] * stats["lambda"]
-    out["diff_tau"] = out["tau_false"] - out["tau_partial"]
+        out[f"phi_lambda_{setting}"] = _ratio(stats["beta_C_calibrated"], stats["rho"])
+        out[f"tau_shared_{setting}"] = out["phi"] - out[f"phi_lambda_{setting}"]
     return out
 
 
@@ -378,7 +382,7 @@ def estimate_with_points(beliefs, dataset, *, resamples, seed, min_cases=5, matc
             t = paired["both"]
             tables.append(t.assign(setting="both", reference=reference))
             for setting in SETTINGS:
-                for stat in ("tau", "phi_lambda", "phi"):
+                for stat in ("tau_shared", "phi_lambda", "phi"):
                     key = "phi" if stat == "phi" else f"{stat}_{setting}"
                     tables.append(t[t.statistic == key].assign(statistic=stat, setting=setting, reference=reference))
     return (pd.concat(tables, ignore_index=True) if tables else pd.DataFrame(),

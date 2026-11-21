@@ -48,7 +48,7 @@ from second_order.responses import accuracy_summary, responses_path
 
 OUT = C.RESULTS / "curse"
 METHODS = ("latent", "direct")
-HEADLINE = ["lambda", "lambda_fieller", "tau", "rho", "beta_C", "beta_D", "phi",
+HEADLINE = ["lambda", "lambda_fieller", "tau", "tau_shared", "rho", "beta_C", "beta_D", "phi",
             "manipulation_median_abs_gap"]
 SHARED = ["phi", "rho_pooled", "beta_D_pooled", "diff_lambda", "diff_tau", "diff_rho", "diff_phi_setting"]
 AFFINE = ["intercept_C", "intercept_D", "phi_setting", "phi_D_on_A", "intercept_D_on_A", "phi_M_on_B", "intercept_M_on_B", "curvature_D", "curvature_C",
@@ -450,7 +450,7 @@ def write_results_md(models, tables: dict[str, pd.DataFrame]) -> None:
                      "l_C - l_M and l_D - l_M on x = l_A - l_B (0: no leakage, 1: PERSON is given the model's own "
                      "belief).  Reference `two_record` (CKD) uses C's matched layout, M and D. The `single_record` comparison "
                      "uses M_single and D_single.  lambda_fieller is the 95% Fieller confidence set.  rho = "
-                     "Cov(x, x') / Var(x) from the second run. Each tau uses pooled phi × (1 − lambda). Reliability uses calibrated "
+                     "Cov(x, x') / Var(x) from the second run. tau = (beta_D - beta_C) / rho per setting (Methods); tau_shared = phi - beta_C / rho with the shared phi. Reliability uses calibrated "
                      "values (latent posterior means de-shrunk per fit).  phi_setting = beta_D / rho in that "
                      "setting alone.\n\n" + headline_md(per, HEADLINE) + "\n")
         parts.append("## Responsiveness phi, shared by the settings\n\nphi = pooled beta_D / pooled rho "

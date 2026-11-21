@@ -32,13 +32,14 @@ $$
 \lambda = \frac{\beta_C}{\beta_D}, \qquad
 \rho = \frac{\mathrm{Cov}(x, x')}{\mathrm{Var}(x)}, \qquad
 \varphi = \frac{\beta_D}{\rho}, \qquad
-\tau = \varphi\,(1 - \lambda),
+\tau = \frac{\beta_D - \beta_C}{\rho},
 $$
 
 where $\beta_C$ and $\beta_D$ are the slopes of $\ell_C - \ell_M$ and $\ell_D - \ell_M$ on $x$, with M and D
 the reference pair. $\rho$
 corrects for noise in $x$, $\varphi$ is how strongly PERSON's belief follows the evidence (shared by
-the two settings below), and $\tau$ is a theory-of-mind score.
+the two settings below), and $\tau$ is a theory-of-mind score: $\varphi(1 - \lambda)$ under the
+model, and $\approx 0$ when PERSON's attributed belief ignores the evidence.
 
 The study runs two settings, PERSON missing evidence and PERSON given altered evidence, on two
 datasets in [`datasets/`](datasets): 150 kidney-disease patients, each asked the paper's 16
