@@ -210,9 +210,9 @@ def main() -> None:
         print(f"{args.model}: no local weights to replay (backend {C.model_config(args.model)['backend']})")
         return
     replayer = Replayer(args.model)
-    conditions = args.conditions or C.scheduled_conditions(args.model)
+    conditions = args.conditions or C.conditions()
     for dataset in args.dataset or C.datasets_for(args.model):
-        freeze(args.model, dataset, dataset_cases(dataset, args.cases, False), conditions, replayer)
+        freeze(args.model, dataset, dataset_cases(dataset, args.cases), conditions, replayer)
 
 
 if __name__ == "__main__":

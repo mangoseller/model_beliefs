@@ -1,30 +1,16 @@
-"""Prompts for every condition in ``conditions.CONDITIONS``.
+"""CKD prompts for every condition in ``conditions.CONDITIONS``.
 
 All answer-format text (the reasoning instruction, the JSON or ``Choice:``
 format, and the options) is cut verbatim from the first-order prompt built by
 ``latent_beliefs.ckd.prompts`` for the same case and output, so the existing
-strict parsers apply unchanged.
+strict parsers apply unchanged.  Every prompt is the profile, then (about
+PERSON) a paragraph on what PERSON knows, then the question and the format:
 
-* **A**: the first-order prompt, rebuilt here byte for byte (tested against
-  the released prompts).
-* **B\***: the first-order prompt with the agent's copy in place of the full
-  profile (fields withheld, or one field flipped).
-* **C\***: the full profile, an agent paragraph saying how the agent's copy
-  differs, the question redirected at the agent, and the first-order answer
-  format.
-* **D**: as C, but the agent has the full profile.
-* **M\***: as D, but the profile shown is the agent's copy (the same bytes as
-  the matching B), so the model has nothing private.
-* **False belief** (``false_belief_framing: reported``): C_F, M_F and D_F say a
-  colleague read the agent the profile; in C_F the colleague read one line
-  wrongly.  M_F is D_F with the agent's (flipped) copy as the profile.
-
-Layout ``plan`` puts the profile first; ``repo`` keeps the first-order order
-with the agent paragraph after the profile.  Own-belief prompts (A, B*) follow
-``self_layout``: ``matched`` builds them in the same layout as the prompts
-about the agent, without the agent paragraph, so every condition ends with the
-same question-and-format suffix; ``first_order`` is the released prompt.
-``prompt_for`` resolves the layout per model (``config.self_layout``).
+* **A**, **B**: the model's own belief from the full profile or PERSON's copy.
+* **C**: the full profile; the paragraph says how PERSON's copy differs.
+* **M**, **D**: the profile shown is exactly what PERSON has (PERSON's copy, or the full profile).
+* **False setting**: C_F, M_F and D_F say a colleague read PERSON the profile;
+  in C_F the colleague read one line wrongly.
 
 ``comprehension`` gives the follow-up question asked after a C answer.
 """
@@ -37,19 +23,18 @@ from typing import Any
 
 import pandas as pd
 
-from latent_beliefs.ckd.cases import read_cases
+from latent_beliefs.ckd.cases import PROFILE_FEATURES, read_cases
 from latent_beliefs.ckd.prompts import task_specs
 from second_order import config as C
 from second_order.comprehension import Comprehension, make
 from second_order.conditions import (
     CONDITIONS,
     field_label,
+    flip_field,
     flipped_value,
     model_profile,
-    pair_spec,
     profile_line,
     withheld_fields,
-    withheld_names,
 )
 
 PROFILE_HEADER = "Patient profile:\n"
@@ -57,20 +42,12 @@ FORMAT_START = "Provide your reasoning first."
 CKD = "chronic kidney disease (CKD)"
 THRESHOLD_TEXT = {0.05: "5%", 0.10: "10%", 0.20: "20%", round(1.0 / 3.0, 12): "33.3%"}
 
-# Person words: the only tokens allowed to differ between John and user prompts.
+# Words for PERSON; the question and paragraph templates use these keys.
 PERSON = {
-    "john": {
-        "A": "John", "subj": "he", "Subj": "He", "poss": "his", "Poss": "His",
-        "for": "John", "is": "is", "has": "has", "follows": "follows", "Does": "Does",
-        "trusts": "trusts", "obj": "him", "refl": "himself", "believes": "believes",
-    },
-    "user": {
-        "A": "I", "subj": "I", "Subj": "I", "poss": "my", "Poss": "My",
-        "for": "me", "is": "am", "has": "have", "follows": "follow", "Does": "Do",
-        "trusts": "trust", "obj": "me", "refl": "myself", "believes": "believe",
-    },
+    "A": "John", "subj": "he", "Subj": "He", "poss": "his", "Poss": "His", "for": "John",
+    "is": "is", "has": "has", "follows": "follows", "Does": "Does", "obj": "him",
+    "refl": "himself", "believes": "believes",
 }
-PERSON_WORDS = {w for p in PERSON.values() for w in p.values()} | {"John"}
 
 # Question sentences redirected at the agent; {..} are PERSON keys.
 AGENT_QUESTIONS = {
@@ -96,29 +73,15 @@ AGENT_QUESTIONS = {
 }
 
 AGENT_INTRO = "{A} {is} a physician with the same training and clinical judgement as you."
-COPY_PARTIAL = (
-    "{Subj} reviewed an earlier copy of this patient's profile. {Poss} copy did not include "
-    "the following fields, and {subj} {has} no other information about them:\n{fields}\n"
-    "Everything else in {poss} copy matched the profile above."
-)
-# Option (a): the withheld fields are printed as "Not recorded" in B and M, and C
-# describes the agent's copy the same way, so the agent's evidence and B's are identical.
+# Partial setting: PERSON's copy lists the withheld fields as Not recorded, as in B and M.
 COPY_NOT_RECORDED = (
     "{Subj} reviewed an earlier copy of this patient's profile. In {poss} copy the following "
     "fields were listed as Not recorded, and {subj} {has} no other information about them:\n"
     "{fields}\nEverything else in {poss} copy matched the profile above."
 )
-COPY_FLIPPED = (
-    "{Subj} reviewed an earlier copy of this patient's profile. {Poss} copy differed from the "
-    "profile above in one line. {Poss} copy said:\n{line}\n"
-    "{Subj} {trusts} {poss} copy and {has} not seen the corrected profile.\n"
-    "Everything else in {poss} copy matched the profile above."
-)
-# Used for D and for M.  It must read sensibly when the profile shown is the agent's copy
-# (fields "Not recorded", or one flipped), so it does not say "every field included".
+# M and D: PERSON holds exactly the profile shown (PERSON's copy in M, the full profile in D).
 COPY_FULL = "{Subj} reviewed exactly the profile shown above."
-# False belief, reported framing: M_F and D_F share REPORTED_FULL (the profile shown is
-# the flipped copy in M_F and the true profile in D_F); C_F quotes the misread line.
+# False setting: M_F and D_F share REPORTED_FULL; C_F quotes the misread line.
 REPORTED_FULL = (
     "{Subj} did not read this patient's profile {refl}; a colleague read it to {obj}. "
     "What {subj} was told matched the profile shown above exactly."
@@ -188,10 +151,10 @@ def split_first_order(output: str, profile: str) -> tuple[str, str]:
     return question, fmt
 
 
-def agent_question(output: str, framing: str, profile: str) -> str:
+def agent_question(output: str, profile: str) -> str:
     kind = output_kind(output)
     spec = specs()[output]
-    words = dict(PERSON[framing])
+    words = dict(PERSON)
     if kind == "threshold":
         words["tau"] = THRESHOLD_TEXT[round(float(spec["threshold"]), 12)]
     if kind == "bet":
@@ -202,83 +165,39 @@ def agent_question(output: str, framing: str, profile: str) -> str:
     return AGENT_QUESTIONS[kind].format(**words)
 
 
-def reported(condition: str, false_framing: str | None = None) -> bool:
-    """Whether the agent's evidence is framed as reported (false-belief pair, reported framing)."""
-    framing = false_framing or C.load().get("false_belief_framing", "copy")
-    return CONDITIONS[condition].pair == "F" and framing == "reported"
-
-
-def agent_paragraph(case: pd.Series, condition: str, *, withheld: list[str] | None = None,
-                    missing: str | None = None, false_framing: str | None = None) -> str:
-    """Who the agent is and what copy of the profile the agent holds."""
+def agent_paragraph(case: pd.Series, condition: str) -> str:
+    """Who PERSON is and what PERSON knows of the profile."""
     cond = CONDITIONS[condition]
-    words = dict(PERSON[cond.framing])
-    intro = AGENT_INTRO.format(**words)
-    told = reported(condition, false_framing)
-    if cond.role in ("D", "M"):  # the agent holds exactly the profile shown
-        copy = (REPORTED_FULL if told else COPY_FULL).format(**words)
+    told = cond.setting == "false"
+    if cond.role in ("D", "M"):  # PERSON holds exactly the profile shown
+        copy = (REPORTED_FULL if told else COPY_FULL).format(**PERSON)
+    elif told:
+        flip = flip_field()
+        copy = REPORTED_FLIPPED.format(line=profile_line(case, flip, flipped_value(case, flip)), **PERSON)
     else:
-        fields, flip = pair_spec(cond.pair)
-        if flip is not None:
-            line = profile_line(case, flip, flipped_value(case, flip))
-            copy = (REPORTED_FLIPPED if told else COPY_FLIPPED).format(line=line, **words)
-        else:
-            fields = list(withheld) if withheld is not None else fields
-            listing = "\n".join(f"- {name}" for name in withheld_names(fields))
-            template = (COPY_NOT_RECORDED if (missing or C.load()["missing_fields"]) == "not_recorded"
-                        else COPY_PARTIAL)
-            copy = template.format(fields=listing, **words)
-    return f"{intro} {copy}"
+        listing = "\n".join(f"- {field_label(f)}" for f in withheld_fields())
+        copy = COPY_NOT_RECORDED.format(fields=listing, **PERSON)
+    return f"{AGENT_INTRO.format(**PERSON)} {copy}"
 
 
 # ---------------------------------------------------------------- builders
-def assemble(layout: str, shown: str, paragraph: str | None, question: str, fmt: str) -> str:
-    """Put the pieces in layout order; an own-belief prompt has no agent paragraph."""
-    if layout == "plan":
-        middle = f"{paragraph}\n\n" if paragraph else ""
-        return f"{PROFILE_HEADER}{shown}\n\n{middle}{question}\n\n{fmt}\n"
-    if layout == "repo":
-        tail = f"\n\n{paragraph}" if paragraph else ""
-        return f"{question}\n\n{fmt}\n\n{PROFILE_HEADER}{shown}{tail}\n"
-    raise ValueError(f"unknown layout {layout!r}")
-
-
-def build_prompt(case_id: str, condition: str, output: str, *, layout: str | None = None,
-                 withheld: list[str] | None = None, missing: str | None = None,
-                 self_layout: str | None = None, false_framing: str | None = None) -> str:
-    """The prompt for one case, condition and output.
-
-    ``withheld`` overrides the fields of an ignorance pair (used by the pilot
-    and the tests); ``missing`` overrides the config's ``missing_fields``;
-    ``self_layout`` and ``false_framing`` override the config's values.
-    """
-    layout = layout or C.load()["layout"]
+def build_prompt(case_id: str, condition: str, output: str) -> str:
+    """The prompt for one case, condition and output."""
     case = cases().loc[case_id]
     cond = CONDITIONS[condition]
-    shown = model_profile(case, condition, withheld=withheld, missing=missing)
-    if cond.about == "self":
-        if (self_layout or C.self_layout()) == "first_order":
-            return first_order_prompt(output, shown)
-        question, fmt = split_first_order(output, shown)
-        return assemble(layout, shown, None, question, fmt)
-    question = agent_question(output, cond.framing, shown)
-    _, fmt = split_first_order(output, shown)
-    paragraph = agent_paragraph(case, condition, withheld=withheld, missing=missing,
-                                false_framing=false_framing)
-    return assemble(layout, shown, paragraph, question, fmt)
+    shown = model_profile(case, condition)
+    question, fmt = split_first_order(output, shown)
+    paragraph = ""
+    if cond.about == "person":
+        question = agent_question(output, shown)
+        paragraph = agent_paragraph(case, condition) + "\n\n"
+    return f"{PROFILE_HEADER}{shown}\n\n{paragraph}{question}\n\n{fmt}\n"
 
 
-def prompt_for(model: str, case_id: str, condition: str, output: str) -> str:
-    """The prompt a model is sent (own-belief layout resolved per model)."""
-    return build_prompt(case_id, condition, output, self_layout=C.self_layout(model))
-
-
-def profile_end_offset(prompt: str, case_id: str, condition: str,
-                       withheld: list[str] | None = None) -> int:
-    """Character offset just past the profile block (position P1)."""
-    profile = model_profile(cases().loc[case_id], condition, withheld=withheld)
-    start = prompt.index(PROFILE_HEADER + profile)
-    return start + len(PROFILE_HEADER + profile)
+def profile_end_offset(prompt: str, case_id: str, condition: str) -> int:
+    """Character offset just past the profile block."""
+    block = PROFILE_HEADER + model_profile(cases().loc[case_id], condition)
+    return prompt.index(block) + len(block)
 
 
 # ---------------------------------------------------------------- comprehension
@@ -287,23 +206,21 @@ BINARY_FIELDS = ("hypertension_self_reported", "diabetes_self_reported", "cvd_an
 
 
 def comprehension(case_id: str, condition: str) -> Comprehension:
-    """Follow-up question after a C answer: which fields the agent lacked, or which line was misread."""
+    """Follow-up question after a C answer: which fields PERSON lacked, or which line was misread."""
     cond = CONDITIONS[condition]
     if cond.role != "C":
         raise ValueError(f"comprehension questions follow C conditions, not {condition}")
-    words = PERSON[cond.framing]
-    fields, flip = pair_spec(cond.pair)
     key = f"{case_id}|{condition}"
-    if flip is not None:
-        told = reported(condition)
-        stem = (f"Which line of the patient's profile did the colleague read to {words['obj']} incorrectly?"
-                if told else f"Which line of {words['poss']} copy of the profile differed from the profile shown?")
-        none = ("None: everything the colleague read was correct" if told
-                else f"None: {words['poss']} copy matched the profile shown")
+    if cond.setting == "false":
+        flip = flip_field()
+        stem = f"Which line of the patient's profile did the colleague read to {PERSON['obj']} incorrectly?"
         labels = [field_label(f) for f in BINARY_FIELDS if f != flip]
-        return make(stem, field_label(flip), labels[:2] + [none], key)
-    listing = lambda fs: "; ".join(withheld_names(fs))  # noqa: E731
-    others = sorted({tuple(withheld_fields(n)) for n in C.load()["withheld_sets"]} - {tuple(fields)})
-    stem = f"Which of the following lists exactly the fields that {words['A']} had no information about?"
-    return make(stem, listing(fields), [listing(o) for o in others[:2]]
-                + [f"None: {words['A']} had the full profile"], key)
+        return make(stem, field_label(flip), labels[:2] + ["None: everything the colleague read was correct"], key)
+    fields = withheld_fields()
+    # Distractors: the list without its first field, and that list plus a field PERSON did have.
+    extra = next(f for f in BINARY_FIELDS if f not in fields)
+    rest = fields[1:]
+    with_extra = [f for f in PROFILE_FEATURES if f in set(rest) | {extra}]
+    listing = lambda fs: "; ".join(field_label(f) for f in fs)  # noqa: E731
+    stem = f"Which of the following lists exactly the fields that {PERSON['A']} had no information about?"
+    return make(stem, listing(fields), [listing(rest), listing(with_extra), f"None: {PERSON['A']} had the full profile"], key)

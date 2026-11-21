@@ -1,6 +1,6 @@
 # Exact environment used to verify the replication (macOS arm64 / osx-arm64).
 # It reproduces the paper's plotted values exactly up to the few last-bit and
-# tie-breaking differences listed under "Exactness" in README.md.
+# tie-breaking differences listed under "Exactness" in latent_beliefs/README.md.
 #
 # Why the exact builds matter: concordance indices count tied predictions as
 # half-concordant, and some held-out predictions are tied up to floating-point

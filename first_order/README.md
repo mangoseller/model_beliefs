@@ -1,7 +1,6 @@
-# model_beliefs: first-order readouts on small models
+# model_beliefs
 
-Commands run from the repository root. The repository README describes the second-order
-experiment that shares this repository.
+Run the commands below from this folder (`cd first_order`).
 
 Extracting model beliefs via direct questioning, decision inference, and residual-stream
 directions; validated against model organisms with known beliefs.

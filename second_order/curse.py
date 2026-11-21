@@ -6,9 +6,9 @@ For each model, dataset (``ckd``, ``bespoke``) and belief method (``latent``
 and ``direct`` for CKD, ``direct`` for bespoke), on the main analysis set:
 
 * ``estimates.csv``: the leakage table (``leakage.leakage_table``) for the
-  partial setting (pair S4) and the false-belief setting (pair F): lambda =
-  beta_C / beta_D, rho, phi, tau, the affine checks, and the contrast
-  ``F_minus_S4`` (differences and phi pooled across settings).  Case sets:
+  partial and the false setting (lambda = beta_C / beta_D, rho, tau and the
+  assumption checks) and for ``both`` (the shared phi and the differences
+  between the settings).  Case sets:
   ``all`` and ``comprehension_pass`` (CKD: cases whose comprehension answers
   are all correct; bespoke: C answers averaged over the samples whose
   follow-up was correct).  Bespoke placebo items are excluded here.
@@ -16,8 +16,8 @@ and ``direct`` for CKD, ``direct`` for bespoke), on the main analysis set:
   l_C - l_M per setting, with normal intervals from the sample standard errors.
 * ``bayes.csv``: bespoke items: how the model's answers follow the Bayes
   answer (slope and intercept in logits, mean absolute error), for own
-  beliefs and for beliefs about the agent (whose Bayes answer uses the
-  agent's evidence; a perfect perspective-taker has lambda 0 and phi 1).
+  beliefs and for beliefs about PERSON (whose Bayes answer uses
+  PERSON's evidence; a perfect perspective-taker has lambda 0 and phi 1).
 * ``comprehension.csv``: follow-up accuracy per model, dataset and condition.
 * ``scatter.csv``: per case, x = l_A - l_B, l_C - l_M and l_D - l_M (figures).
 * ``thresholds.csv``: CKD decision thresholds implied by each pooled fit (where
@@ -46,17 +46,18 @@ from second_order import beliefs as BL
 from second_order import config as C
 from second_order.report import display, md_table
 from second_order.bespoke import bayes_answer, load as load_items, logit
-from second_order.conditions import CONDITIONS, SETTING_OF, SETTINGS, pair_conditions
-from second_order.leakage import leakage_table, pair_keys
+from second_order.conditions import CONDITIONS, SETTINGS, setting_conditions
+from second_order.leakage import leakage_table
 from second_order.responses import comprehension_summary, responses_path, scored
 
 OUT = C.RESULTS / "curse"
 METHODS = ("latent", "direct")
-HEADLINE = ["lambda", "beta_C", "beta_D", "rho", "phi", "tau", "T_C", "manipulation_median_abs_gap", "gap_sd"]
+HEADLINE = ["lambda", "tau", "rho", "beta_C", "beta_D", "beta_C_calibrated", "beta_D_calibrated", "phi_setting",
+            "manipulation_median_abs_gap"]
+SHARED = ["phi", "rho_pooled", "beta_D_pooled", "diff_lambda", "diff_tau", "diff_rho", "diff_phi_setting"]
 AFFINE = ["phi_D_on_A", "intercept_D_on_A", "phi_M_on_B", "intercept_M_on_B", "curvature_D", "curvature_C",
-          "lambda_x_positive", "lambda_x_negative", "lambda_proportionality_low", "lambda_proportionality_mid",
-          "lambda_proportionality_high", "anchor_mean_M_minus_B", "mean_position"]
-CONTRAST = ["diff_lambda", "diff_phi", "diff_tau", "diff_rho", "phi_pooled", "rho_pooled", "beta_D_pooled"]
+          "lambda_x_positive", "lambda_x_negative", "lambda_third_low", "lambda_third_mid", "lambda_third_high",
+          "mean_position", "anchor_mean_M_minus_B"]
 
 
 def models_default() -> list[str]:
@@ -74,8 +75,6 @@ def placebo_ids() -> set[str]:
 
 def beliefs_for(model: str, dataset: str, method: str) -> pd.DataFrame:
     b = BL.read(model, method, dataset)
-    if method == "latent":
-        b = b[b.fit == "pooled"]
     return b[b.condition.isin(CONDITIONS)]
 
 
@@ -135,21 +134,18 @@ def estimates(model: str, resamples: int, seed: int) -> tuple[pd.DataFrame, pd.D
             if passed is not None:
                 sets["comprehension_pass"] = passed
             for name, part in sets.items():
-                t = leakage_table(part, method, resamples=resamples, seed=seed)
+                t = leakage_table(part, resamples=resamples, seed=seed)
                 if t.empty:
                     continue
-                t = t[((t.framing == "john") & t.pair.isin(SETTINGS.values()))
-                      | ((t.framing == "contrast") & (t.pair == "F_minus_S4"))].copy()
                 t.insert(0, "model", model)
                 t.insert(1, "dataset", dataset)
                 t.insert(2, "method", method)
                 t.insert(3, "case_set", name)
-                t.insert(4, "setting", t.pair.map(lambda p: SETTING_OF.get(p, "false_minus_partial")))
                 tables.append(t)
-            main = b[(b.replicate == 0) & (b.half == "all")]
+            main = b[b.replicate == 0]
             W = main.pivot_table(index="case_id", columns="condition", values="value", aggfunc="first")
-            for setting, pair in SETTINGS.items():
-                k = pair_keys("john", pair, [f"{c}:" for c in W.columns])
+            for setting in SETTINGS:
+                k = setting_conditions(setting)
                 if any(k[r] not in W for r in "ABCMD"):
                     continue
                 scatter.append(pd.DataFrame({
@@ -167,8 +163,8 @@ def placebo_table(model: str) -> pd.DataFrame:
     b = b[b.case_id.isin(placebo_ids()) & (b.replicate == 0)].set_index(["case_id", "condition"])
     rows = []
     for case_id in sorted({c for c, _ in b.index}):
-        for setting, pair in SETTINGS.items():
-            k = pair_conditions("john", pair)
+        for setting in SETTINGS:
+            k = setting_conditions(setting)
             for name, (first, second) in {"A_minus_B": ("A", k["B"]), "D_minus_M": (k["D"], k["M"]),
                                           "C_minus_M": (k["C"], k["M"])}.items():
                 if (case_id, first) not in b.index or (case_id, second) not in b.index:
@@ -188,8 +184,8 @@ def bayes_table(model: str) -> pd.DataFrame:
     b = b[(b.replicate == 0) & ~b.case_id.isin(placebo_ids())].copy()
     b["bayes_logit"] = [logit(bayes_answer(c, k)) for c, k in zip(b.case_id, b.condition)]
     b["about"] = b.condition.map(lambda c: CONDITIONS[c].about)
-    groups = [("own", "all", b[b.about == "self"]), ("agent", "all", b[b.about == "agent"])]
-    groups += [("own" if CONDITIONS[c].about == "self" else "agent", c, b[b.condition == c])
+    groups = [("own", "all", b[b.about == "self"]), ("PERSON", "all", b[b.about == "person"])]
+    groups += [("own" if CONDITIONS[c].about == "self" else "PERSON", c, b[b.condition == c])
                for c in sorted(b.condition.unique())]
     rows = []
     for about, condition, g in groups:
@@ -203,7 +199,7 @@ def bayes_table(model: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-DECISION_CURVE_CONDITIONS = ("A", "D_john", "M_S4", "C_john", "B", "D_F", "M_F", "C_F", "B_F")
+DECISION_CURVE_CONDITIONS = ("A", "D", "M", "C", "B", "D_F", "M_F", "C_F", "B_F")
 
 
 def decision_kind(output: str) -> str:
@@ -220,10 +216,10 @@ def threshold_table(model: str) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     p = pd.read_parquet(path)
-    p = p[(p.fit == "pooled") & p.parameter.isin(["nominal_threshold", "implied_threshold"])]
+    p = p[p.parameter.isin(["nominal_threshold", "implied_threshold"])]
     w = p.pivot_table(index=["fit_group", "output_name"], columns="parameter", values="value",
                       aggfunc="first").reset_index()
-    w["family"] = w.fit_group.map(lambda g: CONDITIONS[g.split("+")[0]].framing)
+    w["family"] = w.fit_group.map(lambda g: CONDITIONS[g.split("+")[0]].about)
     w["kind"] = w.output_name.map(decision_kind)
     w.insert(0, "model", model)
     return w
@@ -238,7 +234,7 @@ def decision_curves(model: str, *, bandwidth: float = 0.10, points: int = 40, re
     if not lat_path.exists() or not mat_path.exists():
         return pd.DataFrame()
     lat = pd.read_parquet(lat_path)
-    lat = lat[(lat.fit == "pooled") & (lat.replicate == 0)][["case_id", "condition", "z_mean_all"]]
+    lat = lat[lat.replicate == 0][["case_id", "condition", "z_mean_all"]]
     mat = pd.read_parquet(mat_path)
     column = DATASET_COLUMN["decision_no_threshold"]
     mat = mat[mat.complete & (mat.replicate == 0)][["case_id", "condition", column]]
@@ -274,7 +270,7 @@ def bespoke_points(model: str) -> pd.DataFrame:
     b["family"] = b.case_id.map(lambda c: items[c].family)
     b["placebo"] = b.case_id.map(lambda c: items[c].placebo)
     b["role"] = b.condition.map(lambda c: CONDITIONS[c].role)
-    b["setting"] = b.condition.map(lambda c: SETTING_OF.get(CONDITIONS[c].pair, "both"))
+    b["setting"] = b.condition.map(lambda c: CONDITIONS[c].setting or "both")
     return b[["model", "case_id", "family", "placebo", "condition", "role", "setting", "value", "sd", "n_samples",
               "bayes_logit"]]
 
@@ -309,11 +305,11 @@ def anomalies(est: pd.DataFrame, placebo: pd.DataFrame, comp: pd.DataFrame, rete
     main = est[est.case_set == "all"] if not est.empty else est
     for _, r in main.iterrows():
         label = f"{r.model} {r.dataset} {r.method} {r.setting}"
-        if r.statistic == "rho" and np.isfinite(r.estimate) and r.ci_lower <= 0:
-            out.append(f"rho interval includes 0: {label}: {fmt(r)}; phi and tau are blank.")
+        if r.statistic in ("rho", "rho_pooled") and np.isfinite(r.estimate) and r.ci_lower <= 0:
+            out.append(f"{r.statistic} interval includes 0: {label}: {fmt(r)}; the ratios over it are blank.")
         if r.statistic in ("curvature_D", "curvature_C") and np.isfinite(r.estimate) and (r.ci_lower > 0 or r.ci_upper < 0):
             out.append(f"Affine check: {r.statistic} interval excludes 0: {label}: {fmt(r)}.")
-        if r.statistic == "diff_phi" and np.isfinite(r.estimate) and (r.ci_lower > 0 or r.ci_upper < 0):
+        if r.statistic == "diff_phi_setting" and np.isfinite(r.estimate) and (r.ci_lower > 0 or r.ci_upper < 0):
             out.append(f"phi differs between settings: {label}: {fmt(r)} (the shared-phi assumption).")
         if r.statistic == "manipulation_median_abs_gap" and r.estimate < 0.5:
             out.append(f"Manipulation check below 0.5 logits: {label}: median |l_A - l_B| = {r.estimate:.3f}.")
@@ -323,8 +319,8 @@ def anomalies(est: pd.DataFrame, placebo: pd.DataFrame, comp: pd.DataFrame, rete
     if by is not None:
         for (model, dataset, method, setting), _ in main.groupby(["model", "dataset", "method", "setting"]):
             key = (model, dataset, method, setting)
-            if key + ("phi",) in by.index and key + ("phi_D_on_A",) in by.index:
-                phi, check = by.loc[key + ("phi",)], by.loc[key + ("phi_D_on_A",)]
+            if key + ("phi_setting",) in by.index and key + ("phi_D_on_A",) in by.index:
+                phi, check = by.loc[key + ("phi_setting",)], by.loc[key + ("phi_D_on_A",)]
                 if np.isfinite(phi.estimate) and np.isfinite(check.estimate) and not (
                         phi.ci_lower <= check.estimate <= phi.ci_upper):
                     out.append(f"Affine check: phi from the gap ({fmt(phi)}) and from l_D on l_A "
@@ -353,26 +349,27 @@ def write_results_md(models, est, placebo, bayes, comp, retention) -> None:
     if est.empty:
         parts.append("_(no estimates: run generation and `second_order.phase3` first)_\n")
     else:
-        parts.append("## Leakage, responsiveness and theory of mind\n\nlambda = beta_C / beta_D (0: no leakage, 1: "
-                     "the agent is given the model's own belief); rho = Cov(x, x') / Var(x) from the second run; "
-                     "phi = beta_D / rho; tau = (beta_D - beta_C) / rho = phi (1 - lambda).  rho, phi and tau use "
-                     "calibrated values (for latent beliefs, the posterior means de-shrunk per fit; the slopes "
-                     "they use are beta_D_calibrated and beta_C_calibrated), so for latent rows phi is not "
-                     "beta_D / rho with the raw beta_D shown; lambda is the same either way.\n\n"
-                     + headline_md(est, ["lambda", "phi", "rho", "tau", "beta_C", "beta_D", "beta_C_calibrated",
-                                         "beta_D_calibrated"]) + "\n")
+        per_setting = est[est.setting.isin(SETTINGS)]
+        both = est[est.setting == "both"]
+        parts.append("## Leakage and theory of mind, per setting\n\nlambda = beta_C / beta_D (0: no leakage, 1: "
+                     "PERSON is given the model's own belief); rho = Cov(x, x') / Var(x) from the second run; "
+                     "tau = (beta_D - beta_C) / rho.  rho and tau use calibrated values (for latent beliefs, the "
+                     "posterior means de-shrunk per fit: the slopes beta_*_calibrated); lambda uses the values as "
+                     "measured.  phi_setting = beta_D_calibrated / rho, the setting's own phi.\n\n"
+                     + headline_md(per_setting, HEADLINE) + "\n")
+        parts.append("## Responsiveness phi, shared by the settings\n\nphi = pooled beta_D / pooled rho "
+                     "(within-setting slopes and covariances, calibrated values), on the cases complete for both "
+                     "settings; diff_* = false minus partial.\n\n"
+                     + headline_md(both, [s for s in SHARED if s in set(both.statistic)]) + "\n")
         passed = est[est.case_set == "comprehension_pass"]
         if not passed.empty:
             parts.append("### Answers whose comprehension follow-up was correct\n\n"
-                         + headline_md(passed.assign(case_set="all"), ["lambda", "phi", "tau"]) + "\n")
-        contrast = est[(est.setting == "false_minus_partial") & (est.case_set == "all")]
-        parts.append("### False belief against partial evidence\n\n"
-                     + headline_md(contrast, [s for s in CONTRAST if s in set(contrast.statistic)]) + "\n")
+                         + headline_md(passed.assign(case_set="all"), ["lambda", "tau", "phi"]) + "\n")
         parts.append("## Checks of the modelling assumptions\n\nAffine form: phi_D_on_A and phi_M_on_B estimate "
                      "phi from levels (instrumented by the second run); curvature_* are quadratic terms of the gap "
-                     "regressions.  Partial linearity: lambda by the sign of the gap and by thirds of |x|.\n\n"
-                     + headline_md(est[est.setting != "false_minus_partial"],
-                                   [s for s in AFFINE if s in set(est.statistic)]) + "\n")
+                     "regressions.  Partial linearity: lambda by the sign of the gap and within thirds of |x|, and "
+                     "the level ratio mean_position.\n\n"
+                     + headline_md(per_setting, [s for s in AFFINE if s in set(est.statistic)]) + "\n")
     if not placebo.empty:
         parts.append("## Bespoke placebo items\n\nAll three gaps should be near 0.\n\n"
                      + md_table(placebo.assign(model=placebo.model.map(display)),

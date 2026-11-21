@@ -5,9 +5,9 @@ Headline and diagnostics:
 * ``curse_schematic``: what lambda, phi and tau measure, on two lines of log-odds
   gaps (illustrative values);
 * ``curse_decomposition``: the same diagram with each run's estimates, one row per
-  model, dataset, method and setting;
-* ``curse_estimates``: lambda, phi and tau per model, dataset, method and setting,
-  with Camerer et al.'s w;
+  model, dataset, method and setting (with that setting's own phi);
+* ``curse_estimates``: lambda and tau per setting and the shared phi, per model,
+  dataset and method, with Camerer et al.'s w;
 * ``curse_scatter``: the two regressions behind lambda;
 * ``curse_linearity``: binned means of l_C - l_M and l_D - l_M against x with the
   fitted lines (the partial-linearity assumption);
@@ -25,8 +25,7 @@ For the bespoke dataset:
 
 * ``curse_bayes``: stated logits against the Bayes logit of the believer's evidence.
 
-Plus ``retention``.  The style helpers here are shared with the deprecated RQ figures
-(``second_order.deprecated.rq_figures``).
+Plus ``retention``.
 
     python -m second_order.figures
 """
@@ -44,12 +43,10 @@ from second_order import config as C  # noqa: E402
 from second_order.report import display  # noqa: E402
 
 INK, INK2, MUTED, GRID = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e1"
-CONDITION_ORDER = ["A", "B", "B_F", "D_john", "M_S4", "C_john", "D_F", "M_F", "C_F", "D_user", "C_user"]
-CONDITION_COLOR = {"A": "#52514e", "B": "#8a8984", "B_F": "#b8b7b2", "D_john": "#7fb0eb", "M_S4": "#1baf7a",
-                   "C_john": "#2a78d6", "D_F": "#f3a37f", "M_F": "#7ccfae", "C_F": "#eb6834",
-                   "D_user": "#f9cdb8", "C_user": "#c4521f"}
-PAIR_COLOR = {"S4": "#2a78d6", "S1": "#7fb0eb", "H": "#1baf7a", "F": "#eb6834"}
-SETTING_COLOR = {"partial": PAIR_COLOR["S4"], "false": PAIR_COLOR["F"]}
+CONDITION_ORDER = ["A", "B", "B_F", "D", "M", "C", "D_F", "M_F", "C_F"]
+CONDITION_COLOR = {"A": "#52514e", "B": "#8a8984", "B_F": "#b8b7b2", "D": "#7fb0eb", "M": "#1baf7a",
+                   "C": "#2a78d6", "D_F": "#f3a37f", "M_F": "#7ccfae", "C_F": "#eb6834"}
+SETTING_COLOR = {"partial": "#2a78d6", "false": "#eb6834"}
 
 
 def style(ax, title=None):
@@ -103,28 +100,35 @@ def retention(ret):
 
 
 def curse_estimates(est):
-    """lambda, phi and tau with 95% intervals, one row per model, dataset and method."""
-    L = est[(est.case_set == "all") & (est.setting != "false_minus_partial")]
+    """lambda and tau per setting, and phi shared by the settings (filled black; hollow: each setting's own)."""
+    L = est[est.case_set == "all"]
     groups = list(L.groupby(["model", "dataset", "method"], sort=False).size().index)
     if not groups:
         return
     w = float(C.load()["experiment"]["camerer_w"])
     fig, axes = plt.subplots(1, 3, figsize=(10, 0.45 * len(groups) + 1.6), sharey=True)
-    panels = (("lambda", "Leakage λ (dotted: Camerer et al. w)", (0, w, 1)), ("phi", "Responsiveness φ", (1,)),
+    panels = (("lambda", "Leakage λ (dotted: Camerer et al. w)", (0, w, 1)), ("phi", "Responsiveness φ, shared (hollow: per setting)", (1,)),
               ("tau", "Theory-of-mind score τ = φ(1 − λ)", (1,)))
     for ax, (statistic, title, refs) in zip(axes, panels):
         for ref in refs:
             ax.axvline(ref, color=MUTED, lw=0.8, ls=":" if ref == w and statistic == "lambda" else "-")
         for i, (model, dataset, method) in enumerate(groups):
-            for j, setting in enumerate(("partial", "false")):
+            rows = [(setting, statistic, (j - 0.5) * 0.3, SETTING_COLOR[setting], False)
+                    for j, setting in enumerate(("partial", "false"))]
+            if statistic == "phi":
+                rows = [("both", "phi", 0.0, INK, False)] + [
+                    (setting, "phi_setting", (j - 0.5) * 0.5, SETTING_COLOR[setting], True)
+                    for j, setting in enumerate(("partial", "false"))]
+            for setting, stat, dy, color, hollow in rows:
                 r = L[(L.model == model) & (L.dataset == dataset) & (L.method == method) & (L.setting == setting)
-                      & (L.statistic == statistic)]
+                      & (L.statistic == stat)]
                 if r.empty or not np.isfinite(r.estimate.iloc[0]):
                     continue
                 r = r.iloc[0]
-                ax.errorbar(r.estimate, i + (j - 0.5) * 0.3, xerr=[[r.estimate - r.ci_lower], [r.ci_upper - r.estimate]],
-                            fmt="o", color=SETTING_COLOR[setting], ms=5, elinewidth=1.2, capsize=0,
-                            label=setting if i == 0 else None)
+                ax.errorbar(r.estimate, i + dy, xerr=[[r.estimate - r.ci_lower], [r.ci_upper - r.estimate]],
+                            fmt="o", color=color, mfc="white" if hollow else color, ms=5, elinewidth=1.2,
+                            capsize=0, label=(setting if setting != "both" else "shared")
+                            if i == 0 and not hollow else None)
         style(ax, title)
         ax.grid(axis="x", color=GRID, linewidth=0.8)
         ax.grid(axis="y", visible=False)
@@ -164,10 +168,10 @@ def curse_scatter(scatter, est):
     save(fig, "curse_scatter")
 
 
-FAMILY_COLOR = {"self": "#52514e", "john": "#2a78d6", "user": "#eb6834"}
+FAMILY_COLOR = {"self": "#52514e", "person": "#2a78d6"}
 KIND_MARKER = {"threshold": "o", "bet": "s", "cost": "^", "plain": "D"}
 ROLE_COLOR = {"A": "#52514e", "B": "#8a8984", "D": "#7fb0eb", "M": "#1baf7a", "C": "#eb6834"}
-SETTING_CONDITIONS = {"partial": ("A", "B", "D_john", "M_S4", "C_john"), "false": ("A", "B_F", "D_F", "M_F", "C_F")}
+SETTING_CONDITIONS = {"partial": ("A", "B", "D", "M", "C"), "false": ("A", "B_F", "D_F", "M_F", "C_F")}
 
 
 def groups_of(frame, keys=("model", "dataset", "method")):
@@ -336,7 +340,7 @@ def curse_comprehension(est):
 
 
 # ---------------------------------------------------------------- the decomposition diagram
-M_COLOR, C_COLOR, D_COLOR = CONDITION_COLOR["M_S4"], "#c4521f", CONDITION_COLOR["C_john"]
+M_COLOR, C_COLOR, D_COLOR = CONDITION_COLOR["M"], "#c4521f", CONDITION_COLOR["C"]
 
 
 def brace(ax, x0: float, x1: float, y: float, height: float, *, color=INK2, lw: float = 1.0) -> None:
@@ -391,10 +395,13 @@ def curse_schematic(lam: float = 0.45, phi: float = 0.75) -> None:
 
 
 def curse_decomposition(est):
-    """The decomposition diagram with each run's estimates: C at phi * lambda, D at phi (delta = 1)."""
-    L = est[(est.case_set == "all") & (est.setting != "false_minus_partial")]
+    """The decomposition diagram with each setting's estimates: C at phi * lambda, D at phi (delta = 1).
+
+    phi here is the setting's own (``phi_setting``), so the two segments add up to D's position.
+    """
+    L = est[(est.case_set == "all") & est.setting.isin(["partial", "false"])]
     groups = [g for g in groups_of(L, ("model", "dataset", "method", "setting"))
-              if {"phi", "phi_lambda"} <= set(L[(L.model == g[0]) & (L.dataset == g[1]) & (L.method == g[2])
+              if {"phi_setting", "phi_lambda"} <= set(L[(L.model == g[0]) & (L.dataset == g[1]) & (L.method == g[2])
                                                 & (L.setting == g[3])].statistic)]
     if not groups:
         return
@@ -408,17 +415,17 @@ def curse_decomposition(est):
         ax.plot([0, 1], [y, y], color=GRID, lw=0.8, ls=":")
         ax.scatter([0], [y], s=40, color=M_COLOR, zorder=3)
         ax.scatter([1], [y], s=40, facecolor="white", edgecolor=MUTED, zorder=3)
-        for stat, color in (("phi_lambda", C_COLOR), ("phi", D_COLOR)):
+        for stat, color in (("phi_lambda", C_COLOR), ("phi_setting", D_COLOR)):
             r = g.loc[stat]
             if np.isfinite(r.estimate):
                 ax.errorbar(r.estimate, y, xerr=[[r.estimate - r.ci_lower], [r.ci_upper - r.estimate]], fmt="o",
                             ms=6, color=color, elinewidth=1.4, capsize=0, zorder=4)
-        if np.isfinite(g.loc["phi"].estimate):
-            ax.plot([w * g.loc["phi"].estimate] * 2, [y - 0.12, y + 0.12], color=MUTED, lw=1)
+        if np.isfinite(g.loc["phi_setting"].estimate):
+            ax.plot([w * g.loc["phi_setting"].estimate] * 2, [y - 0.12, y + 0.12], color=MUTED, lw=1)
         lam = g.loc["lambda"] if "lambda" in g.index else None
         text = (f"λ = {lam.estimate:.2f} [{lam.ci_lower:.2f}, {lam.ci_upper:.2f}]" if lam is not None
                 and np.isfinite(lam.estimate) else "λ blank")
-        ax.text(1.2, y, f"{text};  φ = {g.loc['phi'].estimate:.2f}", va="center", fontsize=7, color=INK2)
+        ax.text(1.2, y, f"{text};  φ = {g.loc['phi_setting'].estimate:.2f}", va="center", fontsize=7, color=INK2)
         ax.text(-0.04, y, f"{display(model)} · {dataset} · {method} · {setting}", ha="right", va="center",
                 fontsize=7, color=INK2)
     ax.text(0, 0.55, "$l_M$", ha="center", color=M_COLOR, fontsize=10)

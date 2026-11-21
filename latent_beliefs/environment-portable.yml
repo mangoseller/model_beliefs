@@ -1,7 +1,7 @@
 # Same package versions as environment.yml, without platform-specific builds,
 # for platforms other than macOS on Apple silicon.  Results match the paper
 # except that concordance indices that depend on floating-point ties can differ
-# in the third decimal place (see "Exactness" in README.md).
+# in the third decimal place (see "Exactness" in latent_beliefs/README.md).
 # The CKD case sampling uses XGBoost risk scores, which may also differ in the
 # last digits, so rebuild prompts with environment.yml or use the bundled ones.
 name: latent-beliefs

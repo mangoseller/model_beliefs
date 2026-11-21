@@ -1,19 +1,15 @@
 """Parse cached responses with the unchanged first-order parser and build matrices.
 
-``data/responses/{model}/{condition}.parquet`` (CKD) and
-``data/responses/{model}/{dataset}/{condition}.parquet`` (other datasets): one
-row per case, output, run (``replicate``) and ``sample`` with raw text, parsed
-value and parse status.  Nothing is imputed; failures are logged in the parse
-status column and counted in the retention table.  Reasoning in
-``<think>`` tags (Qwen3 with thinking on) is removed before parsing.
+``data/responses/{model}/{dataset}/{condition}.parquet``: one row per case,
+output, run (``replicate``) and ``sample`` with raw text, parsed value and parse
+status.  Nothing is imputed; failures are logged in the parse status column and
+counted in the retention table.  Reasoning in ``<think>`` tags (Qwen3 with
+thinking on) is removed before parsing.
 
 ``matrix(long)`` gives one row per (case, condition, replicate) with the 16
 dataset columns used by ``latent_beliefs.latent.domains.CKD_SPECS``, a
-completeness flag, and the split.  The split is the model's condition A split
-from ``build/datasets/ckd.csv`` (for local models, the split of
-``split_from``), or, for models with ``split: own``, a seeded split drawn
-here (20% test, then 20% of the rest validation, as in the first-order
-datasets).  Cases outside the split are given split ``none``.
+completeness flag, and a seeded split for the latent fit (20% test, then 20% of
+the rest validation, as in the first-order datasets).
 
 ``comprehension(model, dataset, ...)`` parses and scores the follow-up answers.
 """
@@ -30,7 +26,6 @@ from latent_beliefs.datasets import DOMAIN_SPECS
 from second_order import config as C
 from second_order import datasets as DS
 from second_order.comprehension import parse_choice
-from second_order.conditions import CONDITIONS
 from second_order.prompts_second_order import OUTPUTS
 from second_order.run_generation import comprehension_items, experiment_items, lookup
 
@@ -42,7 +37,7 @@ UNIT = ["case_id", "replicate", "sample"]  # one model call per output
 REFUSAL = re.compile(
     r"(cannot (?:know|be known|determine|read|predict)|can't (?:know|read|predict)|impossible to know|"
     r"no way (?:to|of) know|not possible to know|I (?:cannot|can't) speak for|"
-    r"would depend on (?:his|my|your) (?:own|personal))",
+    r"would depend on (?:his|her|their|your) (?:own|personal))",
     flags=re.I,
 )
 THINK = re.compile(r"<think>.*?</think>", flags=re.S)
@@ -57,13 +52,12 @@ def visible_text(text: str | None) -> str | None:
 
 
 def responses_path(model: str, dataset: str, condition: str):
-    folder = C.RESPONSES / model if dataset == "ckd" else C.RESPONSES / model / dataset
-    return folder / f"{condition}.parquet"
+    return C.RESPONSES / model / dataset / f"{condition}.parquet"
 
 
 @lru_cache(maxsize=None)
-def own_split(model: str) -> pd.Series:
-    """Seeded train/val/test split over all CKD cases, for models without a first-order split."""
+def split(model: str) -> pd.Series:
+    """Seeded train/val/test split over all CKD cases (the latent fit's split)."""
     from second_order.fit_pooled import stable_seed
     from second_order.prompts_second_order import cases
 
@@ -76,14 +70,6 @@ def own_split(model: str) -> pd.Series:
     labels[order[:n_test]] = "test"
     labels[order[n_test:n_test + n_val]] = "val"
     return pd.Series(labels, index=ids, name="split")
-
-
-def split_table(model: str) -> pd.Series:
-    if C.model_config(model).get("split") == "own":
-        return own_split(model)
-    first = pd.read_csv(C.FIRST_ORDER_DATASET, usecols=["model_key", "source_prompt_id", "split"])
-    first = first[first.model_key == C.split_source(model)]
-    return first.set_index("source_prompt_id")["split"]
 
 
 def collect(model: str, case_ids: list[str], conditions: list[str], write: bool = True,
@@ -127,9 +113,7 @@ def matrix(long: pd.DataFrame) -> pd.DataFrame:
     n_generated = generated.groupby(keys).size().reindex(wide.index)
     wide = wide.reset_index()
     wide["complete"] = wide[COLUMNS].notna().all(axis=1) & (n_generated.to_numpy() == len(OUTPUTS))
-    splits = split_table(model)
-    wide["split"] = wide["case_id"].map(splits).fillna("none")
-    wide["framing"] = wide["condition"].map(lambda c: CONDITIONS[c].framing)
+    wide["split"] = wide["case_id"].map(split(model)).fillna("none")
     wide.insert(0, "model", model)
     return wide
 

@@ -1,6 +1,6 @@
 """The two datasets of the curse-of-knowledge experiment behind one interface.
 
-* ``ckd``: the 500 CKD cases and 16 outputs (``prompts_second_order``); latent
+* ``ckd``: the paper's 500 CKD cases and 16 outputs (``prompts_second_order``); latent
   and direct beliefs.  One sample per item; the own-belief conditions get a
   second run (``experiment.replicates``).
 * ``bespoke``: the fictional items of ``bespoke`` with the numeric probability
@@ -17,7 +17,6 @@ from second_order import bespoke as BS
 from second_order import config as C
 from second_order import prompts_second_order as CKD
 from second_order.comprehension import Comprehension
-from second_order.conditions import CONDITIONS
 
 
 def dataset_of(case_id: str) -> str:
@@ -55,18 +54,9 @@ def parse(dataset: str, output: str, text: str | None) -> tuple[float | None, st
     return parse_ckd(output, text) if text else (None, None)
 
 
-def prompt(dataset: str, model: str, case_id: str, condition: str, output: str) -> str:
-    if dataset == "bespoke":
-        return BS.build_prompt(case_id, condition, output)
-    return CKD.prompt_for(model, case_id, condition, output)
+def prompt(dataset: str, case_id: str, condition: str, output: str) -> str:
+    return (BS.build_prompt if dataset == "bespoke" else CKD.build_prompt)(case_id, condition, output)
 
 
 def comprehension(dataset: str, case_id: str, condition: str) -> Comprehension:
     return (BS.comprehension if dataset == "bespoke" else CKD.comprehension)(case_id, condition)
-
-
-def conditions_for(dataset: str, conditions: list[str]) -> list[str]:
-    """The bespoke dataset has the partial (S4) and false-belief (F) settings only, for John."""
-    if dataset != "bespoke":
-        return list(conditions)
-    return [c for c in conditions if CONDITIONS[c].pair in (None, "S4", "F") and CONDITIONS[c].framing != "user"]

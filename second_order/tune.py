@@ -62,12 +62,12 @@ def benchmark_items(model: str, n: int, seed: int) -> list[dict]:
     from second_order.run_generation import dataset_cases, experiment_items
 
     rng = np.random.default_rng(seed)
-    conditions = C.scheduled_conditions(model)
+    conditions = C.conditions()
     shares = {"ckd": 1 - settings()["bespoke_share"], "bespoke": settings()["bespoke_share"]}
     picked = []
     for dataset in C.datasets_for(model):
         try:
-            pool = [i for i in experiment_items(model, dataset, dataset_cases(dataset, None, False), conditions)
+            pool = [i for i in experiment_items(model, dataset, dataset_cases(dataset), conditions)
                     if i.replicate == 0 and i.sample == 0]
         except FileNotFoundError:  # no bespoke item file
             continue

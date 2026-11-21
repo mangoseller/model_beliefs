@@ -1,5 +1,7 @@
 # Replication package: *Beliefs and Behavior in Language Models*
 
+Run every command below from the repository root.
+
 Code to reproduce every figure and table in Smolin and Wilder, *Beliefs and
 Behavior in Language Models*, including the appendix.  The pipeline runs from
 public source datasets, to the exact prompts sent to each model, to the
@@ -34,13 +36,13 @@ on Zenodo: <https://doi.org/10.5281/zenodo.23350428>.
 ## Setup
 
 ```bash
-conda env create -f environment.yml   # creates the "latent-beliefs" environment
+conda env create -f latent_beliefs/environment.yml   # creates the "latent-beliefs" environment
 conda activate latent-beliefs
 ```
 
 `environment.yml` pins the exact macOS (Apple silicon) builds that reproduce
 the paper bit for bit; see *Exactness* below.  On other platforms, use
-`conda env create -f environment-portable.yml`, which pins the same versions
+`conda env create -f latent_beliefs/environment-portable.yml`, which pins the same versions
 without platform-specific builds.  Building the
 scientific-forecasting cases also needs R (4.3; packages `dplyr`, `jsonlite`,
 `purrr`, `stringr`, `tibble`) and `pdftotext` from poppler.
@@ -60,12 +62,12 @@ environment variables:
 ## 1. Figures and tables from the released results
 
 Download `llm_beliefs_replication_results.tar.gz` from the Zenodo record
-above and extract it in this directory, which creates `data/release/`.  Then
+above and extract it in the repository root, which creates `data/release/`.  Then
 run the analysis:
 
 ```bash
 tar -xzf llm_beliefs_replication_results.tar.gz
-./reproduce.sh analysis
+latent_beliefs/reproduce.sh analysis
 ```
 
 This takes about 10 minutes on a laptop.  It runs these steps:
@@ -123,7 +125,7 @@ your own build tree, run `python -m latent_beliefs.release pack`.
 ## 2. Prompts from the public datasets
 
 ```bash
-./reproduce.sh sources prompts
+latent_beliefs/reproduce.sh sources prompts
 ```
 
 Data the stages need:
@@ -152,7 +154,7 @@ as a single user message, with no system prompt.
 
 ### Collection
 
-Collection calls paid APIs, so `reproduce.sh` does not run it.  All requests
+Collection calls paid APIs, so `latent_beliefs/reproduce.sh` does not run it.  All requests
 use temperature 1 and a 4,096-token output limit.
 
 - **Amazon Bedrock** (Converse batch inference) serves the seven open-weight models.
@@ -160,7 +162,7 @@ use temperature 1 and a 4,096-token output limit.
 - **OpenAI** (Responses API batch) serves GPT-5.6 Luna and Terra, with reasoning effort `medium`.
   - Set `OPENAI_API_KEY`.
 
-Start from the prompts (`./reproduce.sh sources prompts`).  Each
+Start from the prompts (`latent_beliefs/reproduce.sh sources prompts`).  Each
 `{prepare,upload,submit,status,download}` group lists subcommands to run one
 after another; repeat `status` until the batch jobs finish.
 
@@ -177,8 +179,8 @@ python -m latent_beliefs.branching.collect {prepare,upload,submit,status,downloa
 python -m latent_beliefs.branching.materialize --stages initial
 python -m latent_beliefs.branching.collect {prepare,upload,submit,status,download} --stage followups
 python -m latent_beliefs.branching.materialize --stages followups
-./reproduce.sh parse datasets refit
-LB_FITS_DIR=build/fits ./reproduce.sh evaluate figures
+latent_beliefs/reproduce.sh parse datasets refit
+LB_FITS_DIR=build/fits latent_beliefs/reproduce.sh evaluate figures
 ```
 
 Responses are sampled at temperature 1, so new collections will differ from
@@ -193,8 +195,8 @@ identifiers.
 ### Refitting
 
 ```bash
-./reproduce.sh refit                       # writes build/fits/
-LB_FITS_DIR=build/fits ./reproduce.sh evaluate figures
+latent_beliefs/reproduce.sh refit                       # writes build/fits/
+LB_FITS_DIR=build/fits latent_beliefs/reproduce.sh evaluate figures
 ```
 
 The released fits were run on NVIDIA L40S GPUs.  Every fit command accepts
@@ -294,7 +296,5 @@ material derived from the following sources:
 
 ## Citation
 
-If you use this package or the results bundle, please cite the paper (see
-`CITATION.cff`).
-
-See `STRUCTURE.md` for a map of the code.
+Smolin and Wilder, *Beliefs and Behavior in Language Models*,
+[arXiv:2609.07943](https://arxiv.org/abs/2609.07943).

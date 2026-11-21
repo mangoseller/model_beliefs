@@ -20,7 +20,7 @@ import pandas as pd
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURE = ROOT / "tests" / "fixtures" / "bespoke_items.yaml"
+FIXTURE = ROOT / "datasets" / "example_bespoke_items.yaml"
 
 
 class SyntheticPipeline(unittest.TestCase):
@@ -28,7 +28,7 @@ class SyntheticPipeline(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         tmp = Path(cls.tmp.name)
-        cfg = yaml.safe_load((ROOT / "configs" / "second_order.yaml").read_text())
+        cfg = yaml.safe_load((ROOT / "second_order" / "config.yaml").read_text())
         cfg["bespoke"]["samples"] = 30
         cfg["latent_fit"] = {"epochs": 1500, "patience": 100}
         cfg["models"]["synthetic"]["truth"].update({"parse_failure_rate": 0.01, "think_tags": True})
@@ -37,13 +37,10 @@ class SyntheticPipeline(unittest.TestCase):
         env = {**os.environ, "SO_CONFIG": str(tmp / "config.yaml"), "SO_DATA_DIR": str(tmp / "data"),
                "SO_RESULTS_DIR": str(tmp / "results"), "SO_FIGURES_DIR": str(tmp / "figures"),
                "SO_BESPOKE_ITEMS": str(FIXTURE), "PYTHONPATH": str(ROOT)}
-        steps = [["second_order.run_generation", "--model", "synthetic", "--cases", "150", "--approve"],
+        steps = [["second_order.run_generation", "--model", "synthetic", "--cases", "150"],
                  ["second_order.phase3", "--model", "synthetic", "--cases", "150"],
                  ["second_order.curse", "--models", "synthetic", "--resamples", "100"],
-                 ["second_order.figures"],
-                 # the deprecated RQ analysis still runs on current outputs
-                 ["second_order.deprecated.analyze", "--models", "synthetic", "--resamples", "20"],
-                 ["second_order.deprecated.rq_figures"]]
+                 ["second_order.figures"]]
         for step in steps:
             done = subprocess.run([sys.executable, "-m", *step], cwd=ROOT, env=env, capture_output=True, text=True)
             if done.returncode:
@@ -72,9 +69,9 @@ class SyntheticPipeline(unittest.TestCase):
 
     def test_phi_and_tau_are_recovered_on_ckd(self):
         for method in ("latent", "direct"):
+            phi = self.stat("ckd", method, "both", "phi")  # shared by the two settings
+            self.assertAlmostEqual(phi.estimate, self.truth["phi"], delta=0.25, msg=method)
             for setting in ("partial", "false"):
-                phi = self.stat("ckd", method, setting, "phi")
-                self.assertAlmostEqual(phi.estimate, self.truth["phi"], delta=0.25, msg=(method, setting))
                 tau = self.stat("ckd", method, setting, "tau")
                 lam = self.truth[f"lambda_{setting}"]
                 self.assertAlmostEqual(tau.estimate, self.truth["phi"] * (1 - lam), delta=0.25)
@@ -93,18 +90,12 @@ class SyntheticPipeline(unittest.TestCase):
         own = bayes[(bayes.beliefs == "own") & (bayes.condition == "all")].iloc[0]
         self.assertAlmostEqual(own.slope_on_bayes, 1.0, delta=0.15)  # the simulated model is Bayesian
 
-    def test_deprecated_rq_analysis_still_runs(self):
-        leak = pd.read_csv(self.results.parent / "leakage.csv")
-        lam = leak[(leak.method == "direct") & (leak.framing == "john") & (leak.pair == "S4")
-                   & (leak.statistic == "lambda") & (leak.case_set == "all_complete")]
-        self.assertAlmostEqual(lam.estimate.iloc[0], self.truth["lambda_partial"], delta=0.2)
-        self.assertTrue((self.figures / "rq1c_pairs.png").exists())
-
     def test_report_figures_and_retention(self):
         text = (self.results / "RESULTS.md").read_text()
-        for heading in ("Leakage, responsiveness", "placebo", "Comprehension", "Anomalies"):
+        for heading in ("Leakage and theory of mind", "shared by the settings", "placebo", "Comprehension",
+                        "Anomalies"):
             self.assertIn(heading, text)
-        for name in ("curse_estimates", "curse_scatter"):
+        for name in ("curse_estimates", "curse_scatter", "curse_decomposition", "curse_decision_curves"):
             self.assertTrue((self.figures / f"{name}.png").exists(), name)
         ret = pd.read_csv(self.results / "retention.csv")
         # Only the planted failures (1% of responses) are lost: counted, never imputed.  A CKD call

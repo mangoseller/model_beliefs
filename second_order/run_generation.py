@@ -1,36 +1,26 @@
-"""Cached, resumable generation for every second-order condition.
+"""Cached, resumable generation for every condition.
 
 Each item is keyed by ``sha256(json([model, case_id, condition, output, replicate]))``
 (``sample`` is appended when nonzero) and appended to
 ``data/generation_cache/<model>.jsonl`` once it returns.  A rerun skips every
-cached key and never re-calls the model for it.  A cached item whose prompt
-hash differs from the prompt now being built raises an error, so a changed
+cached key and never re-calls the model for it.  A cached item whose prompt or
+generation settings differ from the current ones raises an error, so a changed
 template can never silently mix with old responses.
 
 ``replicate`` is an independent run of a condition (two runs of A and every
 B, ``experiment.replicates``, give the reliability rho); ``sample`` indexes
 the samples within a run (``bespoke.samples``).  Comprehension follow-ups are
-two-turn items (output ``comprehension``): the C prompt, the cached C
-response and the question; they are generated after the C answers they
-follow (``--stage comprehension``, or ``all``).
+two-turn items (output ``comprehension:<output>``): the C prompt, the cached C
+response and the question; they are generated after the C answers they follow.
 
-Condition A of hosted models (replicate 0) is read from the released
-first-order responses and is never regenerated.
+Backends: ``vllm`` (local open weights on CUDA, one seed per item), ``hf``
+(transformers fallback) and ``synthetic`` (``second_order/synthetic.py``: text
+from known parameters, for end-to-end checks).  A single user message and no
+system prompt, as in the first-order collection; sampling from ``generation``,
+overridden per model (``temperature``, ``top_p``, ``top_k``, ``max_tokens``,
+``enable_thinking``).
 
-Before any run of more than ``budget.approval_threshold_calls`` calls the call
-count and an estimated cost are printed and the run stops unless
-``--approve`` is passed.
-
-Backends: ``mlx`` (local MLX checkpoint, batched, seeded), ``bedrock``
-(Converse API, synchronous, threaded), ``openai`` (Responses API), ``vllm``
-(local open weights on CUDA, one seed per item), ``hf`` (transformers
-fallback) and ``synthetic`` (``second_order/synthetic.py``: text from known
-parameters, for end-to-end checks).  All use temperature 1, at most 4,096
-output tokens, a single user message and no system prompt, as in the
-first-order collection, unless a model entry overrides them (``temperature``,
-``top_p``, ``top_k``, ``max_tokens``, ``enable_thinking``).
-
-    python -m second_order.run_generation --model qwen3_8b [--dataset ckd bespoke] [--stage all] --approve
+    python -m second_order.run_generation --model qwen3_8b [--dataset ckd bespoke] [--stage all]
 """
 
 from __future__ import annotations
@@ -41,7 +31,6 @@ import json
 import os
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -49,14 +38,6 @@ from typing import Any, Iterable
 from tqdm import tqdm
 
 from second_order import config as C
-
-# Mean tokens per call in the first-order CKD cache (docs/ORIENTATION.md).
-CACHE_TOKENS = {
-    "deepseek_v32": (257, 480), "gemma3_12b": (293, 363), "gemma3_27b": (293, 306),
-    "gemma3_4b": (293, 231), "glm5": (261, 414), "llama31_70b": (270, 376),
-    "openai_luna": (263, 242), "openai_terra": (263, 186), "qwen3_32b": (277, 452),
-}
-
 
 @dataclass(frozen=True)
 class Item:
@@ -93,10 +74,8 @@ def item_key(model: str, case_id: str, condition: str, output: str, replicate: i
 def settings_signature(model: str) -> str:
     """Hash of what besides the prompt shapes a response: backend, weights, sampling, chat template."""
     mcfg = C.model_config(model)
-    payload = {"backend": mcfg["backend"], "weights": mcfg.get("path") or mcfg.get("model_id"),
-               "revision": mcfg.get("revision"),
-               "sampling": sampling(model), "template": template_kwargs(model),
-               "reasoning_effort": mcfg.get("reasoning_effort"), "truth": mcfg.get("truth")}
+    payload = {"backend": mcfg["backend"], "weights": mcfg.get("path"), "revision": mcfg.get("revision"),
+               "sampling": sampling(model), "template": template_kwargs(model), "truth": mcfg.get("truth")}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -132,38 +111,12 @@ class Cache:
             os.fsync(handle.fileno())
 
 
-def released_a(model: str) -> dict[tuple[str, str], dict[str, Any]]:
-    """(case_id, output) -> released first-order response record."""
-    from second_order.prompts_second_order import specs
-
-    result = {}
-    for output, spec in specs().items():
-        path = C.RELEASE_RESPONSES / spec["task_id"] / f"{model}.jsonl"
-        with path.open(encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                raw = json.loads(line)
-                case_id = raw["prompt_id"].rsplit("__", 1)[0]
-                result[(case_id, output)] = raw
-    return result
-
-
 def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
-    """Cached response record for each item (released A for hosted models)."""
+    """Cached response record for each item (None if not generated yet)."""
     by_model: dict[str, Cache] = {}
-    released: dict[str, dict] = {}
     signatures: dict[str, str] = {}
     out = []
     for item in items:
-        cfg = C.model_config(item.model)
-        if (item.condition == "A" and item.replicate == 0 and item.sample == 0 and item.dataset == "ckd"
-                and item.messages is None and cfg.get("cached_a")):
-            if item.model not in released:
-                released[item.model] = released_a(item.model)
-            raw = released[item.model][(item.case_id, item.output)]
-            out.append({"key": item.key, "text": raw.get("output_text") or "", "ok": bool(raw.get("ok")),
-                        "source": "release", "stop_reason": raw.get("stop_reason"),
-                        "usage": raw.get("usage")})
-            continue
         if item.model not in by_model:  # read each cache file once
             by_model[item.model] = Cache(item.model)
         cache = by_model[item.model]
@@ -180,115 +133,7 @@ def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
     return out
 
 
-# ---------------------------------------------------------------- cost
-def estimate(model: str, n_calls: int, conditions: Iterable[str]) -> dict[str, Any]:
-    cfg = C.load()
-    backend = C.model_config(model)["backend"]
-    base = CACHE_TOKENS.get(model) or CACHE_TOKENS.get(C.split_source(model), (290, 300))
-    from second_order.conditions import CONDITIONS
-
-    extra = cfg["budget"]["extra_input_tokens"] if any(CONDITIONS[c].about == "agent" for c in conditions
-                                                       if c in CONDITIONS) else 0
-    tin, tout = n_calls * (base[0] + extra), n_calls * base[1]
-    price = cfg["budget"]["prices"].get(backend, {"input": None, "output": None})
-    cost = None
-    if backend in LOCAL_BACKENDS:
-        cost = 0.0
-    elif price["input"] is not None and price["output"] is not None:
-        cost = tin / 1e6 * price["input"] + tout / 1e6 * price["output"]
-    return {"model": model, "backend": backend, "calls": n_calls, "input_tokens": tin,
-            "output_tokens": tout, "usd": cost}
-
-
 # ---------------------------------------------------------------- backends
-def generate_mlx(model: str, items: list[Item], seed: int) -> list[dict[str, Any]]:
-    import mlx.core as mx
-    from mlx_lm import load
-    from mlx_lm.generate import batch_generate
-    from mlx_lm.sample_utils import make_sampler
-
-    cfg = C.load()
-    mcfg = C.model_config(model)
-    if model not in _MLX:
-        _MLX[model] = load(str(C.ROOT / mcfg["path"]))
-    lm, tok = _MLX[model]
-    prompts = [tok.apply_chat_template(i.chat(), add_generation_prompt=True) for i in items]
-    batch_seed = (seed + int(items[0].key[:8], 16)) % (2**31)
-    mx.random.seed(batch_seed)
-    started = time.time()
-    result = batch_generate(lm, tok, prompts, max_tokens=int(cfg["generation"]["max_tokens"]),
-                            sampler=make_sampler(temp=float(cfg["generation"]["temperature"])),
-                            verbose=False)
-    elapsed = time.time() - started
-    records = []
-    for prompt_ids, text in zip(prompts, result.texts):
-        n_out = len(tok.encode(text, add_special_tokens=False))
-        records.append({"text": text, "ok": True, "error": None,
-                        "stop_reason": "length" if n_out >= cfg["generation"]["max_tokens"] else "end",
-                        "usage": {"input_tokens": len(prompt_ids), "output_tokens": n_out},
-                        "seed": batch_seed, "batch_seconds": elapsed})
-    return records
-
-
-_MLX: dict[str, Any] = {}
-
-
-def generate_bedrock(model: str, items: list[Item], seed: int) -> list[dict[str, Any]]:
-    import boto3
-
-    cfg = C.load()
-    client = boto3.Session().client("bedrock-runtime")
-    model_id = C.model_config(model)["model_id"]
-
-    def call(item: Item) -> dict[str, Any]:
-        try:
-            response = client.converse(
-                modelId=model_id,
-                messages=[{"role": m["role"], "content": [{"text": m["content"]}]} for m in item.chat()],
-                inferenceConfig={"maxTokens": int(cfg["generation"]["max_tokens"]),
-                                 "temperature": float(cfg["generation"]["temperature"])},
-            )
-            text = "".join(part.get("text", "") for part in response["output"]["message"]["content"])
-            return {"text": text, "ok": True, "error": None, "stop_reason": response.get("stopReason"),
-                    "usage": response.get("usage"), "seed": None}
-        except Exception as exc:  # recorded, never retried silently
-            return {"text": "", "ok": False, "error": repr(exc), "stop_reason": None, "usage": None,
-                    "seed": None}
-
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        return list(pool.map(call, items))
-
-
-def generate_openai(model: str, items: list[Item], seed: int) -> list[dict[str, Any]]:
-    import requests
-
-    cfg = C.load()
-    mcfg = C.model_config(model)
-    headers = {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"}
-
-    def call(item: Item) -> dict[str, Any]:
-        body = {"model": mcfg["model_id"],
-                "input": item.prompt if item.messages is None else item.chat(),
-                "reasoning": {"effort": mcfg.get("reasoning_effort", "medium")},
-                "temperature": float(cfg["generation"]["temperature"]),
-                "max_output_tokens": int(cfg["generation"]["max_tokens"])}
-        try:
-            r = requests.post("https://api.openai.com/v1/responses", json=body, headers=headers,
-                              timeout=600)
-            r.raise_for_status()
-            data = r.json()
-            text = "".join(c.get("text", "") for o in data.get("output", []) if o.get("type") == "message"
-                           for c in o.get("content", []))
-            return {"text": text, "ok": True, "error": None, "stop_reason": data.get("status"),
-                    "usage": data.get("usage"), "seed": None}
-        except Exception as exc:
-            return {"text": "", "ok": False, "error": repr(exc), "stop_reason": None, "usage": None,
-                    "seed": None}
-
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        return list(pool.map(call, items))
-
-
 def sampling(model: str) -> dict[str, Any]:
     """Temperature, top-p, top-k and token limit: the generation block, overridden per model."""
     gen, mcfg = C.load()["generation"], C.model_config(model)
@@ -387,9 +232,7 @@ def generate_synthetic(model: str, items: list[Item], seed: int) -> list[dict[st
     return generate(model, items, seed)
 
 
-BACKENDS = {"mlx": generate_mlx, "bedrock": generate_bedrock, "openai": generate_openai,
-            "vllm": generate_vllm, "hf": generate_hf, "synthetic": generate_synthetic}
-LOCAL_BACKENDS = {"mlx", "vllm", "hf", "synthetic"}
+BACKENDS = {"vllm": generate_vllm, "hf": generate_hf, "synthetic": generate_synthetic}
 
 
 # ---------------------------------------------------------------- driver
@@ -398,7 +241,7 @@ def pending(items: list[Item]) -> list[Item]:
     return [item for item, record in zip(items, records) if record is None]
 
 
-def run(items: list[Item], *, approve: bool = False, label: str = "") -> None:
+def run(items: list[Item], *, label: str = "") -> None:
     """Generate every uncached item (all items must be for one model)."""
     if not items:
         return
@@ -407,16 +250,8 @@ def run(items: list[Item], *, approve: bool = False, label: str = "") -> None:
         raise ValueError("run() takes items for one model")
     model = models.pop()
     todo = pending(items)
-    conditions = sorted({i.condition for i in todo})
-    est = estimate(model, len(todo), conditions)
-    usd = "n/a (prices not set)" if est["usd"] is None else f"${est['usd']:.2f}"
-    print(f"[{label or model}] {len(items)} items, {len(items) - len(todo)} cached, "
-          f"{len(todo)} to call; est. {est['input_tokens']:,} in / {est['output_tokens']:,} out "
-          f"tokens; cost {usd}", flush=True)
-    threshold = int(C.load()["budget"]["approval_threshold_calls"])
-    if len(todo) > threshold and not approve:
-        print(f"More than {threshold} calls: rerun with --approve to proceed.", flush=True)
-        sys.exit(2)
+    print(f"[{label or model}] {len(items)} items, {len(items) - len(todo)} cached, {len(todo)} to call",
+          flush=True)
     if not todo:
         return
     backend = C.model_config(model)["backend"]
@@ -458,10 +293,10 @@ def experiment_items(model: str, dataset: str, case_ids: list[str], conditions: 
 
     outputs = outputs or DS.outputs(dataset)
     items = []
-    for condition in DS.conditions_for(dataset, conditions):
+    for condition in conditions:
         for case_id in case_ids:
             for output in outputs:
-                prompt = DS.prompt(dataset, model, case_id, condition, output)
+                prompt = DS.prompt(dataset, case_id, condition, output)
                 for replicate in range(C.replicates(condition)):
                     for sample in range(DS.samples(dataset)):
                         items.append(Item(model, case_id, condition, output, replicate, prompt, sample, dataset))
@@ -489,28 +324,26 @@ def comprehension_items(model: str, dataset: str, case_ids: list[str],
     return items, missing
 
 
-def select_cases(n: int | str, *, exclude: Iterable[str] = (), seed_offset: int = 0) -> list[str]:
+def select_cases(n: int | str) -> list[str]:
+    """CKD case ids: all, or a seeded sample of ``n``."""
     import numpy as np
 
     from second_order.prompts_second_order import cases
 
-    ids = [c for c in cases().index if c not in set(exclude)]
+    ids = list(cases().index)
     if n == "all":
         return ids
-    rng = np.random.default_rng(int(C.load()["seed"]) + seed_offset)
+    rng = np.random.default_rng(int(C.load()["seed"]))
     return sorted(rng.choice(ids, size=int(n), replace=False).tolist())
 
 
-def dataset_cases(dataset: str, cases: str | None, smoke: bool) -> list[str]:
-    """Case ids of one dataset: the smoke set, a file of ids, an integer or 'all'.
+def dataset_cases(dataset: str, cases: str | None = None) -> list[str]:
+    """Case ids of one dataset: a file of ids, an integer or 'all' (default ``main_cases``).
 
-    An integer (or ``--smoke``) selects CKD cases only; the bespoke dataset always runs every item
-    unless a file of ids names some.
+    An integer selects CKD cases only; the bespoke dataset runs every item unless a file of ids names some.
     """
     from second_order import datasets as DS
 
-    if dataset == "ckd" and smoke:
-        return smoke_cases()
     if cases and Path(cases).exists():
         wanted = Path(cases).read_text().split()
         return [c for c in wanted if DS.dataset_of(c) == dataset]
@@ -522,41 +355,23 @@ def dataset_cases(dataset: str, cases: str | None, smoke: bool) -> list[str]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", required=True)
-    parser.add_argument("--dataset", nargs="+", default=None,
-                        help="default: the model's datasets (config `datasets`, else ckd)")
+    parser.add_argument("--dataset", nargs="+", default=None, help="default: the model's datasets")
     parser.add_argument("--stage", choices=("main", "comprehension", "all"), default="all")
-    parser.add_argument("--conditions", nargs="+", default=None,
-                        help="default: the model's scheduled conditions (config `schedule` or `conditions`)")
+    parser.add_argument("--conditions", nargs="+", default=None, help="default: experiment.conditions")
     parser.add_argument("--cases", default=None, help="'all', an integer, or a file of case ids")
-    parser.add_argument("--smoke", action="store_true", help="use the smoke-run case set (CKD)")
-    parser.add_argument("--approve", action="store_true")
-    parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
-    args.conditions = args.conditions or C.scheduled_conditions(args.model)
+    conditions = args.conditions or C.conditions()
     for dataset in args.dataset or C.datasets_for(args.model):
-        case_ids = dataset_cases(dataset, args.cases, args.smoke)
+        case_ids = dataset_cases(dataset, args.cases)
         label = f"{args.model}/{dataset}"
         if args.stage in ("main", "all"):
-            items = experiment_items(args.model, dataset, case_ids, args.conditions)
-            if args.dry_run:
-                todo = pending(items)
-                print(label, json.dumps(estimate(args.model, len(todo), args.conditions), indent=2))
-            else:
-                run(items, approve=args.approve, label=label)
-        if args.stage in ("comprehension", "all") and not args.dry_run:
-            items, missing = comprehension_items(args.model, dataset, case_ids, args.conditions)
+            run(experiment_items(args.model, dataset, case_ids, conditions), label=label)
+        if args.stage in ("comprehension", "all"):
+            items, missing = comprehension_items(args.model, dataset, case_ids, conditions)
             if missing:
                 print(f"[{label}/comprehension] {missing} C answers not generated yet; their follow-ups wait",
                       flush=True)
-            run(items, approve=args.approve, label=f"{label}/comprehension")
-
-
-def smoke_cases() -> list[str]:
-    return select_cases(C.load()["smoke"]["n_cases"], exclude=pilot_cases(), seed_offset=2)
-
-
-def pilot_cases() -> list[str]:
-    return select_cases(C.load()["pilot"]["n_cases"], seed_offset=1)
+            run(items, label=f"{label}/comprehension")
 
 
 if __name__ == "__main__":

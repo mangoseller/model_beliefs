@@ -11,25 +11,24 @@ stated in the scenario, so each prompt's Bayes-optimal answer is known:
 Three evidence sets per item, as in the Methods write-up:
 
 * ``full`` (E): every observation;
-* ``partial`` (E_p): the observations the agent saw (a subset, by id);
-* ``false`` (E_f): what the agent was told: E with some observations replaced.
+* ``partial`` (E_p): the observations PERSON saw (a subset, by id);
+* ``false`` (E_f): what PERSON was told: E with some observations replaced.
 
 Placebo items add observations with p_true = p_false, held out of E_p and
 changed in E_f, so all three gaps l_A - l_B, l_D - l_M and l_C - l_M should be
 near zero.  The items live in a local file (``bespoke.items`` in the config,
-``SO_BESPOKE_ITEMS`` overrides); the schema is in ``docs/BESPOKE.md``.
+``SO_BESPOKE_ITEMS`` overrides); the schema is in ``docs/data.md``.
 
-Conditions are those of ``conditions.CONDITIONS``: pair S4 is the partial
-setting and pair F the false-belief setting.  Every prompt is the scenario,
-the evidence shown to the model, (for prompts about the agent) one agent
-paragraph, the question, and the JSON probability instruction of the
-first-order CKD prompt, verbatim, so the first-order strict parser applies.
-M and D share one template and differ only in the evidence shown; in the
-false-belief setting, M_F, C_F and D_F all frame the agent's evidence as
+Conditions are those of ``conditions.CONDITIONS``.  Every prompt is the
+scenario, the evidence shown to the model, (for prompts about PERSON) a
+paragraph on what PERSON knows, the question, and the JSON probability
+instruction of the first-order CKD prompt, verbatim, so the first-order strict
+parser applies.  M and D share one template and differ only in the evidence
+shown; in the false setting, M_F, C_F and D_F all frame PERSON's evidence as
 reported to them.  An item may give verbatim ``prompts`` per condition and its
 own ``comprehension`` questions instead.
 
-    python -m second_order.bespoke [--items PATH] [--examples docs/example_prompts_bespoke.md]
+    python -m second_order.bespoke [--items PATH] [--examples prompts.md]
 """
 
 from __future__ import annotations
@@ -55,8 +54,7 @@ from second_order.prompts_second_order import PERSON
 
 PREFIX = "bespoke__"
 OUTPUTS = ("probability",)
-SETTINGS = ("full", "partial", "false")
-PAIR_SETTING = {"S4": "partial", "F": "false"}
+EVIDENCE_SETS = ("full", "partial", "false")
 EVIDENCE_HEADER = "Evidence:\n"
 NO_EVIDENCE = "(none)"
 
@@ -169,7 +167,7 @@ def validate(item: Item) -> None:
     for oid, o in item.false.items():
         if o.text == next(e.text for e in item.evidence if e.id == oid):
             problems.append(f"false replacement {oid} has the same text as the true observation")
-    for setting in SETTINGS:
+    for setting in EVIDENCE_SETS:
         if setting in item.bayes_given:
             continue
         if item.prior is None or not 0 < item.prior < 1:
@@ -185,7 +183,7 @@ def validate(item: Item) -> None:
 def checks(item: Item) -> list[str]:
     """Warnings: answers near 0 or 1 (where the logit clip binds), zero gaps, placebo gaps."""
     out = []
-    p = {s: item.bayes(s) for s in SETTINGS}
+    p = {s: item.bayes(s) for s in EVIDENCE_SETS}
     for s, v in p.items():
         if not 0.05 <= v <= 0.95:
             out.append(f"{item.id}: Bayes answer for {s} evidence is {v:.3f}, outside [0.05, 0.95]")
@@ -233,7 +231,7 @@ def table(path: str | None = None) -> pd.DataFrame:
     """One row per item: family, placebo flag, Bayes answers and Bayes gaps (logits)."""
     rows = []
     for item in load(path):
-        p = {s: item.bayes(s) for s in SETTINGS}
+        p = {s: item.bayes(s) for s in EVIDENCE_SETS}
         rows.append({"case_id": item.case_id, "item_id": item.id, "family": item.family,
                      "placebo": item.placebo, **{f"bayes_{s}": v for s, v in p.items()},
                      "bayes_gap_partial": logit(p["full"]) - logit(p["partial"]),
@@ -281,21 +279,18 @@ def evidence_lines(observations: list[Observation]) -> str:
 def shown_setting(condition: str) -> str:
     """The evidence set the model is shown in a condition."""
     cond = CONDITIONS[condition]
-    return "full" if cond.model_profile == "full" else PAIR_SETTING[cond.pair]
+    return "full" if cond.model_profile == "full" else cond.setting
 
 
 def agent_paragraph(item: Item, condition: str) -> str:
     cond = CONDITIONS[condition]
-    words = PERSON[cond.framing]
-    intro = AGENT_INTRO.format(**words)
-    told = cond.pair == "F"
+    told = cond.setting == "false"
     if cond.role in ("D", "M"):
-        text = (TOLD_ALL if told else SAW_ALL).format(**words)
+        text = (TOLD_ALL if told else SAW_ALL).format(**PERSON)
     else:
-        setting = PAIR_SETTING[cond.pair]
-        lines = evidence_lines(item.observations(setting))
-        text = (TOLD_WRONG if told else SAW_PART).format(lines=lines, **words)
-    return f"{intro} {text}"
+        lines = evidence_lines(item.observations(cond.setting))
+        text = (TOLD_WRONG if told else SAW_PART).format(lines=lines, **PERSON)
+    return f"{AGENT_INTRO.format(**PERSON)} {text}"
 
 
 def build_prompt(case_id: str, condition: str, output: str = "probability", *,
@@ -303,8 +298,6 @@ def build_prompt(case_id: str, condition: str, output: str = "probability", *,
     if output not in OUTPUTS:
         raise ValueError(f"the bespoke dataset has only the numeric probability output, not {output!r}")
     cond = CONDITIONS[condition]
-    if cond.pair not in (None, *PAIR_SETTING):
-        raise ValueError(f"condition {condition} has no bespoke counterpart")
     item = items_by_case(path)[case_id]
     if condition in item.prompts:
         return item.prompts[condition]
@@ -312,7 +305,7 @@ def build_prompt(case_id: str, condition: str, output: str = "probability", *,
     if cond.about == "self":
         question = SELF_QUESTION.format(proposition=item.proposition)
         return f"{head}\n\n{question}\n\n{FORMAT}\n"
-    question = AGENT_QUESTION.format(proposition=item.proposition, **PERSON[cond.framing])
+    question = AGENT_QUESTION.format(proposition=item.proposition, **PERSON)
     return f"{head}\n\n{agent_paragraph(item, condition)}\n\n{question}\n\n{FORMAT}\n"
 
 
@@ -320,18 +313,18 @@ def bayes_answer(case_id: str, condition: str, path: str | None = None) -> float
     """The Bayes-optimal answer to a prompt: Bayes given the believer's evidence.
 
     For own-belief conditions the believer is the model (the evidence shown);
-    for conditions about the agent it is the agent (A sees E in D, E_p in M
-    and C, E_f in M_F, C_F; D_F sees E), so a perspective-taker leaks nothing.
+    for conditions about PERSON it is PERSON (E in D and D_F, E_p in M and C,
+    E_f in M_F and C_F), so a perspective-taker leaks nothing.
     """
     item = items_by_case(path)[case_id]
     cond = CONDITIONS[condition]
     if cond.about == "self" or cond.role == "D":
         return item.bayes(shown_setting(condition))
-    return item.bayes(PAIR_SETTING[cond.pair])
+    return item.bayes(cond.setting)
 
 
 def comprehension(case_id: str, condition: str, path: str | None = None) -> Comprehension:
-    """Which evidence did the agent have?  Options: the agent's, the full and the other set."""
+    """Which evidence did PERSON have?  Options: PERSON's, the full and the other set."""
     cond = CONDITIONS[condition]
     if cond.role != "C":
         raise ValueError(f"comprehension questions follow C conditions, not {condition}")
@@ -339,11 +332,10 @@ def comprehension(case_id: str, condition: str, path: str | None = None) -> Comp
     if condition in item.comprehension:
         q = item.comprehension[condition]
         return Comprehension(str(q["stem"]), tuple(str(o) for o in q["options"]), int(q["answer"]))
-    words = PERSON[cond.framing]
-    setting = PAIR_SETTING[cond.pair]
+    setting = cond.setting
     listing = lambda obs: "; ".join(o.text for o in obs) if obs else "No evidence"  # noqa: E731
     verb = "was told" if setting == "false" else "saw"
-    stem = f"Which of the following is exactly the evidence {words['A']} {verb}?"
+    stem = f"Which of the following is exactly the evidence {PERSON['A']} {verb}?"
     other = "false" if setting == "partial" else "partial"
     distractors = [listing(item.observations("full")), listing(item.observations(other))]
     if setting == "partial":

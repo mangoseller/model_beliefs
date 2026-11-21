@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-FIXTURE = str(Path(__file__).parent / "fixtures" / "bespoke_items.yaml")
+FIXTURE = str(Path(__file__).parents[1] / "datasets" / "example_bespoke_items.yaml")
 os.environ.setdefault("SO_BESPOKE_ITEMS", FIXTURE)
 
 from latent_beliefs.ckd.parse import parse_response  # noqa: E402
@@ -47,8 +47,8 @@ class Keys(unittest.TestCase):
         self.assertNotEqual(G.item_key("m", "case", "B", "likert", 1, 3), old)
 
     def test_multi_turn_items_hash_the_whole_conversation(self):
-        single = G.Item("m", "c", "C_john", OUTPUT, 0, "q")
-        multi = G.Item("m", "c", "C_john", OUTPUT, 0, "q", messages=(("user", "p"), ("assistant", "r"), ("user", "q")))
+        single = G.Item("m", "c", "C", OUTPUT, 0, "q")
+        multi = G.Item("m", "c", "C", OUTPUT, 0, "q", messages=(("user", "p"), ("assistant", "r"), ("user", "q")))
         self.assertNotEqual(single.prompt_sha, multi.prompt_sha)
         self.assertEqual(single.key, multi.key)
         self.assertEqual(multi.chat(), [{"role": "user", "content": "p"}, {"role": "assistant", "content": "r"},
@@ -62,7 +62,7 @@ class Items(unittest.TestCase):
         reps = {c: C.replicates(c) for c in CURSE}
         self.assertEqual(len(ckd), len(CKD_CASES) * len(OUTPUTS) * sum(reps.values()))
         self.assertEqual({i.replicate for i in ckd if i.condition == "A"}, {0, 1})
-        self.assertEqual({i.replicate for i in ckd if i.condition == "C_john"}, {0})
+        self.assertEqual({i.replicate for i in ckd if i.condition == "C"}, {0})
         self.assertEqual(len({i.key for i in ckd}), len(ckd))
         k = DS.samples("bespoke")
         bes = G.experiment_items("synthetic", "bespoke", BESPOKE_CASES, CURSE)
@@ -71,22 +71,17 @@ class Items(unittest.TestCase):
         self.assertEqual(len({i.key for i in bes}), len(bes))
         self.assertTrue(all(i.dataset == "bespoke" and i.output == "probability" for i in bes))
 
-    def test_bespoke_keeps_only_the_two_settings(self):
-        self.assertEqual(DS.conditions_for("bespoke", ["A", "B", "B_H", "C_H", "C_user", "D_F"]), ["A", "B", "D_F"])
-
-    def test_ckd_prompts_use_the_models_own_belief_layout(self):
+    def test_ckd_prompts_start_with_the_profile(self):
         item = G.experiment_items("qwen3_8b", "ckd", CKD_CASES[:1], ["A"], ("probability",))[0]
         self.assertTrue(item.prompt.startswith("Patient profile:\n"))
-        item = G.experiment_items("gemma3_4b", "ckd", CKD_CASES[:1], ["A"], ("probability",))[0]
-        self.assertTrue(item.prompt.startswith("Estimate the probability"))
 
 
 class Comprehension(TempCache):
     def test_follow_ups_wait_for_and_replay_the_c_answer(self):
         items, missing = G.comprehension_items("synthetic", "ckd", CKD_CASES, CURSE)
         self.assertEqual(items, [])
-        self.assertEqual(missing, len(CKD_CASES) * 2)  # C_john and C_F, numeric probability
-        parents = G.experiment_items("synthetic", "ckd", CKD_CASES, ["C_john", "C_F"], ("probability",))
+        self.assertEqual(missing, len(CKD_CASES) * 2)  # C and C_F, numeric probability
+        parents = G.experiment_items("synthetic", "ckd", CKD_CASES, ["C", "C_F"], ("probability",))
         G.Cache("synthetic").append([{"key": p.key, "prompt_sha": p.prompt_sha, "text": f"answer {p.case_id}",
                                       "ok": True} for p in parents])
         items, missing = G.comprehension_items("synthetic", "ckd", CKD_CASES, CURSE)
@@ -118,8 +113,8 @@ class Comprehension(TempCache):
     def test_follow_ups_of_different_outputs_have_different_keys(self):
         from second_order.comprehension import followup_output, is_followup
 
-        k1 = G.item_key("m", "c", "C_john", followup_output("probability"), 0)
-        k2 = G.item_key("m", "c", "C_john", followup_output("likert"), 0)
+        k1 = G.item_key("m", "c", "C", followup_output("probability"), 0)
+        k2 = G.item_key("m", "c", "C", followup_output("likert"), 0)
         self.assertNotEqual(k1, k2)
         self.assertTrue(is_followup(followup_output("likert")))
         self.assertFalse(is_followup("probability"))
@@ -129,7 +124,7 @@ class Comprehension(TempCache):
 
         from second_order.responses import comprehension_summary, scored
 
-        frame = pd.DataFrame({"model": "m", "dataset": "ckd", "condition": "C_john", "case_id": ["a", "b", "c", "d"],
+        frame = pd.DataFrame({"model": "m", "dataset": "ckd", "condition": "C", "case_id": ["a", "b", "c", "d"],
                               "status": ["parsed", "parsed", "parse_failure", "not_generated"],
                               "choice": [1, 0, float("nan"), float("nan")], "answer": 1})
         self.assertEqual(scored(frame).tolist()[:3], [1.0, 0.0, 0.0])
@@ -168,7 +163,7 @@ class Synthetic(unittest.TestCase):
             self.assertAlmostEqual(get("A"), own["full"])
             self.assertAlmostEqual(get("B_F"), own["false"])
             self.assertAlmostEqual(get("D_F"), t["intercept"] + t["phi"] * own["full"])
-            self.assertAlmostEqual(get("M_S4"), t["intercept"] + t["phi"] * own["partial"])
+            self.assertAlmostEqual(get("M"), t["intercept"] + t["phi"] * own["partial"])
             lam = t["lambda_false"]
             self.assertAlmostEqual(get("C_F"), t["intercept"] + t["phi"] * (own["false"] + lam * (own["full"] - own["false"])))
 
@@ -178,9 +173,9 @@ class Synthetic(unittest.TestCase):
         self.assertTrue(np.isfinite(S.own_logit("ckd", cid, "partial")))
 
     def test_comprehension_answers_parse(self):
-        parent = G.experiment_items("synthetic", "bespoke", BESPOKE_CASES[:1], ["C_john"])[0]
-        q = DS.comprehension("bespoke", parent.case_id, "C_john")
-        item = G.Item("synthetic", parent.case_id, "C_john", followup_output("probability"), 0, q.question, 0,
+        parent = G.experiment_items("synthetic", "bespoke", BESPOKE_CASES[:1], ["C"])[0]
+        q = DS.comprehension("bespoke", parent.case_id, "C")
+        item = G.Item("synthetic", parent.case_id, "C", followup_output("probability"), 0, q.question, 0,
                       "bespoke",
                       (("user", parent.prompt), ("assistant", "r"), ("user", q.question)))
         self.assertIsNotNone(parse_choice(S.respond("synthetic", item, 1), q.options))
@@ -189,14 +184,12 @@ class Synthetic(unittest.TestCase):
 class Backends(unittest.TestCase):
     def test_qwen_settings(self):
         self.assertEqual(G.template_kwargs("qwen3_8b"), {"enable_thinking": False})
-        self.assertEqual(G.template_kwargs("gemma3_4b"), {})
+        self.assertEqual(G.template_kwargs("synthetic"), {})
         s = G.sampling("qwen3_14b")
         self.assertEqual((s["temperature"], s["max_tokens"]), (1.0, 4096))
         for model in C.load()["experiment"]["models"]:
             self.assertIn(C.model_config(model)["backend"], G.BACKENDS)
-            self.assertEqual(C.scheduled_conditions(model), CURSE)
-            self.assertEqual(C.self_layout(model), "matched")
-        self.assertEqual(G.estimate("qwen3_8b", 10, CURSE)["usd"], 0.0)
+            self.assertEqual(set(C.datasets_for(model)), {"ckd", "bespoke"})
 
     def test_item_seeds_differ_per_item(self):
         items = G.experiment_items("synthetic", "bespoke", BESPOKE_CASES[:1], ["A"])

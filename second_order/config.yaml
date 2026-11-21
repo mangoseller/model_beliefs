@@ -1,0 +1,66 @@
+# Every setting of the experiment (docs/design.md). Every run reads this file.
+
+seed: 20261111             # base seed for case sampling, generation, fits and bootstraps
+
+# Partial setting: PERSON's copy lists these fields as "Not recorded".
+withheld: [ridageyr, diabetes_self_reported, hypertension_self_reported]
+# False setting: a colleague read PERSON this Yes/No field with the opposite value.
+flip_field: hypertension_self_reported
+
+experiment:
+  models: [qwen3_8b, qwen3_14b]
+  conditions: [A, B, C, M, D, B_F, C_F, M_F, D_F]   # second_order/conditions.py
+  replicates: {A: 2, B: 2, B_F: 2}        # runs of the own-belief conditions; the second gives rho
+  comprehension:
+    conditions: [C, C_F]                  # a follow-up turn after each of these answers
+    outputs: [probability]                # CKD: after the numeric probability only
+  camerer_w: 0.51                         # Camerer, Loewenstein and Weber (1989)
+
+main_cases: all            # CKD cases: all 500, or an integer (a seeded sample)
+
+bespoke:
+  items: datasets/bespoke_items.yaml      # schema: docs/data.md; SO_BESPOKE_ITEMS overrides
+  samples: 20                             # samples per item, condition and run
+
+generation:
+  temperature: 1.0
+  max_tokens: 4096
+
+models:
+  # Local open weights on a CUDA machine (vLLM), thinking off.
+  qwen3_8b:  {backend: vllm, path: Qwen/Qwen3-8B, datasets: [ckd, bespoke], dtype: bfloat16,
+              enable_thinking: false, max_model_len: 16384, batch_size: 1024}
+  qwen3_14b: {backend: vllm, path: Qwen/Qwen3-14B, datasets: [ckd, bespoke], dtype: bfloat16,
+              enable_thinking: false, max_model_len: 16384, batch_size: 1024}
+  # Transformers fallback, and a CPU-sized model for checking the chat template and parsing.
+  qwen3_8b_hf:   {backend: hf, path: Qwen/Qwen3-8B, datasets: [ckd, bespoke], dtype: bfloat16,
+                  enable_thinking: false, batch_size: 16}
+  qwen3_0_6b_hf: {backend: hf, path: Qwen/Qwen3-0.6B, datasets: [ckd, bespoke], dtype: float32,
+                  enable_thinking: false, batch_size: 4}
+  # Text-level simulator with known parameters (second_order/synthetic.py), for end-to-end checks.
+  synthetic: {backend: synthetic, datasets: [ckd, bespoke], batch_size: 100000,
+              truth: {lambda_partial: 0.5, lambda_false: 0.3, phi: 0.8, intercept: 0.2, call_noise: 0.35,
+                      comprehension_accuracy: 0.9}}
+
+# Before the main run, the runner's tune stage times these vLLM engine settings on a
+# sample of real calls, keeps the fastest (written into the run's config as the model's
+# `engine` and `batch_size`) and stops the run if the answers do not parse.
+tuning:
+  items: 1024                 # benchmark calls per configuration
+  min_parse_rate: 0.8
+  max_truncated_rate: 0.1
+  bespoke_share: 0.1
+  candidates:
+    - {max_num_seqs: 256, max_num_batched_tokens: 8192, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
+    - {max_num_seqs: 512, max_num_batched_tokens: 16384, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
+    - {max_num_seqs: 1024, max_num_batched_tokens: 32768, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
+
+# Residual-stream activations frozen after generation (second_order/freeze.py).
+activations:
+  outputs: {ckd: [probability], bespoke: [probability]}
+  samples: 1
+  replicates: [0]
+
+analysis:
+  bootstrap_resamples: 2000
+  transcripts_per_condition: 20

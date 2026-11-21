@@ -1,23 +1,15 @@
 """Pooled latent fits and latent export.
 
-A pooled fit shares item parameters and one latent prior across conditions
+A pooled fit shares item parameters and one latent prior across the conditions
 whose instructions are identical (``conditions.fit_family``): the model's own
-belief (A and every B), John's belief (D, every C and every M) and the user's
-belief (C-user, D-user).  The matched-control estimator relies on C, M and D
-sharing that one prior.  The ``separate`` robustness variant fits every
-condition on its own.  Each fit uses the model (`ProbabilisticLatentModel`),
-optimiser (`fit_model`) and settings of the first-order main fit:
-128-point Gauss-Legendre quadrature, Adam lr 0.02, at most 30,000 epochs,
-patience 500, early stopping on validation rows.  Item parameters are
-estimated on train-split rows only.
+belief (A and every B, both runs) and PERSON's belief (every C, M and D).  The
+leakage estimator relies on C, M and D sharing that one prior.  Each fit uses
+the model (``ProbabilisticLatentModel``), optimiser (``fit_model``) and settings
+of the first-order main fit: 128-point Gauss-Legendre quadrature, Adam lr 0.02,
+at most 30,000 epochs, patience 500, early stopping on validation rows.  Item
+parameters are estimated on train-split rows only.
 
-Second runs of the own-belief conditions (``replicate`` 1) are rows of the
-"self" fit like any other; they share its item parameters and prior.
-
-Posteriors of logit z are exported for every complete row from five output
-subsets: all 16, the three probability reports (``prob``), the 13 decisions
-(``dec``), plain + threshold decisions (``dec_h1``, 5 outputs) and bet + cost
-decisions (``dec_h2``, 8 outputs).
+Posteriors of logit z (mean and sd) are exported for every complete row from all 16 outputs.
 """
 
 from __future__ import annotations
@@ -35,31 +27,17 @@ from latent_beliefs.latent.model import FitConfig, ProbabilisticLatentModel, fit
 from second_order import config as C
 
 SPEC_NAMES = [s.name for s in CKD_SPECS]
-DEC_H1 = ["decision_no_threshold", "threshold_05pct", "template_01_threshold_10pct",
-          "template_02_threshold_20pct", "template_03_threshold_33pct"]
-DEC_H2 = ["bet_payoff_19to1", "bet_payoff_2to1", "bet_payoff_4to1", "bet_payoff_9to1",
-          "cost_fn19", "template_07_cost_fn2", "template_08_cost_fn4", "template_09_cost_fn9"]
-SUBSETS = {
-    "all": SPEC_NAMES,
-    "prob": [s.name for s in CKD_SPECS if s.kind in ("probability", "ordinal")],
-    "dec": [s.name for s in CKD_SPECS if s.kind == "binary"],
-    "dec_h1": DEC_H1,
-    "dec_h2": DEC_H2,
-}
-assert sorted(DEC_H1 + DEC_H2) == sorted(SUBSETS["dec"])
+SUBSETS = {"all": SPEC_NAMES}  # output subsets with an exported posterior
 QUADRATURE_POINTS = 128
 PROBABILITY_EPSILON = 1e-4
 
-def groups(kind: str, conditions: Sequence[str]) -> list[tuple[str, ...]]:
-    """Fit groups for the conditions present, in a stable order."""
+def groups(conditions: Sequence[str]) -> list[tuple[str, ...]]:
+    """Fit groups (one per fit family) for the conditions present, in a stable order."""
     from second_order.conditions import CONDITIONS, fit_family
 
     ordered = [c for c in CONDITIONS if c in set(conditions)]
-    if kind == "separate":
-        return [(c,) for c in ordered]
-    return [tuple(c for c in ordered if fit_family(c) == family)
-            for family in ("self", "john", "user")
-            if any(fit_family(c) == family for c in ordered)]
+    return [group for family in ("self", "person")
+            if (group := tuple(c for c in ordered if fit_family(c) == family))]
 
 
 def stable_seed(base: int, *parts: str) -> int:
@@ -118,13 +96,12 @@ def restore(parameters: pd.DataFrame) -> ProbabilisticLatentModel:
                          probability_epsilon=PROBABILITY_EPSILON)
 
 
-def fit_all(model_key: str, wide: pd.DataFrame, *, kind: str, base_seed: int,
+def fit_all(model_key: str, wide: pd.DataFrame, *, base_seed: int,
             config: FitConfig | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Fit every group; return (latents, fit summary, parameters)."""
     latents, summaries, params = [], [], []
-    conditions = [c for c in wide.condition.unique()]
-    for group in groups(kind, conditions):
-        seed = stable_seed(base_seed, model_key, kind, *group)
+    for group in groups(wide.condition.unique()):
+        seed = stable_seed(base_seed, model_key, "pooled", *group)
         model, info = fit_group(wide, group, seed, config)
         rows = wide[wide.condition.isin(group) & wide.complete]
         post = posteriors(model, rows)
@@ -135,25 +112,24 @@ def fit_all(model_key: str, wide: pd.DataFrame, *, kind: str, base_seed: int,
             post[f"cal_{c.subset}"] = (post[f"ell_{c.subset}"] - c.intercept) / c.slope
             info[f"calibration_slope_{c.subset}"] = c.slope
             info[f"calibration_intercept_{c.subset}"] = c.intercept
-        keep = [c for c in ("model", "case_id", "condition", "replicate", "framing", "split") if c in rows]
+        keep = [c for c in ("model", "case_id", "condition", "replicate", "split") if c in rows]
         part = pd.concat([rows[keep], post], axis=1)
         part["numeric_probability"] = rows["probability"].to_numpy()
-        part["fit"] = kind
         part["fit_group"] = "+".join(group)
         latents.append(part)
-        summaries.append({"model": model_key, "fit": kind, **info})
+        summaries.append({"model": model_key, **info})
         p = parameter_frame(model)
-        p["fit"], p["fit_group"] = kind, "+".join(group)
+        p["fit_group"] = "+".join(group)
         params.append(p)
-        print(f"  fit {model_key}/{kind}/{'+'.join(group)}: epochs={info['epochs_ran']} "
+        print(f"  fit {model_key}/{'+'.join(group)}: epochs={info['epochs_ran']} "
               f"val_nll={info['best_validation_mean_nll']:.4f}", flush=True)
     return (pd.concat(latents, ignore_index=True), pd.DataFrame(summaries),
             pd.concat(params, ignore_index=True))
 
 
 def anchor_check(latents: pd.DataFrame) -> pd.DataFrame:
-    """Mean numeric report vs mean posterior z per condition and fit."""
-    g = latents.groupby(["model", "fit", "condition"])
+    """Mean numeric report vs mean posterior z per condition."""
+    g = latents.groupby(["model", "condition"])
     return pd.DataFrame({
         "n": g.size(),
         "mean_numeric_probability": g.numeric_probability.mean(),

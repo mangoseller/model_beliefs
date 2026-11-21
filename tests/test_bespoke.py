@@ -12,8 +12,8 @@ from second_order import bespoke as BS
 from second_order.comprehension import parse_choice
 from second_order.conditions import CONDITIONS
 
-FIXTURE = str(Path(__file__).parent / "fixtures" / "bespoke_items.yaml")
-CURSE = ["A", "B", "C_john", "M_S4", "D_john", "B_F", "C_F", "M_F", "D_F"]
+FIXTURE = str(Path(__file__).parents[1] / "datasets" / "example_bespoke_items.yaml")
+CURSE = ["A", "B", "C", "M", "D", "B_F", "C_F", "M_F", "D_F"]
 
 
 def prompt(case_id: str, condition: str) -> str:
@@ -75,8 +75,8 @@ class Bayes(unittest.TestCase):
     def test_bayes_answer_follows_the_believer(self):
         cid = "bespoke__marbles_01"
         item = BS.items_by_case(FIXTURE)[cid]
-        expected = {"A": "full", "B": "partial", "B_F": "false", "D_john": "full", "M_S4": "partial",
-                    "C_john": "partial", "D_F": "full", "M_F": "false", "C_F": "false"}
+        expected = {"A": "full", "B": "partial", "B_F": "false", "D": "full", "M": "partial",
+                    "C": "partial", "D_F": "full", "M_F": "false", "C_F": "false"}
         for cond, setting in expected.items():
             self.assertAlmostEqual(BS.bayes_answer(cid, cond, FIXTURE), item.bayes(setting), msg=cond)
 
@@ -102,7 +102,7 @@ class Prompts(unittest.TestCase):
         for cid in BS.case_ids(FIXTURE):
             item = BS.items_by_case(FIXTURE)[cid]
             full = BS.evidence_lines(item.observations("full"))
-            for m, d, setting in (("M_S4", "D_john", "partial"), ("M_F", "D_F", "false")):
+            for m, d, setting in (("M", "D", "partial"), ("M_F", "D_F", "false")):
                 shown = BS.evidence_lines(item.observations(setting))
                 self.assertEqual(prompt(cid, m), prompt(cid, d).replace(full, shown, 1), (cid, m))
 
@@ -110,7 +110,7 @@ class Prompts(unittest.TestCase):
         for cid in BS.case_ids(FIXTURE):
             item = BS.items_by_case(FIXTURE)[cid]
             full = BS.evidence_lines(item.observations("full"))
-            for b, m, setting in (("B", "M_S4", "partial"), ("B_F", "M_F", "false")):
+            for b, m, setting in (("B", "M", "partial"), ("B_F", "M_F", "false")):
                 shown = BS.evidence_lines(item.observations(setting))
                 self.assertEqual(prompt(cid, b), prompt(cid, "A").replace(full, shown, 1))
                 head = prompt(cid, b).split("\n\n" + BS.SELF_QUESTION.split("{")[0])[0]
@@ -120,7 +120,7 @@ class Prompts(unittest.TestCase):
         for cid in BS.case_ids(FIXTURE):
             item = BS.items_by_case(FIXTURE)[cid]
             full = BS.EVIDENCE_HEADER + BS.evidence_lines(item.observations("full")) + "\n\n"
-            c = prompt(cid, "C_john")
+            c = prompt(cid, "C")
             self.assertIn(full, c)
             self.assertIn("He saw only the following evidence:\n"
                           + BS.evidence_lines(item.observations("partial")) + "\n", c)
@@ -135,7 +135,7 @@ class Prompts(unittest.TestCase):
             item = BS.items_by_case(FIXTURE)[cid]
             held = [o.text for o in item.evidence if o.id not in set(item.partial)]
             for text in held:
-                self.assertNotIn(text, prompt(cid, "M_S4"))
+                self.assertNotIn(text, prompt(cid, "M"))
             for oid in item.false:
                 true = next(o.text for o in item.evidence if o.id == oid)
                 self.assertNotIn(true, prompt(cid, "M_F"))
@@ -150,9 +150,7 @@ class Prompts(unittest.TestCase):
         self.assertEqual(item.prompts["A"], "custom")
         self.assertIn("lacks the JSON probability instruction", " ".join(BS.checks(item)))
 
-    def test_conditions_outside_the_two_settings_are_refused(self):
-        with self.assertRaises(ValueError):
-            prompt("bespoke__marbles_01", "C_H")
+    def test_outputs_other_than_the_probability_are_refused(self):
         with self.assertRaises(ValueError):
             BS.build_prompt("bespoke__marbles_01", "A", "likert", path=FIXTURE)
 
@@ -176,19 +174,19 @@ class Comprehension(unittest.TestCase):
     def test_correct_option_is_the_agents_evidence(self):
         for cid in BS.case_ids(FIXTURE):
             item = BS.items_by_case(FIXTURE)[cid]
-            for cond, setting in (("C_john", "partial"), ("C_F", "false")):
+            for cond, setting in (("C", "partial"), ("C_F", "false")):
                 q = BS.comprehension(cid, cond, FIXTURE)
                 self.assertEqual(q.options[q.answer], "; ".join(o.text for o in item.observations(setting)))
                 self.assertGreaterEqual(len(q.options), 2)
                 self.assertEqual(len(set(q.options)), len(q.options))
                 self.assertEqual(parse_choice(f"Choice: {q.answer_letter}", q.options), q.answer)
-        self.assertTrue(all(CONDITIONS[c].role == "C" for c in ("C_john", "C_F")))
+        self.assertTrue(all(CONDITIONS[c].role == "C" for c in ("C", "C_F")))
         with self.assertRaises(ValueError):
-            BS.comprehension(BS.case_ids(FIXTURE)[0], "M_S4", FIXTURE)
+            BS.comprehension(BS.case_ids(FIXTURE)[0], "M", FIXTURE)
 
     def test_bayes_answers_stay_inside_the_clip(self):
         for item in BS.load(FIXTURE):
-            for setting in BS.SETTINGS:
+            for setting in BS.EVIDENCE_SETS:
                 self.assertTrue(0.05 <= item.bayes(setting) <= 0.95)
                 self.assertTrue(math.isfinite(BS.logit(item.bayes(setting))))
 

@@ -5,7 +5,7 @@ whole pipeline (cache, parsing, matrices, latent fits, beliefs, estimators)
 and must recover the planted parameters of the Methods model:
 
     own belief (logit):     o(E)        the model's own belief from evidence E
-    about the agent:        l = a + phi * (.)
+    about PERSON:           l = a + phi * (.)
     D: a + phi o(E)     M: a + phi o(E_s)     C: a + phi [o(E_s) + lambda_s (o(E) - o(E_s))]
 
 for each setting s (partial: E_s = E_p; false: E_f).  o(.) is the Bayes
@@ -35,7 +35,7 @@ from typing import Any
 import numpy as np
 
 from second_order import config as C
-from second_order.conditions import CONDITIONS, pair_spec
+from second_order.conditions import CONDITIONS, flip_field, withheld_fields
 
 DEFAULTS = {"lambda_partial": 0.5, "lambda_false": 0.3, "phi": 0.8, "intercept": 0.2, "call_noise": 0.35,
             "probability_precision": 40.0, "decision_slope": 3.0, "comprehension_accuracy": 0.9,
@@ -76,7 +76,8 @@ def own_logit(dataset: str, case_id: str, setting: str) -> float:
     from second_order.prompts_second_order import cases
 
     case = cases().loc[case_id]
-    fields, flip = pair_spec({"partial": "S4", "false": "F"}[setting]) if setting != "full" else ([], None)
+    fields = withheld_fields() if setting == "partial" else []
+    flip = flip_field() if setting == "false" else None
     means = _ckd_means()
     total = CKD_BASE
     for f, (weight, centre) in CKD_WEIGHTS.items():
@@ -93,7 +94,7 @@ def believed_logit(model: str, dataset: str, case_id: str, condition: str) -> fl
     """The noiseless belief a condition's answer reports, under the Methods model."""
     t = truth(model)
     cond = CONDITIONS[condition]
-    setting = {"S4": "partial", "F": "false"}.get(cond.pair, "full")
+    setting = cond.setting
     if cond.about == "self":
         return own_logit(dataset, case_id, setting if cond.model_profile == "copy" else "full")
     full, own = own_logit(dataset, case_id, "full"), own_logit(dataset, case_id, setting)

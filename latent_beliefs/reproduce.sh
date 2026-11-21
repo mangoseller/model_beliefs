@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Run the replication pipeline, stage by stage.
+# Run the replication pipeline, stage by stage, from the repository root.
 #
-#   ./reproduce.sh analysis          # released responses + fits -> every figure and table
-#   ./reproduce.sh sources prompts   # public datasets -> the exact prompts sent to the models
-#   ./reproduce.sh refit             # refit every latent model (GPU recommended), then
-#                                    # LB_FITS_DIR=build/fits ./reproduce.sh evaluate figures
+#   latent_beliefs/reproduce.sh analysis          # released responses + fits -> every figure and table
+#   latent_beliefs/reproduce.sh sources prompts   # public datasets -> the exact prompts sent to the models
+#   latent_beliefs/reproduce.sh refit             # refit every latent model (GPU recommended), then
+#                                    # LB_FITS_DIR=build/fits latent_beliefs/reproduce.sh evaluate figures
 #
 # Stages: sources prompts unpack parse datasets refit evaluate figures
 #         analysis (= unpack parse datasets evaluate figures)
-# LLM collection is not scripted here because it calls paid APIs; see README.md.
-# Run from this directory inside the environment built from environment.yml.
+# LLM collection is not scripted here because it calls paid APIs; see latent_beliefs/README.md.
+# Runs inside the environment built from latent_beliefs/environment.yml.
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 PY="${PYTHON:-python}"
 WORKERS="${WORKERS:-4}"
 

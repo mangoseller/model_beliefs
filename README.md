@@ -23,7 +23,7 @@ kept its private evidence out of PERSON's belief, $1$ means it all leaked in. He
 $\lambda = (\ell_C - \ell_M)/(\ell_D - \ell_M) \approx 0.84$; people score about $0.51$
 (Camerer, Loewenstein and Weber, 1989).
 
-![What λ, φ and τ measure](docs/figures/curse_schematic.png)
+![What λ, φ and τ measure](docs/curse_schematic.png)
 
 Across cases, with $x = \ell_A - \ell_B$ and $x'$ the same gap from a second, independent run:
 
@@ -35,13 +35,13 @@ $$
 $$
 
 where $\beta_C$ and $\beta_D$ are the slopes of $\ell_C - \ell_M$ and $\ell_D - \ell_M$ on $x$. $\rho$
-corrects for noise in $x$, $\varphi$ is how strongly PERSON's belief follows the evidence, and $\tau$
-is a theory-of-mind score.
+corrects for noise in $x$, $\varphi$ is how strongly PERSON's belief follows the evidence (shared by
+the two settings below), and $\tau$ is a theory-of-mind score.
 
 The study runs two settings, PERSON missing evidence and PERSON told something false, on two
 datasets: the paper's 500 kidney-disease cases and a set of fictional puzzles with known Bayes
-answers ([`docs/BESPOKE.md`](docs/BESPOKE.md)). The full design is in
-[`docs/IMPLEMENTATION_NOTES.md`](docs/IMPLEMENTATION_NOTES.md).
+answers. The design is in [`docs/design.md`](docs/design.md) and the data formats in
+[`docs/data.md`](docs/data.md).
 
 ## Running it
 
@@ -55,16 +55,19 @@ nohup bash run_experiment.sh > run.out 2>&1 &     # the full run
 
 This installs everything, runs the experiment on both models, and packages the results as
 `runs/<run_id>.tar.gz`. Start with `RUN_REPORT.md` inside it. Put the puzzle set at
-`data/bespoke/items.yaml` first; without it, a placeholder is used. Details are in
-[`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+`datasets/bespoke_items.yaml` first; without it, a placeholder is used. Details are in
+[`docs/running.md`](docs/running.md).
 
 ## Layout
 
 ```
-second_order/        the experiment
-latent_beliefs/      the paper's replication package (unchanged; docs/REPLICATION.md)
-model_beliefs/       first-order belief readouts on small models (model_beliefs/README.md)
-configs/             every setting of the experiment
-docs/                runbook, implementation notes, data formats
-tests/               unit and end-to-end tests
+second_order/      the experiment, and its config.yaml
+datasets/          input data you supply (the bespoke items)
+latent_beliefs/    the paper's replication package (latent_beliefs/README.md)
+first_order/       first-order belief readouts on small models (first_order/README.md)
+docs/              design, running, data formats
+tests/             unit and end-to-end tests
+requirements/      pinned dependencies for run_experiment.sh
 ```
+
+`data/`, `outputs/`, `figures/` and `runs/` are created by runs and are not in git.

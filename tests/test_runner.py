@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-FIXTURE = str(Path(__file__).parent / "fixtures" / "bespoke_items.yaml")
+FIXTURE = str(Path(__file__).parents[1] / "datasets" / "example_bespoke_items.yaml")
 os.environ.setdefault("SO_BESPOKE_ITEMS", FIXTURE)
 
 from second_order import freeze as F  # noqa: E402
@@ -72,7 +72,7 @@ class Freeze(unittest.TestCase):
         self.assertEqual(F.answer_start("probability", "no answer"), -1)
 
     def test_evidence_end_is_found_in_every_condition(self):
-        items = F.freeze_items("synthetic", "bespoke", ["bespoke__marbles_01"], ["A", "B", "C_john", "M_F", "D_F"])
+        items = F.freeze_items("synthetic", "bespoke", ["bespoke__marbles_01"], ["A", "B", "C", "M_F", "D_F"])
         self.assertEqual(len(items), 5)
         for item in items:
             end = F.evidence_end(item)

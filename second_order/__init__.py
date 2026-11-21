@@ -1,4 +1,4 @@
-"""Second-order belief extension (see docs/ORIENTATION.md).
+"""The curse-of-knowledge experiment (see README.md and docs/design.md).
 
-New modules live here, beside the unchanged first-order package ``latent_beliefs``.
+It builds on the first-order package ``latent_beliefs``, which it does not modify.
 """

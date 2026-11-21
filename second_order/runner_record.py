@@ -28,10 +28,10 @@ from second_order import config as C
 from second_order import leakage
 from second_order.bespoke import FORMAT, table as bespoke_table
 from second_order.comprehension import is_followup
-from second_order.conditions import CONDITIONS, SETTINGS, field_label, pair_spec
+from second_order.conditions import CONDITIONS, SETTINGS, field_label, flip_field, withheld_fields
 from second_order.fit_pooled import PROBABILITY_EPSILON, QUADRATURE_POINTS, SUBSETS
-from second_order.prompts_second_order import (OUTPUTS, PERSON, bin_boundaries, comprehension, output_kind,
-                                               prompt_for, specs)
+from second_order.prompts_second_order import (OUTPUTS, PERSON, bin_boundaries, build_prompt, comprehension,
+                                               output_kind, specs)
 from second_order.report import display, md_table
 from second_order.run_generation import sampling, settings_signature, template_kwargs
 
@@ -40,18 +40,18 @@ ESTIMATOR = """# Estimators, as implemented
 All beliefs are on the log-odds scale. Stated probabilities are clipped to [0.01, 0.99]
 before the logit. Latent beliefs are posterior means of logit z from the pooled
 Smolin & Wilder fit of the believer's family (own belief: A and every B; PERSON: every C,
-M and D). Per case and setting (partial = pair S4, false belief = pair F):
+M and D). Per case, in each setting (partial: B, C, M, D; false: B_F, C_F, M_F, D_F):
 
     x   = l_A  - l_B                    the model's own gap (main run, replicate 0)
     x'  = l_A' - l_B'                   the same gap from an independent second run (replicate 1)
     beta_D = slope of (l_D - l_M) on x  (OLS with intercept)
     beta_C = slope of (l_C - l_M) on x
 
-    lambda = beta_C / beta_D            (identical to the matched-control 1 - T_C / T_M,
-                                         T_C = slope of (l_D - l_C) on x, T_M = beta_D)
-    rho    = Cov(x, x') / Var(x)        reliability of the gap
-    phi    = beta_D / rho               responsiveness of the attributed belief to evidence
-    tau    = (beta_D - beta_C) / rho    = phi (1 - lambda), the theory-of-mind score
+    lambda = beta_C / beta_D            leakage (the Wald estimator), per setting
+    rho    = Cov(x, x') / Var(x)        reliability of the gap, per setting
+    tau    = (beta_D - beta_C) / rho    theory-of-mind score, = phi (1 - lambda), per setting
+    phi    = beta_D / rho               responsiveness, shared by the two settings: pooled
+                                        within-setting beta_D over pooled rho
 
 rho, phi and tau use calibrated values (latent posterior means de-shrunk with each fit's
 own calibration line; equal to the raw values for stated probabilities). lambda uses raw
@@ -59,15 +59,15 @@ values; it is a ratio of slopes from one fit, so shrinkage cancels.
 
 Uncertainty: paired bootstrap over cases (bespoke: over items), 95% percentile
 intervals, item parameters held fixed. Ratio rule: a ratio is blanked when its
-denominator's interval includes 0 (lambda: beta_D; phi and tau: rho).
+denominator's interval includes 0 (lambda: beta_D; tau: rho; phi: pooled rho).
 
 Checks of the modelling assumptions:
+- phi shared by the settings: each setting's own phi_setting = beta_D / rho, and diff_phi_setting;
 - affine form: phi_D_on_A = Cov(l_D, l_A') / Cov(l_A, l_A') and
   phi_M_on_B = Cov(l_M, l_B') / Cov(l_B, l_B'), which should match phi;
   quadratic terms of both gap regressions (curvature_*), which should be 0;
-- partial linearity: lambda for x > 0 and x < 0 separately, and by thirds of |x|;
-- noise independence: placebo items (bespoke), whose three gaps should be 0;
-- phi shared across settings: phi_pooled (within-setting slopes) and diff_phi.
+- partial linearity: lambda for x > 0 and x < 0 separately, and within thirds of |x|;
+- noise independence: placebo items (bespoke), whose three gaps should be 0.
 
 The implementation's own description (leakage.py):
 
@@ -85,20 +85,17 @@ def available(compute):
 def constants() -> dict:
     cfg = C.load()
     models = list(cfg["experiment"]["models"])
-    fields_s4, _ = pair_spec("S4")
-    _, flip = pair_spec("F")
+    flip = flip_field()
     fit = FitConfig(progress_every=0, **(cfg.get("latent_fit") or {}))
     return {
         "design": {
             "settings": SETTINGS, "conditions": {c: asdict(CONDITIONS[c]) for c in cfg["experiment"]["conditions"]},
             "replicates": cfg["experiment"]["replicates"], "comprehension": cfg["experiment"]["comprehension"],
-            "camerer_w": cfg["experiment"]["camerer_w"], "person_name_in_prompts": PERSON["john"]["A"],
+            "camerer_w": cfg["experiment"]["camerer_w"], "person_name_in_prompts": PERSON["A"],
         },
         "ckd": available(lambda: {
-            "cases": cfg["main_cases"], "withheld_fields_partial": {f: field_label(f) for f in fields_s4},
-            "flipped_field_false_belief": {flip: field_label(flip)}, "missing_fields": cfg["missing_fields"],
-            "layout": cfg["layout"], "self_layout": cfg["self_layout"],
-            "false_belief_framing": cfg["false_belief_framing"],
+            "cases": cfg["main_cases"], "withheld_fields_partial": {f: field_label(f) for f in withheld_fields()},
+            "flipped_field_false_belief": {flip: field_label(flip)},
             "outputs": {o: {"kind": output_kind(o), **{k: v for k, v in specs()[o].items() if k != "builder"}}
                         for o in OUTPUTS},
             "probability_bin_boundaries": bin_boundaries(),
@@ -110,13 +107,13 @@ def constants() -> dict:
                            "chat_template": template_kwargs(m), "settings_signature": settings_signature(m),
                            "max_model_len": C.model_config(m).get("max_model_len"),
                            "batch_size": C.model_config(m).get("batch_size"),
-                           "system_prompt": None, "split": C.model_config(m).get("split")} for m in models},
+                           "system_prompt": None} for m in models},
         "latent_fit": {"fit_config": {f.name: getattr(fit, f.name) for f in fields(fit)},
                        "quadrature_points": QUADRATURE_POINTS, "probability_epsilon": PROBABILITY_EPSILON,
                        "output_subsets": SUBSETS, "calibration_simulated_cases": 20000,
                        "split": "seeded per model: 20% test, then 20% of the rest validation"},
         "estimators": {"ratio_rule_denominators": leakage.DENOMINATOR, "min_cases_per_sign": leakage.MIN_SIGN_CASES,
-                       "min_cases_per_third": 50, "logit_clip": [0.01, 0.99],
+                       "min_cases_per_third": leakage.MIN_THIRD_CASES, "logit_clip": [0.01, 0.99],
                        "bootstrap_resamples": cfg["analysis"]["bootstrap_resamples"], "interval": "95% percentile",
                        "seed": cfg["seed"]},
         "seed": cfg["seed"],
@@ -146,9 +143,9 @@ def usage(run_dir: Path) -> dict:
 def example_prompts(model: str) -> str:
     case_id = sorted(__import__("second_order.prompts_second_order", fromlist=["cases"]).cases().index)[0]
     lines = [f"# One CKD case ({case_id}) in every condition, as sent to {model}\n\n"
-             "Numeric probability output; the other 15 outputs share each prompt's profile and framing.\n"]
+             "Numeric probability output; the other 15 outputs share each prompt's profile and paragraph.\n"]
     for cond in C.load()["experiment"]["conditions"]:
-        lines.append(f"\n## {cond}\n\n```\n{prompt_for(model, case_id, cond, 'probability')}```\n")
+        lines.append(f"\n## {cond}\n\n```\n{build_prompt(case_id, cond, 'probability')}```\n")
         if CONDITIONS[cond].role == "C":
             q = comprehension(case_id, cond)
             lines.append(f"\nComprehension follow-up (correct: {q.answer_letter}):\n\n```\n{q.question}```\n")
@@ -171,8 +168,8 @@ def write_report(run_dir: Path) -> None:
              f"{' **Smoke run** (reduced cases, samples and fits).' if manifest.get('smoke') else ''}\n\n"]
     warnings = []
     if items.get("placeholder"):
-        warnings.append("The bespoke dataset is a **placeholder** (the test fixture, "
-                        "`tests/fixtures/bespoke_items.yaml`). Bespoke numbers are not results.")
+        warnings.append("The bespoke dataset is a **placeholder** (the example items, "
+                        "`datasets/example_bespoke_items.yaml`). Bespoke numbers are not results.")
     warnings += [f"Stage `{s}` {r['status']}: {r.get('error', '')}" for s, r in manifest["stages"].items()
                  if r.get("status") not in ("ok", "running")]
     if manifest.get("git", {}).get("dirty"):
@@ -210,20 +207,19 @@ def write_report(run_dir: Path) -> None:
         parts.append(f"## Settings\n\nUnavailable ({exc!r}); see `config.yaml` and `record/constants.json`.\n\n")
     parts.append("## Estimators\n\nIn full in `record/estimator.md`. With x = l_A − l_B (log-odds): λ = β_C / β_D "
                  "(slopes of l_C − l_M and l_D − l_M on x), ρ = Cov(x, x′) / Var(x) from the second run, "
-                 "φ = β_D / ρ, τ = (β_D − β_C) / ρ = φ(1 − λ); paired case bootstrap, ratio rule.\n\n")
+                 "τ = (β_D − β_C) / ρ per setting, and φ = β_D / ρ shared by the two settings; paired case "
+                 "bootstrap, ratio rule.\n\n")
     write_results(parts, run_dir, manifest, use)
 
 
 def settings_table(consts: dict) -> str:
     d, ck, gen = consts["design"], consts["ckd"], consts["generation"]
-    rows = [("Settings", ", ".join(f"{k} = pair {v}" for k, v in d["settings"].items())),
+    rows = [("Settings", ", ".join(d["settings"])),
             ("Conditions", ", ".join(d["conditions"])),
             ("Second runs (for rho)", ", ".join(f"{k} x{v}" for k, v in d["replicates"].items())),
             ("CKD cases", str(ck["cases"])), ("CKD outputs", f"{len(ck['outputs'])} (Smolin & Wilder)"),
             ("Withheld fields (partial)", "; ".join(ck["withheld_fields_partial"].values())),
             ("Flipped field (false belief)", "; ".join(ck["flipped_field_false_belief"].values())),
-            ("Withheld rendering / layouts", f"{ck['missing_fields']} / agent {ck['layout']}, own {ck['self_layout']}"
-                                             f" / false belief {ck['false_belief_framing']}"),
             ("Bespoke samples per item, condition, run", str(consts["bespoke"]["samples"])),
             ("Comprehension follow-ups", f"after {', '.join(d['comprehension']['conditions'])}"),
             ("Latent fit", ", ".join(f"{k} {v}" for k, v in consts["latent_fit"]["fit_config"].items())
@@ -250,8 +246,9 @@ def write_results(parts: list[str], run_dir: Path, manifest: dict, use: dict) ->
         parts.append("## Figures\n\n" + "".join(f"### {f.stem}\n\n![{f.stem}](figures/{f.name})\n\n" for f in figures))
     paper = manifest.get("paper_reproduction")
     if paper:
-        parts.append("## Original paper reproduced\n\n`./reproduce.sh analysis` outputs are in `paper/` (figures in "
-                     "`paper/figures/`). CKD reports↔decisions against `docs/baseline_ckd.csv` (the paper's numbers); "
+        parts.append("## Original paper reproduced\n\n`latent_beliefs/reproduce.sh analysis` outputs are in `paper/` "
+                     "(figures in `paper/figures/`). CKD reports↔decisions against `latent_beliefs/baseline_ckd.csv` "
+                     "(the paper's numbers); "
                      "c-indices may differ by up to about 0.01 off the pinned macOS build:\n\n"
                      + md_table(pd.DataFrame([{"metric": k, **v} for k, v in paper.items()]),
                                 ["metric", "max_abs_diff", "exact_rows", "rows"], 4) + "\n")

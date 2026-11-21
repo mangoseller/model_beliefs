@@ -10,14 +10,14 @@ Stages, in order (``--stages`` runs a subset, ``--skip`` leaves some out):
 
 1. ``fetch_data``: the Smolin & Wilder results bundle from Zenodo (CKD cases, prompts, bin
    edges), checked against Zenodo's MD5 and the bundle manifest.  Resolves the bespoke item
-   file; if none is supplied the test fixture stands in and the run is marked as using
-   placeholder data.
+   file (``datasets/bespoke_items.yaml``); if there is none, the example items stand in and
+   the run is marked as using placeholder data.
 2. ``fetch_models``: downloads each local model's weights, tokenizer and config from the
    Hugging Face Hub and pins the exact snapshot (commit hash) in the run's config, so vLLM
    loads exactly those files (offline from then on).
 3. ``checks``: unit tests, the bespoke item checks, the GPU and disk.
-4. ``paper``: ``./reproduce.sh analysis`` (the original paper's figures and tables) and a
-   comparison with the recorded CKD numbers.
+4. ``paper``: ``latent_beliefs/reproduce.sh analysis`` (the original paper's figures and
+   tables) and a comparison with the paper's CKD numbers (``latent_beliefs/baseline_ckd.csv``).
 5. ``tune``: a smoke test and inference tuning per model (``second_order.tune``): a sample
    of real calls under a few vLLM engine settings, the fastest kept in the run's config;
    stops the run if the answers do not parse or are truncated.
@@ -67,8 +67,8 @@ STAGES = ("fetch_data", "fetch_models", "checks", "paper", "tune", "generate", "
           "report", "package")
 ZENODO_RECORD = "23350428"
 ZENODO_FILE = "llm_beliefs_replication_results.tar.gz"
-FIXTURE_ITEMS = ROOT / "tests" / "fixtures" / "bespoke_items.yaml"
-DEFAULT_ITEMS = ROOT / "data" / "bespoke" / "items.yaml"
+EXAMPLE_ITEMS = ROOT / "datasets" / "example_bespoke_items.yaml"
+DEFAULT_ITEMS = ROOT / "datasets" / "bespoke_items.yaml"
 MODEL_FILES = ["*.json", "*.safetensors", "*.txt", "*.model", "*.jinja", "*.py", "*.tiktoken", "LICENSE*"]
 EXCLUDE_FROM_TARBALL = ("paper/prompts", "paper/parsed", "paper/sources", "data/activations")
 SO_ENV = ("SO_CONFIG", "SO_DATA_DIR", "SO_RESULTS_DIR", "SO_FIGURES_DIR", "SO_BESPOKE_ITEMS")
@@ -174,7 +174,7 @@ def write_config(run: Run) -> dict:
     """The run's config: the repository config with this run's choices (kept on resume)."""
     if run.config_path.exists():
         return yaml.safe_load(run.config_path.read_text())
-    cfg = yaml.safe_load((ROOT / "configs" / "second_order.yaml").read_text())
+    cfg = yaml.safe_load((ROOT / "second_order" / "config.yaml").read_text())
     args = run.args
     cfg["experiment"]["models"] = list(args.models)
     cfg["main_cases"] = args.cases if args.cases is not None else (20 if args.smoke else cfg["main_cases"])
@@ -230,8 +230,8 @@ def stage_fetch_data(run: Run, cfg: dict) -> None:
     if placeholder and not items.exists():
         if run.args.require_real_data:
             raise RuntimeError(f"bespoke item file {items} not found (--require-real-data)")
-        run.log(f"WARNING: no bespoke item file at {items}; using the test fixture as a PLACEHOLDER")
-        items = FIXTURE_ITEMS
+        run.log(f"WARNING: no bespoke item file at {items}; using the example items as a PLACEHOLDER")
+        items = EXAMPLE_ITEMS
     shutil.copy(items, run.dir / "record" / "bespoke_items.yaml")
     run.manifest["bespoke_items"] = {"path": str(items.resolve()), "sha256": sha256(items), "placeholder": placeholder}
     run.env["SO_BESPOKE_ITEMS"] = str(items.resolve())
@@ -287,10 +287,10 @@ def stage_checks(run: Run, cfg: dict) -> None:
 def stage_paper(run: Run, cfg: dict) -> None:
     env = dict(run.env, LB_BUILD_DIR=str(run.dir / "paper"), PYTHON=sys.executable,
                WORKERS=str(max(1, min(8, (os.cpu_count() or 2) - 1))))
-    run.sh(["bash", "reproduce.sh", "analysis"], "paper", env=env, echo=True)
+    run.sh(["bash", "latent_beliefs/reproduce.sh", "analysis"], "paper", env=env, echo=True)
     import pandas as pd
 
-    ref = pd.read_csv(ROOT / "docs" / "baseline_ckd.csv")
+    ref = pd.read_csv(ROOT / "latent_beliefs" / "baseline_ckd.csv")
     new = pd.read_csv(run.dir / "paper" / "evaluation" / "reciprocal" / "model_summary.csv")
     merged = ref.merge(new[new.domain == "ckd"], on=["model_key", "condition"], suffixes=("_paper", "_rerun"))
     summary = {}
@@ -374,7 +374,7 @@ def stage_generate(run: Run, cfg: dict) -> None:
         run.log(f"model {n}/{len(run.args.models)}: {model}: generating (progress bar below; "
                 f"log: logs/generate_{model}.log)")
         started = time.time()
-        code = run.py("second_order.run_generation", "--model", model, "--approve", *cases,
+        code = run.py("second_order.run_generation", "--model", model, *cases,
                       log=f"generate_{model}", check=False, echo=True)
         run.manifest.setdefault("generation", {})[model] = {"exit_code": code,
                                                              "minutes": round((time.time() - started) / 60, 1)}
@@ -574,7 +574,7 @@ def main() -> None:
         run.log(f"[stage {number}/{len(selected)}] {stage}: {record['status']} ({record['minutes']} min; "
                 f"{(time.time() - run_started) / 3600:.2f} h so far)")
     if run.manifest.get("bespoke_items", {}).get("placeholder"):
-        run.log("NOTE: this run used PLACEHOLDER bespoke items (tests/fixtures/bespoke_items.yaml)")
+        run.log(f"NOTE: this run used PLACEHOLDER bespoke items ({EXAMPLE_ITEMS.relative_to(ROOT)})")
     run.log(f"done; tarball: {run.manifest.get('tarball', '(not packaged)')}")
     sys.exit(1 if failed else 0)
 
