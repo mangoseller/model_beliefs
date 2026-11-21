@@ -5,16 +5,6 @@ This repository measures that *curse of knowledge* in Qwen3 8B and 14B, building
 Wilder, *Beliefs and Behavior in Language Models*
 ([arXiv:2609.07943](https://arxiv.org/abs/2609.07943)).
 
-## Run the core experiment
-
-Use `bash run_experiment.sh --core` for the main CKD battery, bespoke trials, estimation and figures.
-The full run remains `bash run_experiment.sh`. Override individual components with
-`--[no-]paper`, `--[no-]extra-batteries` and `--[no-]activations`. The launcher installs
-the coding agents by default in both modes. Pass `--no-install-agents` to skip installation.
-With dependencies already installed, `python -m second_order.runner --core` runs the core pipeline directly.
-Use a new run directory for this protocol revision. Interrupted runs of this revision reuse
-successful calls and retry failed calls.
-
 ## The experiment
 
 The model reads a patient's record. PERSON (a named person; the name varies by patient) has a
@@ -57,17 +47,22 @@ questions, and 20 fictional puzzles with known Bayes answers. The design is in
 
 ## Running it
 
-On a Linux machine with a GPU:
+On a Linux machine with an NVIDIA GPU, clone the branch and choose a run mode.
 
 ```bash
 git clone --branch claude/bold-archimedes-8vdm0o https://github.com/mangoseller/model_beliefs && cd model_beliefs
-bash run_experiment.sh --smoke                    # quick check on 20 cases
-nohup bash run_experiment.sh > run.out 2>&1 &     # the full run
+
+bash run_experiment.sh --smoke                 # quick check on 20 CKD patients
+bash run_experiment.sh --core                  # main CKD battery, bespoke trials, estimates and figures
+nohup bash run_experiment.sh > run.out 2>&1 &  # full run adds paper replication, extra batteries and activations
 ```
 
-This installs everything, runs the experiment on both models, and packages the results as
-`runs/<run_id>.tar.gz`. Start with `RUN_REPORT.md` inside it. Details are in
-[`docs/running.md`](docs/running.md).
+The launcher installs dependencies and coding agents. Add `--no-install-agents` to skip the agents.
+With dependencies installed, you can run `python -m second_order.runner --core` directly.
+
+Start a fresh run for this protocol revision. To resume it, pass `--run-id <run_id>` to reuse
+successful calls and retry failures. Open `RUN_REPORT.md` in `runs/<run_id>.tar.gz` for both
+models’ results. See the [running guide](docs/running.md) for individual stage options.
 
 ## Layout
 
