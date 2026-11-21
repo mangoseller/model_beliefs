@@ -37,7 +37,7 @@ independent second run of A and B:
 
 $$
 \lambda = \frac{\beta_C}{\beta_D}, \qquad
-\rho = \frac{\operatorname{Cov}(x, x')}{\operatorname{Var}(x)}, \qquad
+\rho = \frac{\mathrm{Cov}(x, x')}{\mathrm{Var}(x)}, \qquad
 \varphi = \frac{\beta_D}{\rho}, \qquad
 \tau = \frac{\beta_D - \beta_C}{\rho} = \varphi\,(1 - \lambda),
 $$
