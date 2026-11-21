@@ -7,14 +7,15 @@ transformers, after generation: each prompt is replayed together with the model'
 cached response (exactly as generated), and the residual stream is saved at every
 layer and three positions:
 
-* ``evidence_end``: the last token of the evidence the model is shown (the CKD
-  profile block, or the bespoke ``Evidence:`` list);
+* ``evidence_end``: the last token before the question: the end of the records (CKD) or
+  of the scenario and evidence (bespoke);
 * ``prompt_end``: the last token of the chat-formatted prompt (where generation began);
-* ``pre_answer``: the last token before the final answer (the last ``{"probability"``
-  JSON object, or the last ``Choice:`` line), after the model's reasoning.
+* ``pre_answer``: the last token before the final answer: for the bespoke items, before
+  the last ``{"probability"`` JSON object, after the model's reasoning; for CKD, whose
+  answers are a bare number or letter, the same token as ``prompt_end``.
 
-Which items: ``activations`` in the config (default: the numeric-probability output of
-every case and condition, main run, first sample), so that every belief the estimators
+Which items: ``activations`` in the config (default: the probability question of every
+case and condition, main run, first sample), so that every direct belief the estimators
 use has its activations.  Layers: transformers' ``hidden_states``: index 0 is the
 embedding output, i is the residual stream after block i, and the last index has the
 final norm applied (Qwen3).
@@ -48,39 +49,32 @@ from second_order.run_generation import Item, experiment_items, lookup, template
 
 POSITIONS = ("evidence_end", "prompt_end", "pre_answer")
 ANSWER_JSON = re.compile(r'\{\s*"probability"')
-ANSWER_CHOICE = re.compile(r"(?im)^[ \t]*[*_#`]*[ \t]*Choice\b")
+# Where each dataset's answer instructions begin; the question is the paragraph before.
+INSTRUCTIONS = {"ckd": "\nAnswer with a single", "bespoke": "\n\nProvide your reasoning first."}
 
 
 def settings() -> dict:
-    return {"outputs": {"ckd": ["probability"], "bespoke": ["probability"]}, "samples": 1, "replicates": [0],
-            **(C.load().get("activations") or {})}
+    return {"outputs": {"ckd": ["probability/normal"], "bespoke": ["probability"]}, "samples": 1,
+            "replicates": [0], **(C.load().get("activations") or {})}
 
 
-def freeze_items(model: str, dataset: str, case_ids: list[str], conditions: list[str]) -> list[Item]:
+def freeze_items(model: str, dataset: str, case_ids: list[str], conditions: list[str] | None = None) -> list[Item]:
     s = settings()
     items = experiment_items(model, dataset, case_ids, conditions, tuple(s["outputs"].get(dataset, [])))
     return [i for i in items if i.replicate in s["replicates"] and i.sample < int(s["samples"])]
 
 
 def evidence_end(item: Item) -> int:
-    """Character offset just past the evidence block in the prompt (-1 if not found)."""
-    if item.dataset == "bespoke":
-        from second_order import bespoke as BS
-
-        found = BS.items_by_case()[item.case_id]
-        block = BS.EVIDENCE_HEADER + BS.evidence_lines(found.observations(BS.shown_setting(item.condition)))
-    else:
-        from second_order.conditions import model_profile
-        from second_order.prompts_second_order import PROFILE_HEADER, cases
-
-        block = PROFILE_HEADER + model_profile(cases().loc[item.case_id], item.condition)
-    start = item.prompt.find(block)
-    return -1 if start < 0 else start + len(block)
+    """Character offset just past everything before the question paragraph (-1 if not found)."""
+    end = item.prompt.rfind(INSTRUCTIONS[item.dataset])
+    return -1 if end < 0 else item.prompt.rfind("\n\n", 0, end)
 
 
-def answer_start(output: str, text: str) -> int:
-    pattern = ANSWER_JSON if output == "probability" else ANSWER_CHOICE
-    matches = list(pattern.finditer(text))
+def answer_start(dataset: str, text: str) -> int:
+    """Character offset of the final answer in a response (-1 if none)."""
+    if dataset == "ckd":
+        return 0
+    matches = list(ANSWER_JSON.finditer(text))
     return matches[-1].start() if matches else -1
 
 
@@ -132,7 +126,7 @@ class Replayer:
         template, ids, offsets, n_prompt = self.encode(item.prompt, response or "")
         prompt_at = template.find(item.prompt)
         evidence = evidence_end(item)
-        answer = answer_start(item.output, response) if response else -1
+        answer = answer_start(item.dataset, response) if response else -1
         index = [token_at(offsets, prompt_at + evidence) if evidence >= 0 and prompt_at >= 0 else -1,
                  n_prompt - 1,
                  token_before(offsets, len(template) + answer) if answer >= 0 else -1]
@@ -155,7 +149,7 @@ def load(folder: Path):
     return acts, pd.read_parquet(Path(folder) / "index.parquet"), json.loads((Path(folder) / "meta.json").read_text())
 
 
-def freeze(model: str, dataset: str, case_ids: list[str], conditions: list[str], replayer: Replayer) -> Path:
+def freeze(model: str, dataset: str, case_ids: list[str], conditions: list[str] | None, replayer: Replayer) -> Path:
     from tqdm import tqdm
 
     folder = C.ACTIVATIONS / model / dataset
@@ -210,7 +204,7 @@ def main() -> None:
         print(f"{args.model}: no local weights to replay (backend {C.model_config(args.model)['backend']})")
         return
     replayer = Replayer(args.model)
-    conditions = args.conditions or C.conditions()
+    conditions = args.conditions
     for dataset in args.dataset or C.datasets_for(args.model):
         freeze(args.model, dataset, dataset_cases(dataset, args.cases), conditions, replayer)
 

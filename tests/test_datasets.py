@@ -1,0 +1,190 @@
+"""The two datasets: integrity, the condition mapping against the Methods design, and answer parsing."""
+
+from __future__ import annotations
+
+import re
+import unittest
+
+import numpy as np
+
+from second_order import bespoke as BS
+from second_order import datasets as DS
+from second_order.conditions import CONDITIONS, setting_conditions
+
+CKD = DS.rows("ckd", list(DS.CKD_FILES))
+BESPOKE = DS.rows("bespoke")
+
+
+def blocks(prompt: str) -> dict[str, frozenset[str]]:
+    """CKD prompt -> {"own": record lines, "person": record lines} for the records shown."""
+    out = {}
+    for block in prompt.split("\n\n"):
+        head, *lines = block.split("\n")
+        if head.startswith("Your record"):
+            out["own"] = frozenset(lines)
+        elif "has only the following record" in head:
+            out["person"] = frozenset(lines)
+    return out
+
+
+def ckd_prompt(case_id: str, condition: str, output: str = "probability/normal", replicate: int = 0) -> str:
+    return DS.row("ckd", case_id, condition, output, replicate)["prompt"]
+
+
+class Integrity(unittest.TestCase):
+    def test_files_match_their_checksums(self):
+        self.assertTrue(all(DS.ckd_checksums().values()), DS.ckd_checksums())
+
+    def test_row_counts(self):
+        counts = CKD.groupby("battery").size().to_dict()
+        self.assertEqual(counts, {"main": 65700, "high_thresholds": 37800, "role_swap": 1500})
+        self.assertEqual(len(BESPOKE), 190)
+        self.assertEqual(len(DS.patients()), 150)
+        self.assertEqual(len(DS.case_ids("bespoke")), 20)
+        self.assertEqual(DS.placebo_ids(), {"p01", "p02"})
+
+    def test_every_row_has_a_known_condition_and_a_unique_key(self):
+        for frame in (CKD, BESPOKE):
+            self.assertTrue(frame.condition.isin(CONDITIONS).all())
+        self.assertEqual(len(DS.lookup("ckd")), len(CKD))
+        self.assertEqual(len(DS.lookup("bespoke")), len(BESPOKE))
+
+    def test_every_option_has_a_meaning(self):
+        for r in CKD.drop_duplicates(["question_id", "order"]).itertuples():
+            opts = DS.options(r.prompt)
+            values = [DS.option_value(r.question_id, t) for t in opts.values()] if opts else []
+            if r.question_id == "probability":
+                self.assertEqual(opts, {})
+            else:
+                self.assertEqual(len(set(values)), len(values), (r.question_id, r.order))
+
+    def test_flipped_orders_reverse_the_options(self):
+        case_id = DS.case_ids("ckd")[0]
+        for q in ("decision", "bet_4", "likert", "quintile", "threshold_1"):
+            normal = list(DS.options(ckd_prompt(case_id, "A", f"{q}/normal")).values())
+            flip = list(DS.options(ckd_prompt(case_id, "A", f"{q}/flip")).values())
+            self.assertEqual(flip, normal[::-1], q)
+
+
+class CkdDesign(unittest.TestCase):
+    """The records each condition shows match the Methods table (D, D2 shared by both settings)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.cases = DS.case_ids("ckd")[:10]
+
+    def test_records_shown_per_condition(self):
+        for case_id in self.cases:
+            full = blocks(ckd_prompt(case_id, "A"))["own"]
+            for setting in ("partial", "false"):
+                k = setting_conditions("ckd", setting)
+                b = blocks(ckd_prompt(case_id, k["B"]))
+                person = b["own"]  # PERSON's evidence: E_p or E_f
+                self.assertEqual(set(b), {"own"})
+                self.assertNotEqual(person, full)
+                if setting == "partial":
+                    self.assertLess(person, full)
+                self.assertEqual(blocks(ckd_prompt(case_id, k["M"])), {"person": person})
+                self.assertEqual(blocks(ckd_prompt(case_id, k["D"])), {"person": full})
+                self.assertEqual(blocks(ckd_prompt(case_id, k["M2"])), {"own": person, "person": person})
+                self.assertEqual(blocks(ckd_prompt(case_id, k["D2"])), {"own": full, "person": full})
+                self.assertEqual(blocks(ckd_prompt(case_id, k["C"])), {"own": full, "person": person})
+                swap = blocks(ckd_prompt(case_id, "C_swap" + ("_F" if setting == "false" else "")))
+                self.assertEqual(swap, {"own": person, "person": full})
+
+    def test_m_and_d_differ_only_in_the_record(self):
+        for case_id in self.cases:
+            m, d = ckd_prompt(case_id, "M"), ckd_prompt(case_id, "D")
+            strip = lambda p: re.sub(r"(?m)^.+ \(\w+\) is .+\.$\n?", "", p)  # noqa: E731
+            self.assertEqual(strip(m), strip(d))
+
+    def test_a_and_b_have_two_replicates_and_attributions_one(self):
+        reps = CKD[CKD.battery == "main"].groupby("condition").replicate.max().to_dict()
+        for condition, top in reps.items():
+            self.assertEqual(top, 1 if CONDITIONS[condition].role in ("A", "B") else 0, condition)
+
+    def test_person_names_vary_and_match_the_patient(self):
+        patients = DS.patients()
+        self.assertGreater(patients.person_name.nunique(), 10)
+        for case_id in self.cases:
+            self.assertIn(patients.loc[case_id, "person_name"], ckd_prompt(case_id, "C"))
+
+
+class BespokeDesign(unittest.TestCase):
+    def test_bayes_answers_follow_the_believer(self):
+        by = {(r.case_id, r.condition): r for r in BESPOKE.itertuples()}
+        for item in DS.case_ids("bespoke"):
+            p = lambda c, item=item: float(by[(item, c)].normative_p)  # noqa: E731
+            self.assertEqual(p("M"), p("B"))
+            self.assertEqual(p("D"), p("A"))
+            self.assertEqual(p("C"), p("M"))
+            self.assertEqual(float(by[(item, "C")].full_leak_p), p("A"))
+            if (item, "C_F") in by:
+                self.assertEqual(p("M_F"), p("B_F"))
+                self.assertEqual(p("C_F"), p("M_F"))
+                self.assertEqual(p("C_ctrl_F"), p("D_F"))
+
+    def test_placebo_items_have_no_gap(self):
+        for item in DS.placebo_ids():
+            values = set(BESPOKE[BESPOKE.case_id == item].normative_p)
+            self.assertEqual(len(values), 1)
+
+    def test_bayes_answers_stay_inside_the_logit_clip(self):
+        p = BESPOKE.normative_p.astype(float)
+        self.assertTrue(((p > 0.01) & (p < 0.99)).all())
+
+    def test_keyed_comprehension_answers_score_as_correct(self):
+        rows = BESPOKE[BESPOKE.comprehension_q != ""]
+        self.assertEqual(set(rows.condition), set(BS.COMPREHENSION_CONDITIONS))
+        for r in rows.itertuples():
+            self.assertEqual(BS.score_comprehension(r.comprehension_q, r.comprehension_a, r.comprehension_a), 1.0)
+
+
+class Parsing(unittest.TestCase):
+    def test_percent(self):
+        for text, value in (("37", 0.37), ("37%", 0.37), (" 5.5 ", 0.055), ("Answer: 80.", 0.8), ("0", 0.0),
+                            ("100", 1.0)):
+            self.assertAlmostEqual(DS.parse_percent(text), value, msg=text)
+        for text in ("30 to 40", "150", "about thirty", "", "1,000"):
+            self.assertIsNone(DS.parse_percent(text), text)
+
+    def test_letters(self):
+        opts = {"A": "Accept the bet", "B": "Decline the bet"}
+        for text, letter in (("A", "A"), (" B.", "B"), ("**A**", "A"), ("A. Accept the bet", "A"),
+                             ("Decline the bet", "B"), ("(B)", "B")):
+            self.assertEqual(DS.parse_letter(text, opts), letter, text)
+        for text in ("C", "A. Decline the bet", "Either", "A or B"):
+            self.assertIsNone(DS.parse_letter(text, opts), text)
+
+    def test_ckd_values_are_meanings_not_positions(self):
+        case_id = DS.case_ids("ckd")[0]
+        for order, letter in (("normal", "A"), ("flip", "B")):
+            prompt = ckd_prompt(case_id, "A", f"bet_4/{order}")
+            self.assertEqual(DS.parse("ckd", f"bet_4/{order}", prompt, letter)[0], 1.0)  # accept
+            prompt = ckd_prompt(case_id, "A", f"likert/{order}")
+            self.assertEqual(DS.parse("ckd", f"likert/{order}", prompt, "A")[0], 1.0 if order == "normal" else 5.0)
+
+    def test_bespoke_json_only(self):
+        for text, value in (('reasoning\n{"probability": 0.42}', 0.42), ('```json\n{"probability": 0.0}\n```', 0.0),
+                            ('{"probability": 0.9} then {"probability": 0.3}', 0.3), ('"probability": "65%"', 0.65)):
+            self.assertEqual(BS.parse_response(text)[0], value, text)
+        text = "We need the probability that the marbles were drawn from Bag A, after Draw 2.\nFinal: 0.9"
+        self.assertIsNone(BS.parse_response(text)[0])
+        self.assertIsNone(BS.parse_response('{"answer": 0.4}')[0])
+
+    def test_free_text_comprehension(self):
+        q, a = "Which draws did Alice see? List them with their results.", "Draw 2: red. Draw 3: red. Draw 4: blue."
+        self.assertEqual(BS.score_comprehension(q, a, "Alice saw draw 2: red, draw 3: red and draw 4: blue."), 1.0)
+        self.assertEqual(BS.score_comprehension(q, a, "Draw 2: red. Draw 3: red."), 0.0)
+        self.assertEqual(BS.score_comprehension(q, a, "Draw 1: red. Draw 2: red. Draw 3: red. Draw 4: blue."), 0.0)
+        self.assertIsNone(BS.score_comprehension(q, a, "I don't know."))
+        q, a = "What was Alice told about draw 1?", "Draw 1: blue."
+        self.assertEqual(BS.score_comprehension(q, a, "She was told Draw 1: blue."), 1.0)
+        self.assertEqual(BS.score_comprehension(q, a, "Draw 1: red."), 0.0)
+        w = 'Witness 3: says "Kim".'
+        self.assertEqual(BS.score_comprehension("What was Sofia told about witness 3?", w, 'Witness 3: says "Kim".'), 1.0)
+        self.assertEqual(BS.statements("Draw 1: red. Bag C draw 1: blue."), {("draw", 1): {"red"}})
+
+
+if __name__ == "__main__":
+    unittest.main()

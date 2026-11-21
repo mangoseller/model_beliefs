@@ -1,140 +1,95 @@
 """Conditions of the experiment, as data.
 
-Every condition is one row of ``CONDITIONS``: whose belief is asked for, which
-profile the model is shown, and which profile PERSON holds.  Prompts, fit
-families, the analysis and the figures all read this table.
+Each dataset row names a setting and a case; ``KEYS`` maps them to one condition
+key, and ``CONDITIONS`` says whose belief the key asks for.  The analysis reads
+the roles of a setting from ``setting_conditions``.
 
-* ``A``  the model's own belief from the full profile.
-* ``B``  the model's own belief from PERSON's copy.
-* ``M``  PERSON's belief; the model is shown only PERSON's copy (nothing private to leak).
-* ``C``  PERSON's belief; the model sees the full profile.  The condition whose leakage is measured.
-* ``D``  PERSON's belief if PERSON had the full profile.
+* ``A``  the model's own belief from the full evidence E.
+* ``B``  the model's own belief from PERSON's evidence (E_p, or E_f in the false setting).
+* ``M``  PERSON's belief; only PERSON's evidence is shown (nothing private to leak).
+* ``D``  PERSON's belief when PERSON has E.
+* ``C``  PERSON's belief; the model has E and PERSON has E_p or E_f.  Leakage is measured here.
+* ``M2``, ``D2`` (CKD)  as M and D, but laid out like C: PERSON's record and the model's own,
+  which here is the same evidence.  These are C's matched no-leakage references.
 
-Two settings, each with its own B, C, M and D (A is shared):
+CKD also has role-swap diagnostics (``C_swap``: C with the two ownership headers
+traded; ``probe`` and ``probe_swap``: which record holds a field) and standalone
+comprehension checks (output ``check``) after C.  The bespoke dataset adds
+``C_ctrl``: C_F's two-record layout where the friend read PERSON the true record,
+so its no-leakage reference is D_F.
 
-* ``partial``  PERSON's copy lists some fields as ``Not recorded`` (``withheld`` in the config).
-* ``false``    a colleague read PERSON the profile and got one Yes/No line wrong
-  (``flip_field``).  M_F and D_F use the same "read to PERSON" framing as C_F.
+Keys in the false setting end in ``_F``.  In CKD, D and D2 are shared by both
+settings; in the bespoke dataset the false setting has its own D_F.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-import pandas as pd
-
-from latent_beliefs.ckd.cases import PROFILE_FEATURES
-from latent_beliefs.ckd.prompts import (
-    FEATURE_KEYS,
-    FEATURE_TEXT,
-    FEATURE_UNITS,
-    format_feature_value,
-)
-from second_order import config as C
-
-NOT_RECORDED = "Not recorded"
 SETTINGS = ("partial", "false")
-ROLES = ("A", "B", "C", "M", "D")
-SUFFIX = {"partial": "", "false": "_F"}
+ROLES = ("A", "B", "C", "M", "D", "M2", "D2")
 
 
 @dataclass(frozen=True)
 class Condition:
     key: str
-    role: str                  # "A", "B", "C", "M" or "D"
-    setting: str | None        # "partial" or "false"; None for A
-    model_profile: str         # "full" or "copy" (PERSON's copy)
-    person_profile: str | None  # "full", "copy", or None (the model's own belief)
+    role: str                 # A, B, C, M, D, M2, D2, C_swap, C_ctrl, probe or probe_swap
+    setting: str | None       # partial, false, or None (shared)
 
     @property
     def about(self) -> str:
-        return "self" if self.person_profile is None else "person"
+        return "self" if self.role in ("A", "B") else "person"
+
+    @property
+    def is_belief(self) -> bool:
+        return not self.role.startswith("probe")
 
 
-SHOWN = {"B": ("copy", None), "C": ("full", "copy"), "M": ("copy", "copy"), "D": ("full", "full")}
-CONDITIONS = {"A": Condition("A", "A", None, "full", None)} | {
-    role + SUFFIX[s]: Condition(role + SUFFIX[s], role, s, *SHOWN[role])
-    for s in SETTINGS for role in ("B", "C", "M", "D")
+def _f(setting: str) -> str:
+    return "_F" if setting == "false" else ""
+
+
+CONDITIONS: dict[str, Condition] = {c.key: c for c in [
+    Condition("A", "A", None), Condition("D", "D", None), Condition("D2", "D2", None),
+    *[Condition(role + _f(s), role, s) for s in SETTINGS
+      for role in ("B", "C", "M", "M2", "C_swap", "probe", "probe_swap")],
+    Condition("D_F", "D", "false"), Condition("C_ctrl_F", "C_ctrl", "false"),
+]}
+
+# (dataset, dataset setting, dataset case) -> condition key
+KEYS = {
+    **{("ckd", "shared", case): case for case in ("A", "D", "D2")},
+    **{("ckd", s, case): case + _f(s) for s in SETTINGS
+       for case in ("B", "C", "M", "M2", "C_swap", "probe", "probe_swap")},
+    **{("bespoke", s, case): case for s in ("partial", "placebo") for case in ("A", "B", "C", "M", "D")},
+    **{("bespoke", "false", f"{case}_false"): f"{case}_F" for case in ("B", "C", "M", "D")},
+    ("bespoke", "report_assignment_control", "C_report_control"): "C_ctrl_F",
 }
 
 
-def setting_conditions(setting: str) -> dict[str, str]:
-    """Condition keys playing roles A, B, C, M, D in one setting."""
-    return {role: "A" if role == "A" else role + SUFFIX[setting] for role in ROLES}
+def condition_key(dataset: str, setting: str, case: str) -> str:
+    try:
+        return KEYS[(dataset, setting, case)]
+    except KeyError:
+        raise ValueError(f"unknown {dataset} condition: setting {setting!r}, case {case!r}") from None
+
+
+def setting_conditions(dataset: str, setting: str) -> dict[str, str]:
+    """Condition keys playing roles A, B, C, M, D (and, for CKD, M2 and D2) in one setting."""
+    f = _f(setting)
+    roles = {"A": "A", "B": "B" + f, "C": "C" + f, "M": "M" + f}
+    if dataset == "ckd":
+        return roles | {"D": "D", "M2": "M2" + f, "D2": "D2"}
+    return roles | {"D": "D" + f}
+
+
+def references(dataset: str) -> dict[str, tuple[str, str]]:
+    """No-leakage references for C: (M role, D role) per reference name; the first is the headline."""
+    if dataset == "ckd":
+        return {"two_record": ("M2", "D2"), "single_record": ("M", "D")}
+    return {"single_record": ("M", "D")}
 
 
 def fit_family(condition: str) -> str:
     """Conditions with identical instructions share one latent fit: "self" or "person"."""
     return CONDITIONS[condition].about
-
-
-# ---------------------------------------------------------------- profiles
-def field_label(feature: str) -> str:
-    """Human-readable field name, e.g. ``Self-reported diabetes (diab)``."""
-    prefix = FEATURE_TEXT[feature].split(" ({key})")[0]
-    return f"{prefix} ({FEATURE_KEYS[feature]})"
-
-
-def profile_line(case: pd.Series, feature: str, value: str | None = None) -> str:
-    if value is None:
-        value = format_feature_value(feature, case[feature])
-        if feature in FEATURE_UNITS and value != "Missing":
-            value = f"{value} {FEATURE_UNITS[feature]}"
-    elif value == NOT_RECORDED and feature == "ridageyr":
-        # "Age (age) is {value} years." would read "Not recorded years".
-        return FEATURE_TEXT[feature].format(value=value, key=FEATURE_KEYS[feature]).replace(
-            f"{NOT_RECORDED} years", NOT_RECORDED)
-    return FEATURE_TEXT[feature].format(value=value, key=FEATURE_KEYS[feature])
-
-
-def flipped_value(case: pd.Series, feature: str) -> str:
-    """The opposite Yes/No value of a binary field; anything else is an error."""
-    current = format_feature_value(feature, case[feature])
-    if current not in ("Yes", "No"):
-        raise ValueError(f"cannot flip {feature} = {current!r} for case {case.get('case_id')}")
-    return "No" if current == "Yes" else "Yes"
-
-
-def render_profile(case: pd.Series, withheld=(), *, flip: str | None = None) -> str:
-    """The profile block; with no arguments it is identical to ``patient_profile``.
-
-    ``withheld`` fields keep their line with the value ``Not recorded``; ``flip``
-    names one binary field shown with the opposite value.
-    """
-    withheld = set(withheld)
-    unknown = (withheld | ({flip} if flip else set())) - set(PROFILE_FEATURES)
-    if unknown:
-        raise ValueError(f"unknown profile fields: {sorted(unknown)}")
-    lines = []
-    for f in PROFILE_FEATURES:
-        if f in withheld:
-            lines.append(profile_line(case, f, NOT_RECORDED))
-        elif f == flip:
-            lines.append(profile_line(case, f, flipped_value(case, f)))
-        else:
-            lines.append(profile_line(case, f))
-    return "\n".join(lines).strip()
-
-
-def withheld_fields() -> list[str]:
-    """Fields listed as Not recorded in PERSON's copy (partial setting), in profile order."""
-    fields = set(C.load()["withheld"])
-    return [f for f in PROFILE_FEATURES if f in fields]
-
-
-def flip_field() -> str:
-    """The field shown with the opposite value in the false setting."""
-    return C.load()["flip_field"]
-
-
-def copy_profile(case: pd.Series, setting: str) -> str:
-    """PERSON's copy of the profile in a setting (what B and M show the model)."""
-    if setting == "false":
-        return render_profile(case, flip=flip_field())
-    return render_profile(case, withheld_fields())
-
-
-def model_profile(case: pd.Series, condition: str) -> str:
-    """The profile block the model is shown in a condition."""
-    cond = CONDITIONS[condition]
-    return render_profile(case) if cond.model_profile == "full" else copy_profile(case, cond.setting)

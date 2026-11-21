@@ -6,9 +6,9 @@ and run (``replicate``), holding a belief on the logit scale:
     model, dataset, case_id, split, condition, replicate, method, value, sd, value_calibrated, n_samples
 
 * ``latent`` (CKD): value = posterior mean of logit z from the pooled fit; sd = posterior sd.
-* ``direct``: value = logit of the numeric probability clipped to [0.01, 0.99].
-  With several samples per run (bespoke dataset), value = the mean of the
-  sample logits and sd = its standard error.
+* ``direct``: value = logit of the stated probability (CKD: the 0-100 answer divided
+  by 100), clipped to [0.01, 0.99].  With several samples per run (bespoke dataset),
+  value = the mean of the sample logits and sd = its standard error.
 * ``value_calibrated``: for ``latent``, the posterior mean de-shrunk with the
   fit's own calibration line (``measurement.calibration``); otherwise equal to ``value``.
 """
@@ -41,27 +41,20 @@ def _finish(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 KEYS = ["model", "case_id", "split", "condition", "replicate"]
+PROBABILITY_OUTPUTS = ("probability/normal", "probability")  # CKD, bespoke
 
 
 def latent_rows(latents: pd.DataFrame) -> pd.DataFrame:
     part = latents[KEYS].copy()
     part["method"] = "latent"
-    part["value"], part["sd"] = latents["ell_all"].to_numpy(), latents["sd_all"].to_numpy()
-    part["value_calibrated"] = latents["cal_all"].to_numpy()
+    part["value"], part["sd"] = latents["ell"].to_numpy(), latents["sd"].to_numpy()
+    part["value_calibrated"] = latents["cal"].to_numpy()
     return _finish(part)
 
 
-def direct_rows(wide: pd.DataFrame) -> pd.DataFrame:
-    rows = wide[wide.complete]
-    part = rows[KEYS].copy()
-    part["method"] = "direct"
-    part["value"] = clip_logit(rows["probability"].to_numpy())
-    return _finish(part)
-
-
-def sample_mean_rows(long: pd.DataFrame) -> pd.DataFrame:
-    """Direct beliefs from several samples per run: mean sample logit and its standard error."""
-    parsed = long[(long.status == "parsed") & (long.output == "probability")].copy()
+def direct_rows(long: pd.DataFrame) -> pd.DataFrame:
+    """Direct beliefs: the mean logit of the parsed probability answers per case, condition and run."""
+    parsed = long[(long.status == "parsed") & long.output.isin(PROBABILITY_OUTPUTS)].copy()
     parsed["logit"] = clip_logit(parsed["value"].to_numpy())
     g = parsed.groupby(["model", "dataset", "case_id", "condition", "replicate"]).logit
     part = pd.DataFrame({"value": g.mean(), "n_samples": g.size(),

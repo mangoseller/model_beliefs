@@ -62,15 +62,11 @@ def benchmark_items(model: str, n: int, seed: int) -> list[dict]:
     from second_order.run_generation import dataset_cases, experiment_items
 
     rng = np.random.default_rng(seed)
-    conditions = C.conditions()
     shares = {"ckd": 1 - settings()["bespoke_share"], "bespoke": settings()["bespoke_share"]}
     picked = []
     for dataset in C.datasets_for(model):
-        try:
-            pool = [i for i in experiment_items(model, dataset, dataset_cases(dataset), conditions)
-                    if i.replicate == 0 and i.sample == 0]
-        except FileNotFoundError:  # no bespoke item file
-            continue
+        pool = [i for i in experiment_items(model, dataset, dataset_cases(dataset))
+                if i.replicate == 0 and i.sample == 0]
         k = min(len(pool), int(round(n * shares.get(dataset, 0))))
         picked += [pool[j] for j in sorted(rng.choice(len(pool), size=k, replace=False))]
     return [{"model": i.model, "case_id": i.case_id, "condition": i.condition, "output": i.output,
@@ -85,7 +81,7 @@ def smoke_stats(items, records) -> dict:
     parsed, truncated, thinking, lengths = [], [], [], []
     for item, record in zip(items, records):
         text = record.get("text") or ""
-        value, _ = DS.parse(item.dataset, item.output, visible_text(text))
+        value, _ = DS.parse(item.dataset, item.output, item.prompt, visible_text(text))
         parsed.append(value is not None)
         truncated.append(record.get("stop_reason") == "length")
         thinking.append("<think>" in text and "</think>" in text and len(text.split("</think>")[0]) > 20)

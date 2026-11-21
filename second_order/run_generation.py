@@ -1,24 +1,26 @@
-"""Cached, resumable generation for every condition.
+"""Cached, resumable generation for every prompt of the two datasets.
 
-Each item is keyed by ``sha256(json([model, case_id, condition, output, replicate]))``
+Each item is keyed by ``sha256(json([model, dataset, case_id, condition, output, replicate]))``
 (``sample`` is appended when nonzero) and appended to
 ``data/generation_cache/<model>.jsonl`` once it returns.  A rerun skips every
 cached key and never re-calls the model for it.  A cached item whose prompt or
 generation settings differ from the current ones raises an error, so a changed
-template can never silently mix with old responses.
+dataset can never silently mix with old responses.
 
-``replicate`` is an independent run of a condition (two runs of A and every
-B, ``experiment.replicates``, give the reliability rho); ``sample`` indexes
-the samples within a run (``bespoke.samples``).  Comprehension follow-ups are
-two-turn items (output ``comprehension:<output>``): the C prompt, the cached C
-response and the question; they are generated after the C answers they follow.
+CKD rows are one call each (A and B carry two replicates in the file).  Bespoke rows
+get ``samples`` calls per run, and A, B and B_F a second run (``replicates``).  The
+bespoke comprehension follow-ups are two-turn items (output ``comprehension``): the C
+prompt, the cached C response and the row's question, generated after the C answers.
+The CKD checks are ordinary standalone rows.
 
 Backends: ``vllm`` (local open weights on CUDA, one seed per item), ``hf``
-(transformers fallback) and ``synthetic`` (``second_order/synthetic.py``: text
-from known parameters, for end-to-end checks).  A single user message and no
-system prompt, as in the first-order collection; sampling from ``generation``,
-overridden per model (``temperature``, ``top_p``, ``top_k``, ``max_tokens``,
-``enable_thinking``).
+(transformers fallback) and ``synthetic`` (``second_order/synthetic.py``: text from
+known parameters, for end-to-end checks).  A single user message and no system
+prompt; temperature from ``generation``, the token limit per dataset, both
+overridable per model (``temperature``, ``top_p``, ``top_k``, ``max_tokens``,
+``enable_thinking``).  vLLM also keeps the top log-probabilities of the first
+answer token (``generation.logprobs``), so the letter answers can be scored by
+answer probability as well as by the sampled choice.
 
     python -m second_order.run_generation --model qwen3_8b [--dataset ckd bespoke] [--stage all]
 """
@@ -49,12 +51,13 @@ class Item:
     prompt: str
     sample: int = 0
     dataset: str = "ckd"
-    # Multi-turn items (comprehension follow-ups): ((role, text), ...); ``prompt`` is the last turn.
+    # Multi-turn items (bespoke comprehension follow-ups): ((role, text), ...); ``prompt`` is the last turn.
     messages: tuple[tuple[str, str], ...] | None = None
 
     @property
     def key(self) -> str:
-        return item_key(self.model, self.case_id, self.condition, self.output, self.replicate, self.sample)
+        return item_key(self.model, self.dataset, self.case_id, self.condition, self.output, self.replicate,
+                        self.sample)
 
     @property
     def prompt_sha(self) -> str:
@@ -66,16 +69,20 @@ class Item:
         return [{"role": role, "content": text} for role, text in turns]
 
 
-def item_key(model: str, case_id: str, condition: str, output: str, replicate: int, sample: int = 0) -> str:
-    fields = [model, case_id, condition, output, int(replicate)] + ([int(sample)] if sample else [])
+FOLLOWUP = "comprehension"  # output name of the bespoke comprehension follow-ups
+
+
+def item_key(model: str, dataset: str, case_id: str, condition: str, output: str, replicate: int,
+             sample: int = 0) -> str:
+    fields = [model, dataset, case_id, condition, output, int(replicate)] + ([int(sample)] if sample else [])
     return hashlib.sha256(json.dumps(fields).encode()).hexdigest()
 
 
-def settings_signature(model: str) -> str:
+def settings_signature(model: str, dataset: str) -> str:
     """Hash of what besides the prompt shapes a response: backend, weights, sampling, chat template."""
     mcfg = C.model_config(model)
     payload = {"backend": mcfg["backend"], "weights": mcfg.get("path"), "revision": mcfg.get("revision"),
-               "sampling": sampling(model), "template": template_kwargs(model), "truth": mcfg.get("truth")}
+               "sampling": sampling(model, dataset), "template": template_kwargs(model), "truth": mcfg.get("truth")}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -114,7 +121,7 @@ class Cache:
 def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
     """Cached response record for each item (None if not generated yet)."""
     by_model: dict[str, Cache] = {}
-    signatures: dict[str, str] = {}
+    signatures: dict[tuple[str, str], str] = {}
     out = []
     for item in items:
         if item.model not in by_model:  # read each cache file once
@@ -124,9 +131,10 @@ def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
         if record is not None and record["prompt_sha"] != item.prompt_sha:
             raise ValueError(f"cached prompt differs for {item}: template changed?")
         if record is not None and "settings_sha" in record:
-            if item.model not in signatures:
-                signatures[item.model] = settings_signature(item.model)
-            if record["settings_sha"] != signatures[item.model]:
+            sig = (item.model, item.dataset)
+            if sig not in signatures:
+                signatures[sig] = settings_signature(*sig)
+            if record["settings_sha"] != signatures[sig]:
                 raise ValueError(f"cached response for {item.key} was generated with other settings "
                                  f"(sampling, chat template or weights) than {item.model} has now")
         out.append(record)
@@ -134,12 +142,15 @@ def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
 
 
 # ---------------------------------------------------------------- backends
-def sampling(model: str) -> dict[str, Any]:
-    """Temperature, top-p, top-k and token limit: the generation block, overridden per model."""
+def sampling(model: str, dataset: str) -> dict[str, Any]:
+    """Temperature, top-p, top-k, token limit and log-probabilities, overridable per model."""
+    from second_order.datasets import max_tokens
+
     gen, mcfg = C.load()["generation"], C.model_config(model)
     return {"temperature": float(mcfg.get("temperature", gen["temperature"])),
             "top_p": float(mcfg.get("top_p", 1.0)), "top_k": int(mcfg.get("top_k", -1)),
-            "max_tokens": int(mcfg.get("max_tokens", gen["max_tokens"]))}
+            "max_tokens": int(mcfg.get("max_tokens", max_tokens(dataset))),
+            "logprobs": int(gen.get("logprobs") or 0)}
 
 
 def template_kwargs(model: str) -> dict[str, Any]:
@@ -164,9 +175,12 @@ def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, An
                             max_model_len=mcfg.get("max_model_len"), seed=int(seed),
                             tensor_parallel_size=int(mcfg.get("tensor_parallel_size", 1)), **engine)
     llm = _LOCAL[model]
-    s = sampling(model)
-    params = [SamplingParams(n=1, temperature=s["temperature"], top_p=s["top_p"], top_k=s["top_k"],
-                             max_tokens=s["max_tokens"], seed=item_seed(seed, i)) for i in items]
+    params = []
+    for i in items:
+        s = sampling(model, i.dataset)
+        params.append(SamplingParams(n=1, temperature=s["temperature"], top_p=s["top_p"], top_k=s["top_k"],
+                                     max_tokens=s["max_tokens"], seed=item_seed(seed, i),
+                                     logprobs=s["logprobs"] or None))
     # Render each conversation with the model's chat template here (thinking on or off), as
     # LLM.chat would; LLM.chat in vLLM 0.8.5 takes no chat-template arguments.
     tok = llm.get_tokenizer()
@@ -178,10 +192,12 @@ def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, An
     records = []
     for item, out in zip(items, outputs):
         completion = out.outputs[0]
+        first = completion.logprobs[0] if completion.logprobs else {}
         records.append({"text": completion.text, "ok": True, "error": None,
                         "stop_reason": completion.finish_reason,
                         "usage": {"input_tokens": len(out.prompt_token_ids),
                                   "output_tokens": len(completion.token_ids)},
+                        "first_token_logprobs": {lp.decoded_token: lp.logprob for lp in first.values()},
                         "seed": item_seed(seed, item), "batch_seconds": elapsed})
     return records
 
@@ -199,7 +215,7 @@ def generate_hf(model: str, items: list[Item], seed: int) -> list[dict[str, Any]
         lm.eval()
         _LOCAL[model] = (lm, tok)
     lm, tok = _LOCAL[model]
-    s = sampling(model)
+    s = sampling(model, items[0].dataset)  # run() calls a backend with one dataset at a time
     texts = [tok.apply_chat_template(i.chat(), add_generation_prompt=True, tokenize=False, **template_kwargs(model))
              for i in items]
     enc = tok(texts, return_tensors="pt", padding=True, add_special_tokens=False).to(lm.device)
@@ -242,13 +258,13 @@ def pending(items: list[Item]) -> list[Item]:
 
 
 def run(items: list[Item], *, label: str = "") -> None:
-    """Generate every uncached item (all items must be for one model)."""
+    """Generate every uncached item (all items must be for one model and one dataset)."""
     if not items:
         return
-    models = {i.model for i in items}
-    if len(models) != 1:
-        raise ValueError("run() takes items for one model")
-    model = models.pop()
+    pairs = {(i.model, i.dataset) for i in items}
+    if len(pairs) != 1:
+        raise ValueError("run() takes items for one model and one dataset")
+    model, dataset = pairs.pop()
     todo = pending(items)
     print(f"[{label or model}] {len(items)} items, {len(items) - len(todo)} cached, {len(todo)} to call",
           flush=True)
@@ -259,11 +275,11 @@ def run(items: list[Item], *, label: str = "") -> None:
     batch = int(C.model_config(model).get("batch_size", 32))
     seed = int(C.load()["seed"])
     cache = Cache(model)
-    signature = settings_signature(model)
+    signature = settings_signature(model, dataset)
     started = time.time()
     tokens_out = errors = 0
-    # Group by output so batches have similar lengths.
-    todo.sort(key=lambda i: (i.output, i.condition, i.case_id, i.replicate, i.sample))
+    # Prompts of one case and condition share their evidence, so keep them in one batch (prefix caching).
+    todo.sort(key=lambda i: (i.condition, i.case_id, i.replicate, i.output, i.sample))
     # One bar over every call (stderr; in a log file it updates every 30 s instead of continuously).
     bar = tqdm(total=len(todo), desc=label or model, unit="call", smoothing=0.1, dynamic_ncols=True,
                mininterval=float(os.environ.get("SO_PROGRESS_INTERVAL", 1 if sys.stderr.isatty() else 30)),
@@ -286,51 +302,54 @@ def run(items: list[Item], *, label: str = "") -> None:
           f"{tokens_out:,} output tokens; {errors} errors", flush=True)
 
 
-def experiment_items(model: str, dataset: str, case_ids: list[str], conditions: list[str],
-                     outputs: tuple[str, ...] | None = None) -> list[Item]:
-    """Every run and sample of each condition, case and output of one dataset."""
+def experiment_items(model: str, dataset: str, case_ids: list[str], conditions: list[str] | None = None,
+                     outputs: tuple[str, ...] | None = None, batteries=None) -> list[Item]:
+    """Every prompt of a dataset for these cases, each run and sample of it."""
     from second_order import datasets as DS
 
-    outputs = outputs or DS.outputs(dataset)
+    frame = DS.rows(dataset, batteries)
+    frame = frame[frame.case_id.isin(set(case_ids))]
+    if conditions:
+        frame = frame[frame.condition.isin(set(conditions))]
+    if outputs:
+        frame = frame[frame.output.isin(set(outputs))]
     items = []
-    for condition in conditions:
-        for case_id in case_ids:
-            for output in outputs:
-                prompt = DS.prompt(dataset, case_id, condition, output)
-                for replicate in range(C.replicates(condition)):
-                    for sample in range(DS.samples(dataset)):
-                        items.append(Item(model, case_id, condition, output, replicate, prompt, sample, dataset))
+    for r in frame.itertuples(index=False):
+        for extra in range(DS.replicates(dataset, r.condition)):
+            for sample in range(DS.samples(dataset)):
+                items.append(Item(model, r.case_id, r.condition, r.output, int(r.replicate) + extra, r.prompt,
+                                  sample, dataset))
     return items
 
 
-def comprehension_items(model: str, dataset: str, case_ids: list[str],
-                        conditions: list[str]) -> tuple[list[Item], int]:
-    """Follow-up items for every cached C answer that gets one; also the number still missing a parent."""
+def comprehension_items(model: str, dataset: str, case_ids: list[str]) -> tuple[list[Item], int]:
+    """Bespoke follow-ups for every cached C answer; also the number still missing a parent."""
     from second_order import datasets as DS
-    from second_order.comprehension import followup_output
+    from second_order.bespoke import COMPREHENSION_CONDITIONS
 
-    wanted = [c for c in C.load()["experiment"]["comprehension"]["conditions"] if c in conditions]
-    parents = experiment_items(model, dataset, case_ids, wanted, DS.comprehension_outputs(dataset))
+    if dataset != "bespoke":
+        return [], 0
+    parents = [i for i in experiment_items(model, dataset, case_ids, list(COMPREHENSION_CONDITIONS))
+               if i.replicate == 0]
     items, missing = [], 0
     for parent, record in zip(parents, lookup(parents)):
         if record is None or not record.get("ok"):
             missing += record is None
             continue
-        question = DS.comprehension(dataset, parent.case_id, parent.condition).question
+        question = DS.row(dataset, parent.case_id, parent.condition, parent.output)["comprehension_q"]
         messages = (("user", parent.prompt), ("assistant", record["text"] or ""), ("user", question))
-        items.append(Item(model, parent.case_id, parent.condition, followup_output(parent.output),
-                          parent.replicate, question,
+        items.append(Item(model, parent.case_id, parent.condition, FOLLOWUP, parent.replicate, question,
                           parent.sample, dataset, messages))
     return items, missing
 
 
 def select_cases(n: int | str) -> list[str]:
-    """CKD case ids: all, or a seeded sample of ``n``."""
+    """CKD patients: all, or a seeded sample of ``n``."""
     import numpy as np
 
-    from second_order.prompts_second_order import cases
+    from second_order import datasets as DS
 
-    ids = list(cases().index)
+    ids = DS.case_ids("ckd")
     if n == "all":
         return ids
     rng = np.random.default_rng(int(C.load()["seed"]))
@@ -340,13 +359,13 @@ def select_cases(n: int | str) -> list[str]:
 def dataset_cases(dataset: str, cases: str | None = None) -> list[str]:
     """Case ids of one dataset: a file of ids, an integer or 'all' (default ``main_cases``).
 
-    An integer selects CKD cases only; the bespoke dataset runs every item unless a file of ids names some.
+    An integer selects CKD patients only; the bespoke dataset runs every item unless a file of ids names some.
     """
     from second_order import datasets as DS
 
     if cases and Path(cases).exists():
-        wanted = Path(cases).read_text().split()
-        return [c for c in wanted if DS.dataset_of(c) == dataset]
+        wanted = set(Path(cases).read_text().split())
+        return [c for c in DS.case_ids(dataset) if c in wanted]
     if dataset == "ckd":
         return select_cases(cases or C.load()["main_cases"])
     return DS.case_ids(dataset)
@@ -357,17 +376,15 @@ def main() -> None:
     parser.add_argument("--model", required=True)
     parser.add_argument("--dataset", nargs="+", default=None, help="default: the model's datasets")
     parser.add_argument("--stage", choices=("main", "comprehension", "all"), default="all")
-    parser.add_argument("--conditions", nargs="+", default=None, help="default: experiment.conditions")
     parser.add_argument("--cases", default=None, help="'all', an integer, or a file of case ids")
     args = parser.parse_args()
-    conditions = args.conditions or C.conditions()
     for dataset in args.dataset or C.datasets_for(args.model):
         case_ids = dataset_cases(dataset, args.cases)
         label = f"{args.model}/{dataset}"
         if args.stage in ("main", "all"):
-            run(experiment_items(args.model, dataset, case_ids, conditions), label=label)
-        if args.stage in ("comprehension", "all"):
-            items, missing = comprehension_items(args.model, dataset, case_ids, conditions)
+            run(experiment_items(args.model, dataset, case_ids), label=label)
+        if args.stage in ("comprehension", "all") and dataset == "bespoke":
+            items, missing = comprehension_items(args.model, dataset, case_ids)
             if missing:
                 print(f"[{label}/comprehension] {missing} C answers not generated yet; their follow-ups wait",
                       flush=True)

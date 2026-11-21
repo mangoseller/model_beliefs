@@ -7,21 +7,22 @@ Wilder, *Beliefs and Behavior in Language Models*
 
 ## The experiment
 
-The model reads a patient's chart. PERSON, a physician as capable as the model, has a copy that
-is missing some fields.
+The model reads a patient's record. PERSON (a named person; the name varies by patient) has a
+record of the same patient that is missing some fields.
 
 | We ask the model | Condition | Example |
 | --- | --- | --- |
-| Its own view, from the full chart | A | 30% |
-| Its own view, from PERSON's copy | B | 12% |
-| What PERSON thinks; it sees only PERSON's copy | M | 13% |
-| What PERSON thinks; it sees the full chart | C | 25% |
-| What PERSON thinks, if PERSON had the full chart | D | 28% |
+| Its own view, from the full record | A | 30% |
+| Its own view, from PERSON's record | B | 12% |
+| What PERSON thinks; both records shown, both PERSON's | M2 | 13% |
+| What PERSON thinks; it has the full record, PERSON the partial one | C | 25% |
+| What PERSON thinks; both records shown, both full | D2 | 28% |
 
-**Leakage** $\lambda$ is where C falls between M and D in log-odds $\ell$: $0$ means the model
-kept its private evidence out of PERSON's belief, $1$ means it all leaked in. Here
-$\lambda = (\ell_C - \ell_M)/(\ell_D - \ell_M) \approx 0.84$; people score about $0.51$
-(Camerer, Loewenstein and Weber, 1989).
+**Leakage** $\lambda$ is where C falls between its two references in log-odds $\ell$: $0$ means
+the model kept its private evidence out of PERSON's belief, $1$ means it all leaked in. Here
+$\lambda = (\ell_C - \ell_{M2})/(\ell_{D2} - \ell_{M2}) \approx 0.84$; people score about $0.51$
+(Camerer, Loewenstein and Weber, 1989). The single-record references M and D (only PERSON's record
+shown) give the Methods' version of the same estimate.
 
 ![What λ, φ and τ measure](docs/curse_schematic.png)
 
@@ -34,14 +35,15 @@ $$
 \tau = \varphi\,(1 - \lambda),
 $$
 
-where $\beta_C$ and $\beta_D$ are the slopes of $\ell_C - \ell_M$ and $\ell_D - \ell_M$ on $x$. $\rho$
+where $\beta_C$ and $\beta_D$ are the slopes of $\ell_C - \ell_M$ and $\ell_D - \ell_M$ on $x$, with M and D
+the reference pair. $\rho$
 corrects for noise in $x$, $\varphi$ is how strongly PERSON's belief follows the evidence (shared by
 the two settings below), and $\tau$ is a theory-of-mind score.
 
-The study runs two settings, PERSON missing evidence and PERSON told something false, on two
-datasets: the paper's 500 kidney-disease cases and a set of fictional puzzles with known Bayes
-answers. The design is in [`docs/design.md`](docs/design.md) and the data formats in
-[`docs/data.md`](docs/data.md).
+The study runs two settings, PERSON missing evidence and PERSON given altered evidence, on two
+datasets in [`datasets/`](datasets): 150 kidney-disease patients, each asked the paper's 16
+questions, and 20 fictional puzzles with known Bayes answers. The design is in
+[`docs/design.md`](docs/design.md) and the data in [`docs/data.md`](docs/data.md).
 
 ## Running it
 
@@ -54,15 +56,14 @@ nohup bash run_experiment.sh > run.out 2>&1 &     # the full run
 ```
 
 This installs everything, runs the experiment on both models, and packages the results as
-`runs/<run_id>.tar.gz`. Start with `RUN_REPORT.md` inside it. Put the puzzle set at
-`datasets/bespoke_items.yaml` first; without it, a placeholder is used. Details are in
+`runs/<run_id>.tar.gz`. Start with `RUN_REPORT.md` inside it. Details are in
 [`docs/running.md`](docs/running.md).
 
 ## Layout
 
 ```
 second_order/      the experiment, and its config.yaml
-datasets/          input data you supply (the bespoke items)
+datasets/          the two datasets, sent verbatim
 latent_beliefs/    the paper's replication package (latent_beliefs/README.md)
 first_order/       first-order belief readouts on small models (first_order/README.md)
 docs/              design, running, data formats

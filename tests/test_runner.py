@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
-import os
 import tempfile
 import unittest
 from pathlib import Path
 
-FIXTURE = str(Path(__file__).parents[1] / "datasets" / "example_bespoke_items.yaml")
-os.environ.setdefault("SO_BESPOKE_ITEMS", FIXTURE)
-
-from second_order import freeze as F  # noqa: E402
-from second_order import tune as T  # noqa: E402
-from second_order.run_generation import Item  # noqa: E402
-from second_order.runner import last_line  # noqa: E402
+from second_order import datasets as DS
+from second_order import freeze as F
+from second_order import tune as T
+from second_order.run_generation import Item
+from second_order.runner import last_line
 
 
 def trial(tok_s: float, parse: float = 0.95, truncated: float = 0.0, seqs: int = 256, ok: bool = True) -> dict:
@@ -47,11 +44,12 @@ class Tuning(unittest.TestCase):
 
     def test_smoke_stats(self):
         items = [Item(**d) for d in T.benchmark_items("synthetic", 40, 2)]
-        records = [{"text": '{"probability": 0.3}' if i.output == "probability" else "Choice: A", "stop_reason": "stop",
-                    "usage": {"output_tokens": 10}} for i in items]
+        records = [{"text": '{"probability": 0.3}' if i.dataset == "bespoke" else
+                    "40" if i.output.startswith("probability") else "A",
+                    "stop_reason": "stop", "usage": {"output_tokens": 10}} for i in items]
         stats = T.smoke_stats(items, records)
         self.assertEqual(stats["calls"], len(items))
-        self.assertEqual(stats["truncated_rate"], 0.0)
+        self.assertEqual((stats["parse_rate"], stats["truncated_rate"]), (1.0, 0.0))
         self.assertEqual(stats["by_output"]["bespoke/probability"], 1.0)
         bad = T.smoke_stats(items, [{"text": "no answer", "stop_reason": "length"} for _ in items])
         self.assertEqual((bad["parse_rate"], bad["truncated_rate"]), (0.0, 1.0))
@@ -67,20 +65,20 @@ class Freeze(unittest.TestCase):
         self.assertEqual(F.token_before(merged, 5), 0)
         self.assertEqual(F.token_before(merged, 7), 1)
         text = 'thinking {"probability": 0.2} wait {"probability": 0.3}'
-        self.assertEqual(F.answer_start("probability", text), text.rindex("{"))
-        self.assertEqual(F.answer_start("likert", "x\nChoice: A\nmore\nChoice: B"), len("x\nChoice: A\nmore\n"))
-        self.assertEqual(F.answer_start("probability", "no answer"), -1)
+        self.assertEqual(F.answer_start("bespoke", text), text.rindex("{"))
+        self.assertEqual(F.answer_start("bespoke", "no answer"), -1)
+        self.assertEqual(F.answer_start("ckd", "37"), 0)
 
-    def test_evidence_end_is_found_in_every_condition(self):
-        items = F.freeze_items("synthetic", "bespoke", ["bespoke__marbles_01"], ["A", "B", "C", "M_F", "D_F"])
-        self.assertEqual(len(items), 5)
-        for item in items:
-            end = F.evidence_end(item)
-            self.assertGreater(end, 0)
-            self.assertTrue(item.prompt[:end].rstrip().endswith("."), item.condition)
-        ckd = F.freeze_items("synthetic", "ckd", ["original500__prompt_0001"], ["A", "C_F"])
-        self.assertTrue(all(F.evidence_end(i) > 0 for i in ckd))
-        self.assertEqual({i.output for i in ckd}, {"probability"})
+    def test_evidence_end_is_just_before_the_question(self):
+        for dataset, case_id in (("ckd", DS.case_ids("ckd")[0]), ("bespoke", "b01")):
+            items = F.freeze_items("synthetic", dataset, [case_id])
+            self.assertTrue(items)
+            for item in items:
+                end = F.evidence_end(item)
+                self.assertGreater(end, 0, item.condition)
+                question = item.prompt[end:].strip().split("\n")[0]
+                self.assertTrue(question.startswith(("What", "Which")), (item.condition, question))
+                self.assertIn(item.output, ("probability/normal", "probability"))
 
 
 class Progress(unittest.TestCase):

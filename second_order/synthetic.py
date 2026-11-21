@@ -1,52 +1,49 @@
 """Text-level simulator: the ``synthetic`` backend, with known parameters (end-to-end checks).
 
-It writes response *text* for every item, so a synthetic run exercises the
-whole pipeline (cache, parsing, matrices, latent fits, beliefs, estimators)
-and must recover the planted parameters of the Methods model:
+It writes response *text* for every prompt of the two datasets, so a synthetic run
+exercises the whole pipeline (cache, parsing, matrices, latent fits, beliefs,
+estimators) and must recover the planted parameters of the Methods model:
 
-    own belief (logit):     o(E)        the model's own belief from evidence E
-    about PERSON:           l = a + phi * (.)
-    D: a + phi o(E)     M: a + phi o(E_s)     C: a + phi [o(E_s) + lambda_s (o(E) - o(E_s))]
+    own belief (logit):  o(E_model)                  the evidence shown as the model's
+    about PERSON:        a + phi [o(E_p) + lambda_s (o(E_model) - o(E_p))]
 
-for each setting s (partial: E_s = E_p; false: E_f).  o(.) is the Bayes
-posterior for bespoke items, and for CKD a fixed logistic score of the
-profile fields the model is shown, with withheld fields at their cohort mean
-(a rational reader's expectation) and the flipped field flipped.
+where E_p is PERSON's evidence and E_model the model's own (E_model = E_p when the
+prompt shows only PERSON's), and lambda_s is the setting's leakage.  For CKD, o(.) is a
+fixed logistic score of the record's fields (a missing field at its cohort mean); for
+the bespoke items it is the row's Bayes answer (``normative_logodds``, and
+``full_leak_p`` for the model's evidence in C).
 
-Every call (one condition, case, run and sample) draws its belief once,
-``call_noise`` logits around the value above, and all 16 CKD outputs of that
-call are drawn from it: a Beta numeric report, logistic decisions around each
-output's implied threshold, ordered-logit Likert and bin answers, matching the
-latent model's measurement families.  Answers are written with the option text
-the prompt offers, so the first-order strict parser reads them back.  A share
-``parse_failure_rate`` of responses has no answer line, and ``think_tags``
-wraps the reasoning in ``<think>`` tags, to exercise retention and stripping.
-Comprehension follow-ups are answered correctly with probability
-``comprehension_accuracy``.  Settings: ``models.synthetic.truth`` in the config.
+Every call draws its belief once, ``call_noise`` logits around the value above; CKD
+numbers are stated from 0 to 100, decisions follow a logistic around each question's
+cutoff, and the Likert and quintile answers an ordered logit, answered by letter as
+the prompt asks.  Checks and role probes are answered correctly with probability
+``comprehension_accuracy``, as are the bespoke follow-ups.  A share
+``parse_failure_rate`` of responses has no answer, and ``think_tags`` wraps the
+reasoning in ``<think>`` tags.  Settings: ``models.synthetic.truth`` in the config.
 """
 
 from __future__ import annotations
 
 import hashlib
 import re
-from functools import lru_cache
 from typing import Any
 
 import numpy as np
 
 from second_order import config as C
-from second_order.conditions import CONDITIONS, flip_field, withheld_fields
+from second_order import datasets as DS
+from second_order.conditions import CONDITIONS
 
 DEFAULTS = {"lambda_partial": 0.5, "lambda_false": 0.3, "phi": 0.8, "intercept": 0.2, "call_noise": 0.35,
             "probability_precision": 40.0, "decision_slope": 3.0, "comprehension_accuracy": 0.9,
             "parse_failure_rate": 0.0, "think_tags": False}
-# CKD own-belief score: logit = BASE + sum weight * (value - centre).
-CKD_WEIGHTS = {"ridageyr": (0.06, 50.0), "diabetes_self_reported": (1.0, 0.0),
-               "hypertension_self_reported": (0.9, 0.0), "cvd_any": (0.7, 0.0), "bmxbmi": (0.03, 28.0),
-               "physical_activity_any": (-0.3, 0.0)}
-CKD_BASE = -2.0
-LIKERT_CUTS = np.array([-3.0, -1.8, -0.6, 0.6])
-OPTION = re.compile(r"^([A-E])\. (.+)$", flags=re.M)
+# CKD own-belief score: logit = BASE + sum weight * (value - centre); a missing field takes MEANS.
+WEIGHTS = {"age": (0.06, 50.0), "diab": (1.0, 0.0), "htn": (0.9, 0.0), "cvd": (0.7, 0.0), "bmi": (0.03, 28.0),
+           "pa": (-0.3, 0.0)}
+MEANS = {"age": 50.0, "diab": 0.15, "htn": 0.35, "cvd": 0.1, "bmi": 29.0, "pa": 0.6}
+BASE = -2.0
+FACT = re.compile(r"^.+ \((\w+)\) is (.+)\.$", flags=re.M)
+ORDINAL_CUTS = np.array([-3.0, -1.8, -0.6, 0.6])
 
 
 def truth(model: str) -> dict[str, Any]:
@@ -58,120 +55,111 @@ def rng_for(*parts: Any) -> np.random.Generator:
     return np.random.default_rng(int(digest[:16], 16))
 
 
-# ---------------------------------------------------------------- own beliefs
-@lru_cache(maxsize=1)
-def _ckd_means() -> dict[str, float]:
-    from second_order.prompts_second_order import cases
+# ---------------------------------------------------------------- beliefs
+def records(prompt: str) -> dict[str, dict[str, str]]:
+    """CKD prompt -> {"model": fields, "person": fields} for the records it shows."""
+    out = {}
+    for block in prompt.split("\n\n"):
+        head = block.split("\n", 1)[0]
+        if head.startswith("Your record"):
+            out["model"] = dict(FACT.findall(block))
+        elif "has only the following record" in head:
+            out["person"] = dict(FACT.findall(block))
+    return out
 
-    frame = cases()
-    return {f: float(frame[f].astype(float).mean()) for f in CKD_WEIGHTS}
 
-
-def own_logit(dataset: str, case_id: str, setting: str) -> float:
-    """The simulated model's own belief from the evidence of one setting (full, partial, false)."""
-    if dataset == "bespoke":
-        from second_order.bespoke import items_by_case, logit
-
-        return logit(items_by_case()[case_id].bayes(setting))
-    from second_order.prompts_second_order import cases
-
-    case = cases().loc[case_id]
-    fields = withheld_fields() if setting == "partial" else []
-    flip = flip_field() if setting == "false" else None
-    means = _ckd_means()
-    total = CKD_BASE
-    for f, (weight, centre) in CKD_WEIGHTS.items():
-        value = float(case[f]) if np.isfinite(float(case[f])) else means[f]
-        if f in fields:
-            value = means[f]
-        if f == flip:
-            value = 1.0 - value
+def score(fields: dict[str, str]) -> float:
+    total = BASE
+    for key, (weight, centre) in WEIGHTS.items():
+        raw = fields.get(key, "")
+        if raw in ("Yes", "No"):
+            value = float(raw == "Yes")
+        else:
+            try:
+                value = float(raw.split()[0])
+            except (IndexError, ValueError):  # not shown, or "Missing"
+                value = MEANS[key]
         total += weight * (value - centre)
     return float(total)
 
 
-def believed_logit(model: str, dataset: str, case_id: str, condition: str) -> float:
-    """The noiseless belief a condition's answer reports, under the Methods model."""
+def evidence_logits(dataset: str, meta: dict) -> tuple[float, float | None]:
+    """(o of the model's own evidence, o of PERSON's evidence or None)."""
+    if dataset == "bespoke":
+        own = float(meta["normative_logodds"])
+        if CONDITIONS[meta["condition"]].about == "self":
+            return own, None
+        return (float(DS.logit(float(meta["full_leak_p"]))) if meta["full_leak_p"] else own), own
+    shown = records(meta["prompt"])
+    person = score(shown["person"]) if "person" in shown else None
+    return (score(shown["model"]) if "model" in shown else person), person
+
+
+def believed_logit(model: str, dataset: str, meta: dict) -> float:
+    """The noiseless belief a prompt's answer reports, under the Methods model."""
     t = truth(model)
-    cond = CONDITIONS[condition]
-    setting = cond.setting
-    if cond.about == "self":
-        return own_logit(dataset, case_id, setting if cond.model_profile == "copy" else "full")
-    full, own = own_logit(dataset, case_id, "full"), own_logit(dataset, case_id, setting)
-    a, phi = float(t["intercept"]), float(t["phi"])
-    if cond.role == "D":
-        return a + phi * full
-    if cond.role == "M":
-        return a + phi * own
-    lam = float(t[f"lambda_{setting}"])
-    return a + phi * (own + lam * (full - own))
+    own, person = evidence_logits(dataset, meta)
+    if person is None:
+        return own
+    setting = CONDITIONS[meta["condition"]].setting
+    lam = float(t[f"lambda_{setting}"]) if setting else 0.0
+    return float(t["intercept"]) + float(t["phi"]) * (person + lam * (own - person))
 
 
 # ---------------------------------------------------------------- answers
-def threshold(output: str) -> float:
-    from second_order.prompts_second_order import specs
+def choice_value(question: str, z: float, t: dict[str, Any], rng: np.random.Generator) -> float:
+    """The meaning of the simulated choice given the call's belief z (logit)."""
+    from second_order.responses import cutoff
 
-    spec = specs()[output]
-    return float(spec.get("threshold", spec.get("implied_threshold", 0.1)))
-
-
-def choice_value(output: str, z: float, t: dict[str, Any], rng: np.random.Generator) -> float:
-    """Simulated parsed value of a choice output given the call's belief z (logit)."""
-    if output == "likert":
-        return float(1 + np.sum(1.5 * z + rng.logistic() > 1.5 * LIKERT_CUTS))
-    if output == "probability_bin_quintile":
-        from second_order.prompts_second_order import bin_boundaries
-
-        cuts = np.log(np.array(bin_boundaries())) - np.log1p(-np.array(bin_boundaries()))
-        return float(1 + np.sum(1.5 * z + rng.logistic() > 1.5 * cuts))
-    tau = threshold(output)
-    p_yes = 1 / (1 + np.exp(-float(t["decision_slope"]) * (z - np.log(tau / (1 - tau)))))
-    return float(rng.random() < p_yes)
+    if question in ("likert", "quintile"):
+        return float(1 + np.sum(1.5 * z + rng.logistic() > 1.5 * ORDINAL_CUTS))
+    c = cutoff(question) or 0.1
+    p_act = 1 / (1 + np.exp(-float(t["decision_slope"]) * (z - np.log(c / (1 - c)))))
+    return float(rng.random() < p_act)
 
 
-def option_for(output: str, prompt: str, value: float) -> str:
-    """The option text whose strict parse is ``value``."""
-    texts = _option_values(output, tuple(text for _, text in OPTION.findall(prompt)))
-    if value not in texts:
-        raise ValueError(f"no option of {output} parses to {value}")
-    return texts[value]
+def letter_for(question: str, prompt: str, value: float) -> str:
+    for letter, text in DS.options(prompt).items():
+        if DS.option_value(question, text) == value:
+            return letter
+    raise ValueError(f"no option of {question} means {value}")
 
 
-@lru_cache(maxsize=None)
-def _option_values(output: str, options: tuple[str, ...]) -> dict[float, str]:
-    from latent_beliefs.ckd.parse import parse_response
-
-    values = {}
-    for text in options:
-        values.setdefault(parse_response(output, f"x\nChoice: {text}")[0], text)
-    return values
+def wrong_statement(answer: str) -> str:
+    """A keyed comprehension answer with its first value changed."""
+    return re.sub(r"(:\s*(?:says\s+)?\"?)([A-Za-z]+)", r"\1other", answer, count=1)
 
 
 def respond(model: str, item, seed: int) -> str:
-    from second_order.comprehension import is_followup
-    from second_order import datasets as DS
+    from second_order.run_generation import FOLLOWUP
 
     t = truth(model)
     rng = rng_for(seed, item.key)
-    if is_followup(item.output):
-        q = DS.comprehension(item.dataset, item.case_id, item.condition)
-        right = rng.random() < float(t["comprehension_accuracy"])
-        pick = q.answer if right else int(rng.choice([i for i in range(len(q.options)) if i != q.answer]))
-        return f"Checking what was described.\nChoice: {chr(65 + pick)}"
-    call = rng_for(seed, model, item.case_id, item.condition, item.replicate, item.sample)
-    z = believed_logit(model, item.dataset, item.case_id, item.condition) + float(t["call_noise"]) * call.normal()
-    reasoning = "Weighing the evidence step by step."
-    if t["think_tags"]:
-        reasoning = f"<think>\n{reasoning}\n</think>\n\n{reasoning}"
+    right = rng.random() < float(t["comprehension_accuracy"])
+    if item.output == FOLLOWUP:
+        answer = DS.row(item.dataset, item.case_id, item.condition, "probability")["comprehension_a"]
+        return answer if right else wrong_statement(answer)
+    meta = DS.row(item.dataset, item.case_id, item.condition, item.output, item.replicate)
+    question = item.output.split("/")[0]
+    if question in ("check", "role_check"):
+        letters = list(DS.options(item.prompt))
+        return meta["check_answer"] if right else next(x for x in letters if x != meta["check_answer"])
+    call = rng_for(seed, model, item.dataset, item.case_id, item.condition, item.replicate, item.sample)
+    z = believed_logit(model, item.dataset, meta) + float(t["call_noise"]) * call.normal()
     if rng.random() < float(t["parse_failure_rate"]):
-        return reasoning + "\nI cannot give a single answer."
-    if item.output == "probability":
+        return "I cannot give a single answer."
+    if question == "probability":
         p = 1 / (1 + np.exp(-z))
         k = float(t["probability_precision"])
-        report = float(np.clip(rng.beta(p * k, (1 - p) * k), 0.001, 0.999))
-        return f'{reasoning}\n{{"probability": {report:.3f}}}'
-    value = choice_value(item.output, z, t, rng)
-    return f"{reasoning}\nChoice: {option_for(item.output, item.prompt, value)}"
+        report = float(rng.beta(p * k, (1 - p) * k))
+        if item.dataset == "bespoke":
+            reasoning = "Weighing the evidence step by step."
+            if t["think_tags"]:
+                reasoning = f"<think>\n{reasoning}\n</think>\n\n{reasoning}"
+            return f'{reasoning}\n{{"probability": {np.clip(report, 0.001, 0.999):.3f}}}'
+        return str(int(np.clip(round(100 * report), 1, 99)))
+    letter = letter_for(question, item.prompt, choice_value(question, z, t, rng))
+    return f"{letter}. {DS.options(item.prompt)[letter]}" if rng.random() < 0.2 else letter
 
 
 def generate(model: str, items: list, seed: int) -> list[dict[str, Any]]:

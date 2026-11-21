@@ -1,17 +1,18 @@
-"""Parse cached responses with the unchanged first-order parser and build matrices.
+"""Parse cached responses and build the analysis tables.
 
-``data/responses/{model}/{dataset}/{condition}.parquet``: one row per case,
-output, run (``replicate``) and ``sample`` with raw text, parsed value and parse
-status.  Nothing is imputed; failures are logged in the parse status column and
-counted in the retention table.  Reasoning in ``<think>`` tags (Qwen3 with
-thinking on) is removed before parsing.
+``collect`` writes ``data/responses/{model}/{dataset}/{condition}.parquet``: one row per
+case, output, run (``replicate``) and ``sample``, with the raw text, the parsed value
+and a parse status.  Nothing is imputed: a response that does not parse is a
+``parse_failure`` and is counted in the retention table.  Reasoning in ``<think>``
+tags is removed before parsing.  Values are the probability in [0, 1] (CKD: the
+stated 0-100 divided by 100), the meaning of the chosen option (1 = screen or
+accept, 0 = not; 1-5 for the Likert and quintile scales), or, for the CKD checks
+and role probes, 1 if the chosen letter is the keyed answer.
 
-``matrix(long)`` gives one row per (case, condition, replicate) with the 16
-dataset columns used by ``latent_beliefs.latent.domains.CKD_SPECS``, a
-completeness flag, and a seeded split for the latent fit (20% test, then 20% of
-the rest validation, as in the first-order datasets).
-
-``comprehension(model, dataset, ...)`` parses and scores the follow-up answers.
+``matrix`` gives the CKD latent-fit matrix: one row per (case, condition, replicate),
+one column per question and option order (``latent_specs``), the number of parsed
+outputs, ``complete`` (all parsed), ``usable`` (at least ``latent.min_output_share`` parsed;
+the latent model masks the missing ones) and a seeded patient-level split.
 """
 
 from __future__ import annotations
@@ -22,24 +23,15 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-from latent_beliefs.datasets import DOMAIN_SPECS
+from latent_beliefs.latent.model import OutputSpec
 from second_order import config as C
 from second_order import datasets as DS
-from second_order.comprehension import parse_choice
-from second_order.prompts_second_order import OUTPUTS
-from second_order.run_generation import comprehension_items, experiment_items, lookup
+from second_order.bespoke import score_comprehension
+from second_order.conditions import CONDITIONS
+from second_order.run_generation import FOLLOWUP, comprehension_items, experiment_items, lookup
 
-# first-order output (prompt variant) -> dataset / likelihood column
-DATASET_COLUMN = {variant: column for column, variant, _ in DOMAIN_SPECS["ckd"].outputs}
-COLUMNS = [column for column, _, _ in DOMAIN_SPECS["ckd"].outputs]
 UNIT = ["case_id", "replicate", "sample"]  # one model call per output
-
-REFUSAL = re.compile(
-    r"(cannot (?:know|be known|determine|read|predict)|can't (?:know|read|predict)|impossible to know|"
-    r"no way (?:to|of) know|not possible to know|I (?:cannot|can't) speak for|"
-    r"would depend on (?:his|her|their|your) (?:own|personal))",
-    flags=re.I,
-)
+CHECKS = ("check", "role_check")
 THINK = re.compile(r"<think>.*?</think>", flags=re.S)
 
 
@@ -55,44 +47,55 @@ def responses_path(model: str, dataset: str, condition: str):
     return C.RESPONSES / model / dataset / f"{condition}.parquet"
 
 
+# ---------------------------------------------------------------- latent specs
+def cutoff(question_id: str) -> float | None:
+    """The probability at which a decision should flip: 1 / (1 + k) for threshold_k, bet_k and cost_k."""
+    kind, _, k = question_id.partition("_")
+    return 1.0 / (1.0 + float(k)) if kind in ("threshold", "bet", "cost") else None
+
+
 @lru_cache(maxsize=None)
-def split(model: str) -> pd.Series:
-    """Seeded train/val/test split over all CKD cases (the latent fit's split)."""
-    from second_order.fit_pooled import stable_seed
-    from second_order.prompts_second_order import cases
+def latent_specs(batteries: tuple[str, ...]) -> tuple[OutputSpec, ...]:
+    """One output per question and option order in the latent batteries (each its own item parameters)."""
+    frame = DS.rows("ckd", list(batteries))
+    outputs = sorted(set(frame.output[~frame.question_id.isin(CHECKS)]),
+                     key=lambda o: (o != "probability/normal", o))
+    specs = []
+    for output in outputs:
+        question = output.split("/")[0]
+        if question == "probability":
+            specs.append(OutputSpec(output, "probability"))
+        elif question in ("likert", "quintile"):
+            specs.append(OutputSpec(output, "ordinal", n_categories=5))
+        else:
+            specs.append(OutputSpec(output, "binary", nominal_threshold=cutoff(question)))
+    return tuple(specs)
 
-    ids = sorted(cases().index)
-    rng = np.random.default_rng(stable_seed(int(C.load()["seed"]), model, "split"))
-    order = rng.permutation(len(ids))
-    n_test = int(round(0.2 * len(ids)))
-    n_val = int(round(0.2 * (len(ids) - n_test)))
-    labels = np.array(["train"] * len(ids), dtype=object)
-    labels[order[:n_test]] = "test"
-    labels[order[n_test:n_test + n_val]] = "val"
-    return pd.Series(labels, index=ids, name="split")
+
+def configured_specs() -> tuple[OutputSpec, ...]:
+    return latent_specs(tuple(C.load()["latent"]["batteries"]))
 
 
-def collect(model: str, case_ids: list[str], conditions: list[str], write: bool = True,
-            dataset: str = "ckd") -> pd.DataFrame:
-    items = experiment_items(model, dataset, case_ids, conditions)
-    records = lookup(items)
+# ---------------------------------------------------------------- parsing
+def collect(model: str, dataset: str, case_ids: list[str], write: bool = True) -> pd.DataFrame:
+    items = experiment_items(model, dataset, case_ids)
     rows = []
-    for item, record in zip(items, records):
+    for item, record in zip(items, lookup(items)):
+        meta = DS.row(dataset, item.case_id, item.condition, item.output, item.replicate)
         base = {"case_id": item.case_id, "condition": item.condition, "output": item.output,
-                "replicate": item.replicate, "sample": item.sample}
+                "battery": meta["battery"], "replicate": item.replicate, "sample": item.sample}
         if record is None:
-            rows.append({**base, "status": "not_generated", "text": None, "value": np.nan,
-                         "refusal_like": False, "source": None})
+            rows.append({**base, "status": "not_generated", "text": None, "value": np.nan})
             continue
         if not record["ok"]:
-            status, value = "call_error", None
-        else:
-            value, _ = DS.parse(dataset, item.output, visible_text(record["text"]))
-            status = "parsed" if value is not None else "parse_failure"
-        rows.append({**base, "status": status, "text": record["text"],
-                     "value": np.nan if value is None else float(value),
-                     "refusal_like": bool(REFUSAL.search(record["text"] or "")),
-                     "source": record.get("source", "cache")})
+            rows.append({**base, "status": "call_error", "text": record["text"], "value": np.nan})
+            continue
+        value, _ = DS.parse(dataset, item.output, item.prompt, visible_text(record["text"]))
+        if value is not None and item.output.split("/")[0] in CHECKS:
+            letter = DS.parse_letter(visible_text(record["text"]), DS.options(item.prompt))
+            value = float(letter == meta["check_answer"])
+        rows.append({**base, "status": "parsed" if value is not None else "parse_failure",
+                     "text": record["text"], "value": np.nan if value is None else float(value)})
     frame = pd.DataFrame(rows)
     frame.insert(0, "model", model)
     frame.insert(1, "dataset", dataset)
@@ -104,61 +107,87 @@ def collect(model: str, case_ids: list[str], conditions: list[str], write: bool 
     return frame
 
 
+@lru_cache(maxsize=None)
+def split(model: str) -> pd.Series:
+    """Seeded train/val/test split over CKD patients (the latent fit's split)."""
+    from second_order.fit_pooled import stable_seed
+
+    ids = DS.case_ids("ckd")
+    rng = np.random.default_rng(stable_seed(int(C.load()["seed"]), model, "split"))
+    order = rng.permutation(len(ids))
+    n_test = int(round(0.2 * len(ids)))
+    n_val = int(round(0.2 * (len(ids) - n_test)))
+    labels = np.array(["train"] * len(ids), dtype=object)
+    labels[order[:n_test]] = "test"
+    labels[order[n_test:n_test + n_val]] = "val"
+    return pd.Series(labels, index=ids, name="split")
+
+
 def matrix(long: pd.DataFrame) -> pd.DataFrame:
+    """The CKD latent-fit matrix: (case, condition, replicate) x every latent output."""
     model = long["model"].iloc[0]
-    generated = long[long.status != "not_generated"]
+    names = [s.name for s in configured_specs()]
+    conditions = set(DS.rows("ckd", list(C.load()["latent"]["batteries"])).condition)
+    keep = long[(long.status != "not_generated") & long.output.isin(names) & long.condition.isin(conditions)]
     keys = ["case_id", "condition", "replicate"]
-    wide = generated.pivot_table(index=keys, columns="output", values="value", aggfunc="first", dropna=False)
-    wide = wide.reindex(columns=list(OUTPUTS)).rename(columns=DATASET_COLUMN)
-    n_generated = generated.groupby(keys).size().reindex(wide.index)
+    wide = keep.pivot_table(index=keys, columns="output", values="value", aggfunc="first", dropna=False)
+    wide = wide.reindex(columns=names)
+    n_answered = keep.groupby(keys).size().reindex(wide.index)
     wide = wide.reset_index()
-    wide["complete"] = wide[COLUMNS].notna().all(axis=1) & (n_generated.to_numpy() == len(OUTPUTS))
+    wide["n_outputs"] = wide[names].notna().sum(axis=1)
+    wide["complete"] = (wide.n_outputs == len(names)) & (n_answered.to_numpy() == len(names))
+    wide["usable"] = wide.n_outputs >= float(C.load()["latent"].get("min_output_share", 1.0)) * len(names)
     wide["split"] = wide["case_id"].map(split(model)).fillna("none")
     wide.insert(0, "model", model)
     return wide
 
 
 def retention(long: pd.DataFrame) -> pd.DataFrame:
-    """Per condition: share of calls (case, run, sample) with every output parsed."""
+    """Per condition: share of calls answered and parsed, over the belief questions."""
     rows = []
     for (model, dataset, condition), part in long.groupby(["model", "dataset", "condition"]):
-        generated = part[part.status != "not_generated"]
+        generated = part[(part.status != "not_generated") & ~part.output.str.split("/").str[0].isin(CHECKS)]
         if generated.empty:
             continue
-        need = long.loc[long.dataset == dataset, "output"].nunique()
-        per_unit = generated.groupby(UNIT)["status"].agg(lambda s, n=need: (s == "parsed").all() and len(s) == n)
-        rows.append({
-            "model": model, "dataset": dataset, "condition": condition,
-            "cases_generated": int(per_unit.size), "cases_complete": int(per_unit.sum()),
-            "retention": float(per_unit.mean()),
-            "responses": int(len(generated)),
-            "parse_failures": int((generated.status == "parse_failure").sum()),
-            "call_errors": int((generated.status == "call_error").sum()),
-            "refusal_like_responses": int(generated.refusal_like.sum()),
-        })
+        rows.append({"model": model, "dataset": dataset, "condition": condition,
+                     "responses": int(len(generated)), "parsed": int((generated.status == "parsed").sum()),
+                     "retention": float((generated.status == "parsed").mean()),
+                     "parse_failures": int((generated.status == "parse_failure").sum()),
+                     "call_errors": int((generated.status == "call_error").sum())})
     return pd.DataFrame(rows)
 
 
-def comprehension(model: str, dataset: str, case_ids: list[str], conditions: list[str],
-                  write: bool = True) -> pd.DataFrame:
-    """Parsed and scored comprehension answers: one row per follow-up.
+# ---------------------------------------------------------------- checks and comprehension
+def checks(long: pd.DataFrame) -> pd.DataFrame:
+    """CKD checks and role probes, one row per answer, with the keyed relation and record order."""
+    part = long[long.output.str.split("/").str[0].isin(CHECKS) & (long.status != "not_generated")].copy()
+    if part.empty:
+        return pd.DataFrame()
+    meta = [DS.row("ckd", c, k, o, r) for c, k, o, r in zip(part.case_id, part.condition, part.output, part.replicate)]
+    for column in ("check_fact", "check_relation", "block_order", "check_answer"):
+        part[column] = [m[column] for m in meta]
+    part["setting"] = part.condition.map(lambda c: CONDITIONS[c].setting)
+    part["order"] = part.output.str.split("/").str[1]
+    part["correct"] = part.value.where(part.status == "parsed", 0.0).where(part.status != "call_error")
+    return part.drop(columns=["text"])
 
-    ``correct`` is scored for answered follow-ups only (parsed, or unparseable = wrong);
-    follow-ups not generated yet and call errors are missing, not wrong.
-    """
-    items, _ = comprehension_items(model, dataset, case_ids, conditions)
+
+def comprehension(model: str, dataset: str, case_ids: list[str], write: bool = True) -> pd.DataFrame:
+    """Bespoke follow-ups: one row each, scored against the row's keyed answer."""
+    items, _ = comprehension_items(model, dataset, case_ids)
     rows = []
     for item, record in zip(items, lookup(items)):
-        q = DS.comprehension(dataset, item.case_id, item.condition)
-        choice = parse_choice(visible_text(record["text"]), q.options) if record and record["ok"] else None
+        meta = DS.row(dataset, item.case_id, item.condition, "probability")
+        text = visible_text(record["text"]) if record and record["ok"] else None
+        score = score_comprehension(meta["comprehension_q"], meta["comprehension_a"], text)
         status = ("not_generated" if record is None else "call_error" if not record["ok"]
-                  else "parsed" if choice is not None else "parse_failure")
+                  else "parsed" if score is not None else "parse_failure")
         rows.append({"model": model, "dataset": dataset, "case_id": item.case_id, "condition": item.condition,
-                     "output": item.output.split(":", 1)[1], "replicate": item.replicate, "sample": item.sample,
-                     "status": status, "choice": np.nan if choice is None else choice, "answer": q.answer,
+                     "output": FOLLOWUP, "replicate": item.replicate, "sample": item.sample, "status": status,
+                     "check_relation": meta["check_relation"], "value": np.nan if score is None else score,
                      "text": None if record is None else record["text"]})
     frame = pd.DataFrame(rows, columns=["model", "dataset", "case_id", "condition", "output", "replicate",
-                                        "sample", "status", "choice", "answer", "text"])
+                                        "sample", "status", "check_relation", "value", "text"])
     frame["correct"] = scored(frame)
     if write and not frame.empty:
         path = responses_path(model, dataset, "comprehension")
@@ -167,24 +196,15 @@ def comprehension(model: str, dataset: str, case_ids: list[str], conditions: lis
     return frame
 
 
-ANSWERED = ("parsed", "parse_failure")
-
-
 def scored(frame: pd.DataFrame) -> pd.Series:
-    """1.0 correct, 0.0 wrong or unparseable, NaN not answered (from status, choice and answer)."""
-    correct = (frame.status == "parsed") & (frame.choice == frame.answer)
-    return correct.astype(float).where(frame.status.isin(ANSWERED))
+    """1.0 correct, 0.0 wrong or unparseable, NaN not answered (not generated, or a call error)."""
+    answered = frame.status.isin(("parsed", "parse_failure"))
+    return frame.value.where(frame.status == "parsed", 0.0).where(answered)
 
 
-def comprehension_summary(frame: pd.DataFrame) -> pd.DataFrame:
+def accuracy_summary(frame: pd.DataFrame, by: list[str]) -> pd.DataFrame:
+    """Accuracy over answered checks, per group."""
     if frame.empty:
         return pd.DataFrame()
-    frame = frame.assign(correct=scored(frame))
-    g = frame.groupby(["model", "dataset", "condition"])
-    return pd.DataFrame({
-        "follow_ups": g.size(), "answered": g.correct.count(),
-        "parsed": g.status.apply(lambda s: int((s == "parsed").sum())),
-        "accuracy": g.correct.mean(),  # over answered follow-ups
-        "cases_all_correct": g.apply(lambda p: int((p.groupby("case_id").correct.min() == 1).sum())),
-        "cases": g.case_id.nunique(),
-    }).reset_index()
+    g = frame.dropna(subset=["correct"]).groupby(by)
+    return pd.DataFrame({"answered": g.size(), "accuracy": g.correct.mean()}).reset_index()

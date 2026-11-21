@@ -11,7 +11,7 @@ import pandas as pd
 
 from second_order import leakage as L
 from second_order.beliefs import COLUMNS, clip_logit
-from second_order.conditions import CONDITIONS, setting_conditions
+from second_order.conditions import CONDITIONS, references, setting_conditions
 from second_order.fit_pooled import groups
 from second_order.run_generation import Cache, Item, item_key
 
@@ -20,7 +20,7 @@ PHI, ALPHA = 0.8, 0.3
 
 def methods_beliefs(lam: dict, phi: float = PHI, alpha: float = ALPHA, n: int = 4000, noise: float = 0.5,
                     seed: int = 0, shrink: float = 1.0, second_run_is_noise: bool = False,
-                    curvature: float = 0.0) -> pd.DataFrame:
+                    curvature: float = 0.0, dataset: str = "bespoke") -> pd.DataFrame:
     """The Methods model with measurement noise and a second run of A, B and B_F.
 
     Own beliefs a (full) and a - delta (PERSON's evidence); about PERSON, l = alpha + phi * (.):
@@ -34,11 +34,12 @@ def methods_beliefs(lam: dict, phi: float = PHI, alpha: float = ALPHA, n: int = 
             "false": np.where(rng.random(n) < 0.5, 1.0, -1.0) * rng.normal(0.9, 0.2, n)}
     truth = {("A", 0): a, ("A", 1): a}
     for setting, gap in gaps.items():
-        k = setting_conditions(setting)
+        k = setting_conditions(dataset, setting)
         b = a - gap
         truth[(k["B"], 0)] = truth[(k["B"], 1)] = b
-        truth[(k["D"], 0)] = alpha + phi * a
-        truth[(k["M"], 0)] = alpha + phi * b
+        for m, d in references(dataset).values():
+            truth[(k[d], 0)] = alpha + phi * a
+            truth[(k[m], 0)] = alpha + phi * b
         truth[(k["C"], 0)] = alpha + phi * (b + lam[setting] * gap) + curvature * gap**2
     rows = []
     for (cond, rep), values in truth.items():
@@ -55,8 +56,10 @@ def methods_beliefs(lam: dict, phi: float = PHI, alpha: float = ALPHA, n: int = 
     return frame
 
 
-def table(frame: pd.DataFrame, resamples: int = 20) -> pd.DataFrame:
-    return L.leakage_table(frame, resamples=resamples, seed=1).set_index(["setting", "statistic"])
+def table(frame: pd.DataFrame, resamples: int = 20, dataset: str = "bespoke",
+          reference: str = "single_record") -> pd.DataFrame:
+    t = L.leakage_table(frame, dataset, resamples=resamples, seed=1)
+    return t[t.reference == reference].set_index(["setting", "statistic"])
 
 
 class MethodsEstimators(unittest.TestCase):
@@ -146,16 +149,38 @@ class MethodsEstimators(unittest.TestCase):
             self.assertIn("rho", t.loc[key, "blank_reason"])
         self.assertTrue(np.isfinite(t.loc[("partial", "lambda"), "estimate"]))
 
-    def test_ratio_rule_blanks_lambda_when_d_and_m_coincide(self):
+    def test_fieller_set_is_unbounded_when_d_and_m_coincide(self):
         frame = methods_beliefs(self.lam, n=200)
         d = frame[frame.condition == "D"].set_index("case_id").value
         m = frame.condition == "M"
         rng = np.random.default_rng(0)
         frame.loc[m, "value"] = frame.loc[m, "value_calibrated"] = (
             d.loc[frame.case_id[m]].to_numpy() + 0.5 * rng.normal(size=m.sum()))
-        row = table(frame, resamples=200).loc[("partial", "lambda")]
-        self.assertTrue(np.isnan(row.estimate))
-        self.assertIn("beta_D", row.blank_reason)
+        t = table(frame, resamples=200)
+        self.assertTrue(np.isfinite(t.loc[("partial", "lambda"), "estimate"]))  # reported, with its slopes
+        self.assertIn(t.loc[("partial", "lambda_fieller"), "interval"], ("exclusive", "unbounded"))
+        self.assertEqual(self.t.loc[("partial", "lambda_fieller"), "interval"], "bounded")
+
+    def test_fieller_set_holds_the_estimate(self):
+        row = self.t.loc[("partial", "lambda_fieller")]
+        self.assertLess(row.ci_lower, self.get("partial", "lambda"))
+        self.assertGreater(row.ci_upper, self.get("partial", "lambda"))
+        rng = np.random.default_rng(0)
+        weak = L.fieller(1.0, 0.01, rng.normal(1, 0.1, 500), rng.normal(0.01, 0.1, 500))
+        self.assertEqual(weak["interval"], "exclusive")  # beta_D indistinguishable from 0
+        tight = L.fieller(0.5, 1.0, rng.normal(0.5, 0.01, 500), rng.normal(1.0, 0.01, 500))
+        self.assertEqual(tight["interval"], "bounded")
+        self.assertLess(tight["ci_lower"], 0.5)
+        self.assertGreater(tight["ci_upper"], 0.5)
+
+    def test_ckd_reports_both_references(self):
+        frame = methods_beliefs(self.lam, noise=0.0, n=300, dataset="ckd")
+        full = L.leakage_table(frame, "ckd", resamples=5, seed=1)
+        self.assertEqual(set(full.reference), {"two_record", "single_record"})
+        for reference in ("two_record", "single_record"):
+            t = full[full.reference == reference].set_index(["setting", "statistic"])
+            self.assertAlmostEqual(t.loc[("partial", "lambda"), "estimate"], 0.5, places=8)
+            self.assertAlmostEqual(t.loc[("both", "phi"), "estimate"], PHI, places=8)
 
     def test_without_a_second_run_only_lambda_and_its_checks(self):
         frame = methods_beliefs(self.lam, n=200)
@@ -171,24 +196,26 @@ class MethodsEstimators(unittest.TestCase):
 
 class FitGroups(unittest.TestCase):
     def test_pooled_groups_follow_the_condition_table(self):
-        own, person = groups(list(CONDITIONS))
+        own, person = groups(["A", "B", "B_F", "D", "D2", "M", "M2", "C", "M_F", "M2_F", "C_F"])
         self.assertEqual(set(own), {"A", "B", "B_F"})
-        self.assertEqual(set(person), {"C", "M", "D", "C_F", "M_F", "D_F"})
-        self.assertEqual(groups(["A", "B", "C", "D"]), [("A", "B"), ("C", "D")])
+        self.assertEqual(set(person), {"D", "D2", "M", "M2", "C", "M_F", "M2_F", "C_F"})
+        self.assertEqual(groups(["A", "B", "C", "D"]), [("A", "B"), ("D", "C")])
+        self.assertTrue(all(CONDITIONS[c].about == "person" for c in person))
 
 
 class GenerationCache(unittest.TestCase):
     def test_key_is_stable_and_distinguishes_fields(self):
-        k = item_key("m", "case", "C", "probability", 0)
-        self.assertEqual(k, item_key("m", "case", "C", "probability", 0))
-        self.assertEqual(len({k, item_key("m", "case", "C_F", "probability", 0),
-                              item_key("m", "case", "C", "probability", 1),
-                              item_key("m2", "case", "C", "probability", 0)}), 4)
+        k = item_key("m", "ckd", "case", "C", "probability/normal", 0)
+        self.assertEqual(k, item_key("m", "ckd", "case", "C", "probability/normal", 0))
+        self.assertEqual(len({k, item_key("m", "ckd", "case", "C_F", "probability/normal", 0),
+                              item_key("m", "ckd", "case", "C", "probability/normal", 1),
+                              item_key("m", "bespoke", "case", "C", "probability/normal", 0),
+                              item_key("m2", "ckd", "case", "C", "probability/normal", 0)}), 5)
 
     def test_cache_roundtrip_and_resume(self):
         with tempfile.TemporaryDirectory() as tmp:
             cache = Cache("m", root=Path(tmp))
-            item = Item("m", "case", "B", "likert", 0, "prompt")
+            item = Item("m", "case", "B", "likert/normal", 0, "prompt")
             cache.append([{"key": item.key, "prompt_sha": item.prompt_sha, "text": "x", "ok": True}])
             again = Cache("m", root=Path(tmp))
             self.assertIn(item.key, again)

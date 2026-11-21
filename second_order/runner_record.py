@@ -9,7 +9,7 @@ value below is the one the run used.  Writes into ``runs/<run_id>/``:
   prompts, generation per model, latent fit, estimators, bootstrap, seeds);
 * ``record/estimator.md``: the estimators, as implemented (``leakage.py``);
 * ``record/usage.json``: calls, errors, tokens and wall-clock per model and dataset;
-* ``record/example_prompts_ckd.md``: one CKD case in every condition, and its follow-ups;
+* ``record/example_prompts.md``: one CKD patient and one bespoke item in every condition;
 * ``RUN_REPORT.md``: what ran, on what, with which settings, the results and the figures.
 """
 
@@ -25,26 +25,28 @@ import pandas as pd
 
 from latent_beliefs.latent.model import FitConfig
 from second_order import config as C
+from second_order import datasets as DS
 from second_order import leakage
-from second_order.bespoke import FORMAT, table as bespoke_table
-from second_order.comprehension import is_followup
-from second_order.conditions import CONDITIONS, SETTINGS, field_label, flip_field, withheld_fields
-from second_order.fit_pooled import PROBABILITY_EPSILON, QUADRATURE_POINTS, SUBSETS
-from second_order.prompts_second_order import (OUTPUTS, PERSON, bin_boundaries, build_prompt, comprehension,
-                                               output_kind, specs)
+from second_order.conditions import CONDITIONS, SETTINGS, references
+from second_order.fit_pooled import PROBABILITY_EPSILON, QUADRATURE_POINTS
 from second_order.report import display, md_table
-from second_order.run_generation import sampling, settings_signature, template_kwargs
+from second_order.responses import configured_specs
+from second_order.run_generation import FOLLOWUP, sampling, settings_signature, template_kwargs
 
 ESTIMATOR = """# Estimators, as implemented
 
-All beliefs are on the log-odds scale. Stated probabilities are clipped to [0.01, 0.99]
-before the logit. Latent beliefs are posterior means of logit z from the pooled
-Smolin & Wilder fit of the believer's family (own belief: A and every B; PERSON: every C,
-M and D). Per case, in each setting (partial: B, C, M, D; false: B_F, C_F, M_F, D_F):
+All beliefs are on the log-odds scale. Stated probabilities (CKD: the 0-100 answer
+divided by 100) are clipped to [0.01, 0.99] before the logit. Latent beliefs are
+posterior means of logit z from the pooled Smolin & Wilder fit of the believer's family
+(own belief: A and every B; PERSON: every M, D, M2, D2 and C), with each CKD question in
+each option order an output with its own item parameters. Per case (CKD patient or
+bespoke item), in each setting (partial; false: the _F conditions) and for each
+no-leakage reference of C (CKD two_record: M2 and D2, the headline; single_record: M and
+D, as in the Methods):
 
-    x   = l_A  - l_B                    the model's own gap (main run, replicate 0)
-    x'  = l_A' - l_B'                   the same gap from an independent second run (replicate 1)
-    beta_D = slope of (l_D - l_M) on x  (OLS with intercept)
+    x   = l_A  - l_B                    the model's own gap (replicate 0)
+    x'  = l_A' - l_B'                   the same gap from the independent second replicate
+    beta_D = slope of (l_D - l_M) on x  (OLS with intercept; M, D = the reference's conditions)
     beta_C = slope of (l_C - l_M) on x
 
     lambda = beta_C / beta_D            leakage (the Wald estimator), per setting
@@ -57,9 +59,16 @@ rho, phi and tau use calibrated values (latent posterior means de-shrunk with ea
 own calibration line; equal to the raw values for stated probabilities). lambda uses raw
 values; it is a ratio of slopes from one fit, so shrinkage cancels.
 
-Uncertainty: paired bootstrap over cases (bespoke: over items), 95% percentile
-intervals, item parameters held fixed. Ratio rule: a ratio is blanked when its
-denominator's interval includes 0 (lambda: beta_D; tau: rho; phi: pooled rho).
+Uncertainty: paired bootstrap over patients (CKD) or items (bespoke), carrying all of a
+case's conditions and replicates together; 95% percentile intervals, item parameters
+held fixed. lambda also has a 95% Fieller confidence set from the bootstrap covariance of
+beta_C and beta_D, unbounded when beta_D is weak. Ratio rule: any other ratio is blanked
+when its denominator's interval includes 0 (tau: rho; phi: pooled rho).
+
+Also reported (CKD): lambda by assigned record order; false-record lambda for the
+randomized sicker and healthier edits (64 patients, bootstrap within label x direction);
+the comprehension checks; the role-swap gaps and probe pairs. Bespoke: placebo gaps, the
+report-assignment control (C_ctrl_F - D_F), answers against the Bayes answer.
 
 Checks of the modelling assumptions:
 - phi shared by the settings: each setting's own phi_setting = beta_D / rho, and diff_phi_setting;
@@ -85,35 +94,42 @@ def available(compute):
 def constants() -> dict:
     cfg = C.load()
     models = list(cfg["experiment"]["models"])
-    flip = flip_field()
     fit = FitConfig(progress_every=0, **(cfg.get("latent_fit") or {}))
+    sets = cfg["datasets"]
     return {
-        "design": {
-            "settings": SETTINGS, "conditions": {c: asdict(CONDITIONS[c]) for c in cfg["experiment"]["conditions"]},
-            "replicates": cfg["experiment"]["replicates"], "comprehension": cfg["experiment"]["comprehension"],
-            "camerer_w": cfg["experiment"]["camerer_w"], "person_name_in_prompts": PERSON["A"],
-        },
+        "design": {"settings": SETTINGS, "conditions": {k: asdict(c) for k, c in CONDITIONS.items()},
+                   "references": {d: references(d) for d in ("ckd", "bespoke")},
+                   "camerer_w": cfg["experiment"]["camerer_w"]},
         "ckd": available(lambda: {
-            "cases": cfg["main_cases"], "withheld_fields_partial": {f: field_label(f) for f in withheld_fields()},
-            "flipped_field_false_belief": {flip: field_label(flip)},
-            "outputs": {o: {"kind": output_kind(o), **{k: v for k, v in specs()[o].items() if k != "builder"}}
-                        for o in OUTPUTS},
-            "probability_bin_boundaries": bin_boundaries(),
+            "dir": str(DS.ckd_dir()), "batteries": sets["ckd"]["batteries"], "patients": cfg["main_cases"],
+            "checksums_ok": DS.ckd_checksums(),
+            "prompts_per_battery": {b: int(len(DS.rows("ckd", [b]))) for b in sets["ckd"]["batteries"]},
+            "person_names": sorted(DS.patients().person_name.unique()),
         }),
-        "bespoke": {"items_file": str(C.bespoke_items_path()), "samples": cfg["bespoke"]["samples"],
-                    "answer_format": FORMAT, "items": available(lambda: bespoke_table().to_dict(orient="records"))},
+        "bespoke": available(lambda: {
+            "file": sets["bespoke"]["file"], "samples": sets["bespoke"]["samples"],
+            "replicates": sets["bespoke"]["replicates"], "items": DS.case_ids("bespoke"),
+            "placebo_items": sorted(DS.placebo_ids()), "prompts": int(len(DS.rows("bespoke"))),
+            "person_names": sorted(DS.rows("bespoke").person.unique()),
+        }),
         "generation": {m: {"backend": C.model_config(m)["backend"], "weights": C.model_config(m).get("path"),
-                           "revision": C.model_config(m).get("revision"), "sampling": sampling(m),
-                           "chat_template": template_kwargs(m), "settings_signature": settings_signature(m),
+                           "revision": C.model_config(m).get("revision"),
+                           "sampling": {d: sampling(m, d) for d in C.datasets_for(m)},
+                           "chat_template": template_kwargs(m),
+                           "settings_signature": {d: settings_signature(m, d) for d in C.datasets_for(m)},
                            "max_model_len": C.model_config(m).get("max_model_len"),
                            "batch_size": C.model_config(m).get("batch_size"),
                            "system_prompt": None} for m in models},
-        "latent_fit": {"fit_config": {f.name: getattr(fit, f.name) for f in fields(fit)},
-                       "quadrature_points": QUADRATURE_POINTS, "probability_epsilon": PROBABILITY_EPSILON,
-                       "output_subsets": SUBSETS, "calibration_simulated_cases": 20000,
-                       "split": "seeded per model: 20% test, then 20% of the rest validation"},
+        "latent_fit": available(lambda: {
+            "fit_config": {f.name: getattr(fit, f.name) for f in fields(fit)}, "batteries": cfg["latent"]["batteries"],
+            "anchor_cutoffs": bool(cfg["latent"].get("anchor_cutoffs")),
+            "outputs": {s.name: {"kind": s.kind, "cutoff": s.nominal_threshold} for s in configured_specs()},
+            "quadrature_points": QUADRATURE_POINTS, "probability_epsilon": PROBABILITY_EPSILON,
+            "calibration_simulated_cases": 20000,
+            "split": "seeded per model over patients: 20% test, then 20% of the rest validation"}),
         "estimators": {"ratio_rule_denominators": leakage.DENOMINATOR, "min_cases_per_sign": leakage.MIN_SIGN_CASES,
                        "min_cases_per_third": leakage.MIN_THIRD_CASES, "logit_clip": [0.01, 0.99],
+                       "fieller_z": leakage.FIELLER_Z,
                        "bootstrap_resamples": cfg["analysis"]["bootstrap_resamples"], "interval": "95% percentile",
                        "seed": cfg["seed"]},
         "seed": cfg["seed"],
@@ -127,7 +143,7 @@ def usage(run_dir: Path) -> dict:
         with path.open() as handle:
             for line in handle:
                 r = json.loads(line)
-                stage = "comprehension" if is_followup(r.get("output", "")) else "answers"
+                stage = "comprehension" if r.get("output") == FOLLOWUP else "answers"
                 u = out[path.stem][f"{r.get('dataset', 'ckd')}/{stage}"]
                 u["calls"] += 1
                 u["errors"] += not r.get("ok", False)
@@ -140,15 +156,23 @@ def usage(run_dir: Path) -> dict:
     return json.loads(json.dumps(out))
 
 
-def example_prompts(model: str) -> str:
-    case_id = sorted(__import__("second_order.prompts_second_order", fromlist=["cases"]).cases().index)[0]
-    lines = [f"# One CKD case ({case_id}) in every condition, as sent to {model}\n\n"
-             "Numeric probability output; the other 15 outputs share each prompt's profile and paragraph.\n"]
-    for cond in C.load()["experiment"]["conditions"]:
-        lines.append(f"\n## {cond}\n\n```\n{build_prompt(case_id, cond, 'probability')}```\n")
-        if CONDITIONS[cond].role == "C":
-            q = comprehension(case_id, cond)
-            lines.append(f"\nComprehension follow-up (correct: {q.answer_letter}):\n\n```\n{q.question}```\n")
+def example_prompts() -> str:
+    """One CKD patient and one bespoke item in every condition, exactly as sent."""
+    ckd = DS.rows("ckd", list(DS.CKD_FILES))
+    case_id = sorted(ckd.case_id.unique())[0]
+    lines = [f"# CKD patient {case_id} in every condition\n\nThe probability question (and each check, probe "
+             "and role swap); the other questions share each condition's records.\n"]
+    pick = ckd[(ckd.case_id == case_id) & (ckd.replicate == 0)
+               & ckd.output.isin(["probability/normal", "check/normal", "role_check/normal"])]
+    for r in pick.itertuples():
+        lines.append(f"\n## {r.condition} / {r.output}\n\n```\n{r.prompt}\n```\n")
+    bespoke = DS.rows("bespoke")
+    item = sorted(bespoke.case_id.unique())[0]
+    lines.append(f"\n# Bespoke item {item} in every condition\n")
+    for r in bespoke[bespoke.case_id == item].itertuples():
+        lines.append(f"\n## {r.condition}\n\n```\n{r.prompt}\n```\n")
+        if r.comprehension_q:
+            lines.append(f"\nFollow-up: {r.comprehension_q} (keyed: {r.comprehension_a})\n")
     return "".join(lines)
 
 
@@ -161,15 +185,12 @@ def write_report(run_dir: Path) -> None:
     manifest = json.loads((run_dir / "manifest.json").read_text())
     consts = json.loads((run_dir / "record" / "constants.json").read_text())
     use = json.loads((run_dir / "record" / "usage.json").read_text())
-    items = manifest.get("bespoke_items", {})
     parts = [f"# Curse-of-knowledge run {manifest['run_id']}\n\n",
              f"Created {manifest['created']}; report written {manifest.get('updated')}. "
              f"Models: {', '.join(display(m) for m in manifest['models'])}."
              f"{' **Smoke run** (reduced cases, samples and fits).' if manifest.get('smoke') else ''}\n\n"]
-    warnings = []
-    if items.get("placeholder"):
-        warnings.append("The bespoke dataset is a **placeholder** (the example items, "
-                        "`datasets/example_bespoke_items.yaml`). Bespoke numbers are not results.")
+    warnings = [f"Dataset file `{name}` does not match its recorded SHA-256." for name, ok in
+                manifest.get("datasets", {}).get("ckd_checksums", {}).items() if not ok]
     warnings += [f"Stage `{s}` {r['status']}: {r.get('error', '')}" for s, r in manifest["stages"].items()
                  if r.get("status") not in ("ok", "running")]
     if manifest.get("git", {}).get("dirty"):
@@ -193,12 +214,15 @@ def write_report(run_dir: Path) -> None:
     git = manifest.get("git", {})
     setup.append(f"- **Code**: commit `{git.get('commit', '?')}` on `{git.get('branch', '?')}`"
                  f"{' (with uncommitted changes)' if git.get('dirty') else ''}; packages in `record/pip_freeze.txt`.")
+    data = manifest.get("datasets", {})
+    checks = data.get("ckd_checksums", {})
+    setup.append(f"- **CKD data**: `datasets/ckd_second_order_v3`, {sum(checks.values())} of {len(checks)} files "
+                 f"match `SHA256SUMS`; its validator {data.get('ckd_validator', 'did not run')}.")
+    setup.append(f"- **Bespoke data**: `datasets/second_order_simple_prompts.csv` (SHA-256 "
+                 f"`{data.get('bespoke_sha256', '?')[:16]}…`).")
     z = manifest.get("zenodo")
-    setup.append(f"- **CKD data**: Smolin & Wilder results bundle, Zenodo record {z['record'] if z else '23350428'}"
-                 f"{', MD5 ' + z['md5'] if z else ''}; bundle manifest SHA-256 "
-                 f"`{manifest.get('release_manifest_sha256', '?')[:16]}…`.")
-    setup.append(f"- **Bespoke data**: `{items.get('path', '?')}` (SHA-256 `{items.get('sha256', '?')[:16]}…`)"
-                 f"{', PLACEHOLDER' if items.get('placeholder') else ''}; copy in `record/bespoke_items.yaml`.")
+    setup.append(f"- **Paper reproduction**: Smolin & Wilder results bundle, Zenodo record "
+                 f"{z['record'] if z else '23350428'}{', MD5 ' + z['md5'] if z else ''}.")
     parts.append("\n".join(setup) + "\n\n")
 
     try:
@@ -206,32 +230,35 @@ def write_report(run_dir: Path) -> None:
     except (KeyError, TypeError) as exc:
         parts.append(f"## Settings\n\nUnavailable ({exc!r}); see `config.yaml` and `record/constants.json`.\n\n")
     parts.append("## Estimators\n\nIn full in `record/estimator.md`. With x = l_A − l_B (log-odds): λ = β_C / β_D "
-                 "(slopes of l_C − l_M and l_D − l_M on x), ρ = Cov(x, x′) / Var(x) from the second run, "
-                 "τ = (β_D − β_C) / ρ per setting, and φ = β_D / ρ shared by the two settings; paired case "
-                 "bootstrap, ratio rule.\n\n")
+                 "(slopes of l_C − l_M and l_D − l_M on x; CKD's headline uses C's matched references M2 and D2), "
+                 "ρ = Cov(x, x′) / Var(x) from the second replicate, τ = (β_D − β_C) / ρ per setting, and "
+                 "φ = β_D / ρ shared by the two settings; bootstrap over patients or items, Fieller set for λ.\n\n")
     write_results(parts, run_dir, manifest, use)
 
 
 def settings_table(consts: dict) -> str:
     d, ck, gen = consts["design"], consts["ckd"], consts["generation"]
+    be, lf = consts["bespoke"], consts["latent_fit"]
     rows = [("Settings", ", ".join(d["settings"])),
             ("Conditions", ", ".join(d["conditions"])),
-            ("Second runs (for rho)", ", ".join(f"{k} x{v}" for k, v in d["replicates"].items())),
-            ("CKD cases", str(ck["cases"])), ("CKD outputs", f"{len(ck['outputs'])} (Smolin & Wilder)"),
-            ("Withheld fields (partial)", "; ".join(ck["withheld_fields_partial"].values())),
-            ("Flipped field (false belief)", "; ".join(ck["flipped_field_false_belief"].values())),
-            ("Bespoke samples per item, condition, run", str(consts["bespoke"]["samples"])),
-            ("Comprehension follow-ups", f"after {', '.join(d['comprehension']['conditions'])}"),
-            ("Latent fit", ", ".join(f"{k} {v}" for k, v in consts["latent_fit"]["fit_config"].items())
-             + f"; {consts['latent_fit']['quadrature_points']}-point quadrature"),
+            ("CKD patients", str(ck["patients"])),
+            ("CKD prompt files", ", ".join(f"{b} ({n:,} prompts)" for b, n in ck["prompts_per_battery"].items())),
+            ("Bespoke", f"{len(be['items'])} items ({len(be['placebo_items'])} placebo), {be['samples']} samples "
+                        f"per item, condition and run; second runs: "
+                        + ", ".join(f"{k} x{v}" for k, v in be["replicates"].items())),
+            ("Latent fit", f"{len(lf['outputs'])} outputs ({', '.join(lf['batteries'])}), cutoffs "
+                           f"{'anchored' if lf['anchor_cutoffs'] else 'free'}; "
+                           + ", ".join(f"{k} {v}" for k, v in lf["fit_config"].items())
+                           + f"; {lf['quadrature_points']}-point quadrature"),
             ("Bootstrap", f"{consts['estimators']['bootstrap_resamples']} resamples, "
                           f"{consts['estimators']['interval']}, seed {consts['seed']}"),
             ("Camerer et al. w", str(d["camerer_w"]))]
     for m, g in gen.items():
-        s = g["sampling"]
+        s = next(iter(g["sampling"].values()))
+        limits = ", ".join(f"{d} {v['max_tokens']}" for d, v in g["sampling"].items())
         rows.append((f"Generation, {display(m)}", f"{g['backend']}, temperature {s['temperature']}, top-p {s['top_p']}, "
-                     f"top-k {s['top_k']}, max {s['max_tokens']} tokens, chat template {g['chat_template']}, "
-                     f"no system prompt, settings hash {g['settings_signature']}"))
+                     f"top-k {s['top_k']}, max tokens {limits}, chat template {g['chat_template']}, "
+                     f"no system prompt"))
     return ("## Settings\n\nEvery value is in `record/constants.json`; the full config is `config.yaml`.\n\n"
             + md_table(pd.DataFrame(rows, columns=["setting", "value"]), ["setting", "value"]) + "\n")
 
@@ -303,11 +330,9 @@ def main() -> None:
     (record / "constants.json").write_text(json.dumps(constants(), indent=2, default=str))
     (record / "estimator.md").write_text(ESTIMATOR + leakage.__doc__)
     (record / "usage.json").write_text(json.dumps(available(lambda: usage(run_dir)), indent=2))
-    models = list(C.load()["experiment"]["models"])
-    if models:
-        prompts = available(lambda: example_prompts(models[0]))
-        (record / "example_prompts_ckd.md").write_text(prompts if isinstance(prompts, str)
-                                                         else f"Unavailable: {prompts['unavailable']}\n")
+    prompts = available(example_prompts)
+    (record / "example_prompts.md").write_text(prompts if isinstance(prompts, str)
+                                               else f"Unavailable: {prompts['unavailable']}\n")
     write_report(run_dir)
     print(f"wrote {run_dir / 'RUN_REPORT.md'}")
 

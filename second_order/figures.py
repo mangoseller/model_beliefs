@@ -43,9 +43,12 @@ from second_order import config as C  # noqa: E402
 from second_order.report import display  # noqa: E402
 
 INK, INK2, MUTED, GRID = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e1"
-CONDITION_ORDER = ["A", "B", "B_F", "D", "M", "C", "D_F", "M_F", "C_F"]
-CONDITION_COLOR = {"A": "#52514e", "B": "#8a8984", "B_F": "#b8b7b2", "D": "#7fb0eb", "M": "#1baf7a",
-                   "C": "#2a78d6", "D_F": "#f3a37f", "M_F": "#7ccfae", "C_F": "#eb6834"}
+CONDITION_ORDER = ["A", "B", "B_F", "D", "D2", "M", "M2", "C", "C_swap", "D_F", "M_F", "M2_F", "C_F", "C_swap_F",
+                   "C_ctrl_F"]
+CONDITION_COLOR = {"A": "#52514e", "B": "#8a8984", "B_F": "#b8b7b2", "D": "#7fb0eb", "D2": "#4f93e0",
+                   "M": "#1baf7a", "M2": "#13875f", "C": "#2a78d6", "C_swap": "#9bc2f0", "D_F": "#f3a37f",
+                   "M_F": "#7ccfae", "M2_F": "#4fb58d", "C_F": "#eb6834", "C_swap_F": "#f6b89b",
+                   "C_ctrl_F": "#c4521f"}
 SETTING_COLOR = {"partial": "#2a78d6", "false": "#eb6834"}
 
 
@@ -169,9 +172,9 @@ def curse_scatter(scatter, est):
 
 
 FAMILY_COLOR = {"self": "#52514e", "person": "#2a78d6"}
-KIND_MARKER = {"threshold": "o", "bet": "s", "cost": "^", "plain": "D"}
+KIND_MARKER = {"threshold": "o", "bet": "s", "cost": "^", "decision": "D"}
 ROLE_COLOR = {"A": "#52514e", "B": "#8a8984", "D": "#7fb0eb", "M": "#1baf7a", "C": "#eb6834"}
-SETTING_CONDITIONS = {"partial": ("A", "B", "D", "M", "C"), "false": ("A", "B_F", "D_F", "M_F", "C_F")}
+SETTING_CONDITIONS = {"partial": ("A", "B", "D2", "M2", "C"), "false": ("A", "B_F", "D2", "M2_F", "C_F")}
 
 
 def groups_of(frame, keys=("model", "dataset", "method")):
@@ -439,15 +442,25 @@ def curse_decomposition(est):
     save(fig, "curse_decomposition")
 
 
+def headline(frame):
+    """Rows of each dataset's headline reference (CKD: two_record; bespoke: single_record)."""
+    if frame.empty:
+        return frame
+    from second_order.conditions import references
+
+    first = {d: next(iter(references(d))) for d in frame.dataset.unique()}
+    return frame[frame.reference == frame.dataset.map(first)]
+
+
 def main() -> None:
     curse_schematic()
-    est = read("curse/estimates.csv")
+    est, scatter = headline(read("curse/estimates.csv")), headline(read("curse/scatter.csv"))
     if not est.empty:
         curse_decomposition(est)
         curse_estimates(est)
-        curse_scatter(read("curse/scatter.csv"), est)
-        curse_linearity(read("curse/scatter.csv"), est)
-        curse_case_leakage(read("curse/scatter.csv"))
+        curse_scatter(scatter, est)
+        curse_linearity(scatter, est)
+        curse_case_leakage(scatter)
         curse_comprehension(est)
     curse_thresholds(read("curse/thresholds.csv"))
     curse_decision_curves(read("curse/decision_curves.csv"))

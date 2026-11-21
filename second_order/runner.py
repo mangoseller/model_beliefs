@@ -8,14 +8,13 @@ Launched by ``run_experiment.sh`` (which installs the dependencies first):
 
 Stages, in order (``--stages`` runs a subset, ``--skip`` leaves some out):
 
-1. ``fetch_data``: the Smolin & Wilder results bundle from Zenodo (CKD cases, prompts, bin
-   edges), checked against Zenodo's MD5 and the bundle manifest.  Resolves the bespoke item
-   file (``datasets/bespoke_items.yaml``); if there is none, the example items stand in and
-   the run is marked as using placeholder data.
+1. ``fetch_data``: the Smolin & Wilder results bundle from Zenodo (for the ``paper`` stage),
+   checked against Zenodo's MD5 and the bundle manifest; checks the two datasets in
+   ``datasets/`` against their recorded SHA-256 sums.
 2. ``fetch_models``: downloads each local model's weights, tokenizer and config from the
    Hugging Face Hub and pins the exact snapshot (commit hash) in the run's config, so vLLM
    loads exactly those files (offline from then on).
-3. ``checks``: unit tests, the bespoke item checks, the GPU and disk.
+3. ``checks``: unit tests, the CKD dataset's own validator, the GPU and disk.
 4. ``paper``: ``latent_beliefs/reproduce.sh analysis`` (the original paper's figures and
    tables) and a comparison with the paper's CKD numbers (``latent_beliefs/baseline_ckd.csv``).
 5. ``tune``: a smoke test and inference tuning per model (``second_order.tune``): a sample
@@ -25,7 +24,7 @@ Stages, in order (``--stages`` runs a subset, ``--skip`` leaves some out):
    (``run_generation``, with a progress bar).  Each model's parsing and CPU latent fits
    (``phase3``) start in the background as soon as its generation ends.
 7. ``activations``: residual-stream activations at three positions and every layer, for
-   the numeric-probability answers (``second_order.freeze``), on the GPU while the fits run.
+   the probability answers (``second_order.freeze``), on the GPU while the fits run.
 8. ``fits``: waits for the background fits (or runs them, on a resumed run).
 9. ``analyze``: ``second_order.curse`` (estimates, checks, tables) and ``second_order.figures``.
 10. ``report``: ``RUN_REPORT.md`` and ``record/`` (every constant, the estimator, the
@@ -45,6 +44,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import gzip
 import hashlib
 import json
 import os
@@ -67,11 +67,9 @@ STAGES = ("fetch_data", "fetch_models", "checks", "paper", "tune", "generate", "
           "report", "package")
 ZENODO_RECORD = "23350428"
 ZENODO_FILE = "llm_beliefs_replication_results.tar.gz"
-EXAMPLE_ITEMS = ROOT / "datasets" / "example_bespoke_items.yaml"
-DEFAULT_ITEMS = ROOT / "datasets" / "bespoke_items.yaml"
 MODEL_FILES = ["*.json", "*.safetensors", "*.txt", "*.model", "*.jinja", "*.py", "*.tiktoken", "LICENSE*"]
 EXCLUDE_FROM_TARBALL = ("paper/prompts", "paper/parsed", "paper/sources", "data/activations")
-SO_ENV = ("SO_CONFIG", "SO_DATA_DIR", "SO_RESULTS_DIR", "SO_FIGURES_DIR", "SO_BESPOKE_ITEMS")
+SO_ENV = ("SO_CONFIG", "SO_DATA_DIR", "SO_RESULTS_DIR", "SO_FIGURES_DIR", "SO_DATASETS_DIR")
 
 
 # ---------------------------------------------------------------- run state
@@ -98,8 +96,6 @@ class Run:
                         PYTHONUNBUFFERED="1",
                         # progress bars: every second when someone watches a terminal, else every 30 s
                         SO_PROGRESS_INTERVAL="1" if sys.stdout.isatty() else "30")
-        if self.manifest.get("bespoke_items"):
-            self.env["SO_BESPOKE_ITEMS"] = self.manifest["bespoke_items"]["path"]
         if self.manifest.get("models_pinned"):
             self.env["HF_HUB_OFFLINE"] = "1"
         self.save()
@@ -179,7 +175,7 @@ def write_config(run: Run) -> dict:
     cfg["experiment"]["models"] = list(args.models)
     cfg["main_cases"] = args.cases if args.cases is not None else (20 if args.smoke else cfg["main_cases"])
     if args.samples is not None or args.smoke:
-        cfg["bespoke"]["samples"] = args.samples if args.samples is not None else 3
+        cfg["datasets"]["bespoke"]["samples"] = args.samples if args.samples is not None else 3
     if args.smoke:
         cfg["latent_fit"] = {"epochs": 3000, "patience": 200}
     cfg["analysis"]["bootstrap_resamples"] = args.resamples or (200 if args.smoke else
@@ -219,24 +215,36 @@ def stage_fetch_data(run: Run, cfg: dict) -> None:
     run.sh([sys.executable, "-m", "latent_beliefs.release", "verify"], "fetch_data")
     run.manifest["release_manifest_sha256"] = sha256(release / "MANIFEST.sha256")
 
-    previous = run.manifest.get("bespoke_items")
-    if previous and not run.args.bespoke_items:  # a resumed run keeps its item file
-        items = Path(previous["path"])
-        if not items.exists() or sha256(items) != previous["sha256"]:
-            raise RuntimeError(f"the run's bespoke item file {items} is missing or changed since the run started")
-    else:
-        items = Path(run.args.bespoke_items or os.environ.get("BESPOKE_ITEMS") or DEFAULT_ITEMS)
-    placeholder = previous["placeholder"] if previous and not run.args.bespoke_items else not items.exists()
-    if placeholder and not items.exists():
-        if run.args.require_real_data:
-            raise RuntimeError(f"bespoke item file {items} not found (--require-real-data)")
-        run.log(f"WARNING: no bespoke item file at {items}; using the example items as a PLACEHOLDER")
-        items = EXAMPLE_ITEMS
-    shutil.copy(items, run.dir / "record" / "bespoke_items.yaml")
-    run.manifest["bespoke_items"] = {"path": str(items.resolve()), "sha256": sha256(items), "placeholder": placeholder}
-    run.env["SO_BESPOKE_ITEMS"] = str(items.resolve())
-    run.py("second_order.bespoke", "--items", str(items), "--examples",
-           str(run.dir / "record" / "example_prompts_bespoke.md"), log="fetch_data")
+    from second_order import config as C
+    from second_order import datasets as DS
+
+    sums = DS.ckd_checksums()
+    run.manifest["datasets"] = {"ckd_checksums": sums,
+                                "bespoke_sha256": sha256(C.resolve(cfg["datasets"]["bespoke"]["file"]))}
+    bad = [name for name, ok in sums.items() if not ok]
+    if bad:
+        raise RuntimeError(f"CKD dataset files differ from SHA256SUMS: {', '.join(bad)}")
+    run.log(f"datasets: {len(sums)} CKD files match SHA256SUMS; {len(DS.case_ids('ckd'))} patients, "
+            f"{len(DS.case_ids('bespoke'))} bespoke items")
+
+
+def validate_ckd(run: Run) -> None:
+    """Run the CKD dataset's own validator on a decompressed copy of the release."""
+    from second_order import datasets as DS
+
+    work = run.dir / "tmp_validate"
+    shutil.rmtree(work, ignore_errors=True)
+    shutil.copytree(DS.ckd_dir(), work)
+    for gz in work.rglob("*.gz"):
+        with gzip.open(gz) as src, gz.with_suffix("").open("wb") as dst:
+            shutil.copyfileobj(src, dst)
+        gz.unlink()
+    code = subprocess.run([sys.executable, "-I", "validate.py"], cwd=work, capture_output=True, text=True)
+    (run.dir / "logs" / "ckd_validate.log").write_text(code.stdout + code.stderr)
+    shutil.rmtree(work, ignore_errors=True)
+    run.manifest["datasets"]["ckd_validator"] = "passed" if code.returncode == 0 else f"failed ({code.returncode})"
+    if code.returncode:
+        raise RuntimeError("the CKD dataset validator failed; see logs/ckd_validate.log")
 
 
 def local_models(run: Run, cfg: dict) -> list[str]:
@@ -266,8 +274,9 @@ def stage_fetch_models(run: Run, cfg: dict) -> None:
 
 def stage_checks(run: Run, cfg: dict) -> None:
     clean = {k: v for k, v in run.env.items() if k not in SO_ENV}  # the tests use the repository config
-    run.sh([sys.executable, "-m", "unittest", "tests.test_prompts_second_order", "tests.test_leakage",
-            "tests.test_bespoke", "tests.test_generation", "tests.test_runner"], "checks", env=clean)
+    run.sh([sys.executable, "-m", "unittest", "tests.test_datasets", "tests.test_leakage",
+            "tests.test_generation", "tests.test_runner"], "checks", env=clean)
+    validate_ckd(run)
     has_smi = shutil.which("nvidia-smi") is not None
     (run.dir / "record" / "nvidia_smi.txt").write_text(capture(["nvidia-smi"]) if has_smi else "nvidia-smi not found\n")
     gpus = capture(["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"]) \
@@ -534,9 +543,6 @@ def main() -> None:
     parser.add_argument("--cases", default=None, help="CKD cases: 'all' or an integer (default: config)")
     parser.add_argument("--samples", type=int, default=None, help="bespoke samples per item and condition")
     parser.add_argument("--resamples", type=int, default=None, help="bootstrap resamples (default: config)")
-    parser.add_argument("--bespoke-items", default=None, help=f"bespoke item file (default {DEFAULT_ITEMS})")
-    parser.add_argument("--require-real-data", action="store_true",
-                        help="fail instead of using the placeholder bespoke items")
     parser.add_argument("--no-parallel-fits", action="store_true", help="run each phase3 before the next model")
     parser.add_argument("--continue-on-error", action="store_true",
                         help="run every later stage after a failed one (fits, analyze, report and "
@@ -573,8 +579,6 @@ def main() -> None:
         run.save()
         run.log(f"[stage {number}/{len(selected)}] {stage}: {record['status']} ({record['minutes']} min; "
                 f"{(time.time() - run_started) / 3600:.2f} h so far)")
-    if run.manifest.get("bespoke_items", {}).get("placeholder"):
-        run.log(f"NOTE: this run used PLACEHOLDER bespoke items ({EXAMPLE_ITEMS.relative_to(ROOT)})")
     run.log(f"done; tarball: {run.manifest.get('tarball', '(not packaged)')}")
     sys.exit(1 if failed else 0)
 

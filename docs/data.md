@@ -4,73 +4,75 @@
 
 | Folder | In git | Contents |
 |---|---|---|
-| `datasets/` | yes | Inputs you supply: `bespoke_items.yaml` (the study's bespoke items) and `example_bespoke_items.yaml` (a small example in the same schema, used by the tests) |
-| `data/` | no | Downloaded and generated data: `release/` (the paper's results bundle: CKD cases, prompts, bin edges), `generation_cache/`, `responses/`, `latents/`, `beliefs/`, `activations/` |
+| `datasets/ckd_second_order_v3/` | yes | The CKD battery, with its own [README](../datasets/ckd_second_order_v3/README.md), `SHA256SUMS`, generator and validator. The three large prompt CSVs and the source file are stored gzipped (`*.csv.gz`); the checksums are of the decompressed files |
+| `datasets/second_order_simple_prompts.csv` | yes | The bespoke items |
+| `data/` | no | Downloaded and generated data: `release/` (the paper's results bundle, for reproducing the paper), `generation_cache/`, `responses/`, `latents/`, `beliefs/`, `activations/` |
 | `outputs/`, `figures/` | no | Tables, `curse/RESULTS.md`, figures |
 | `runs/` | no | One folder (and tarball) per `run_experiment.sh` run, holding its own `data/`, `outputs/` and `figures/` |
 
-The CKD cases are the paper's 500 (`original500`), read from `data/release/`, which the
-runner downloads. `first_order/` is a separate toolkit with its own `datasets/`; the
-experiment does not read it.
+`first_order/` is a separate toolkit with its own `datasets/`; the experiment does not
+read it. `SO_DATASETS_DIR` points the experiment at another copy of `datasets/`.
 
-## The bespoke item file
+## CKD: `ckd_second_order_v3`
 
-YAML (or JSON) with a top-level `items` list. Check a file and render its prompts with
+There are 150 NHANES patients, 75 with each source CKD label, each with a 12-field
+record E. E_p withholds three fields; E_f alters two. Every column is read as a string
+(`datasets.open_csv`).
 
-```bash
-python -m second_order.bespoke --items datasets/bespoke_items.yaml --examples prompts.md
-```
+- **Prompt files:** all three are generated (`datasets.ckd.batteries`).
+  - **Main** (65,700 prompts, 438 per patient):
+    - every condition asks one probability question and 15 multiple-choice questions,
+      each multiple-choice question in two option orders;
+    - C and C_F add a yes/no check in both orders.
+  - **High-threshold supplement** (37,800): 50%, 66.7% and 80% cutoffs.
+  - **Role swap** (1,500): C_swap and the paired probes.
+- **Columns used:**
+  - `item_id` (the case id), `setting` and `case` (the condition), `question_id` and
+    `order` (the output, `<question_id>/<order>`), `replicate` (1 or 2), `prompt`;
+  - for the analysis: `check_answer`, `check_relation`, `check_fact` and `block_order`.
+    `patients.csv` gives each patient's PERSON name, record order and false-record
+    direction, and marks the 64 patients eligible for the direction contrast.
+- **Answers:**
+  - **Probability:** a single number from 0 to 100, divided by 100. The answer must hold
+    exactly one number; anything else is a parse failure.
+  - **Multiple choice:** a single letter, optionally with its option text, or the option
+    text alone. It is decoded through the row's own options: 1 or 0 for screen/accept
+    or not, 1 to 5 up the Likert and quintile scales.
+  - **Checks and probes:** scored against `check_answer`.
+- **Integrity:** the runner checks every file against `SHA256SUMS` and runs the dataset's
+  own `validate.py` on a decompressed copy.
 
-This prints each item's Bayes answers and gaps. It warns about answers outside
-[0.05, 0.95] (close to the 0.01/0.99 logit clip), zero gaps on ordinary items, and
-non-zero gaps on placebo items.
+## Bespoke: `second_order_simple_prompts.csv`
 
-```yaml
-items:
-  - id: marbles_01                 # unique; the case id is bespoke__marbles_01
-    family: marbles                # free text, reported in tables
-    placebo: false                 # placebo items are reported separately, not in the estimates
-    scenario: >-                   # what both the model and PERSON know
-      A fair coin was tossed to choose one of two bags. ...
-    proposition: the marbles were drawn from Bag 1   # completes "the probability that ..."
-    prior: 0.5                     # P(proposition) before any evidence
-    evidence:                      # E, in display order
-      - {id: d1, text: "The first marble drawn was red.", p_true: 0.75, p_false: 0.25}
-      - {id: d2, text: "The second marble drawn was red.", p_true: 0.75, p_false: 0.25}
-      - {id: d3, text: "The third marble drawn was blue.", p_true: 0.25, p_false: 0.75}
-    partial: [d3]                  # E_p: ids of the observations PERSON saw
-    false:                         # E_f: what PERSON was told; observations replaced by id
-      d1: {text: "The first marble drawn was blue.", p_true: 0.25, p_false: 0.75}
-```
+There are 20 items in three families (two bags, witnesses right 3 times in 4, noisy
+tests); `p01` and `p02` are placebo items. One row per item and case:
 
-- **Probabilities.** `p_true` and `p_false` are the probabilities of an observation if
-  the proposition is true or false. The Bayes answer for an evidence set is
-  prior odds × ∏ p_true / p_false.
-- **False set.** E_f keeps every observation in place and swaps the listed ones, so
-  PERSON believes a complete but partly wrong account.
-- **Placebo items.** A placebo observation has `p_true == p_false`. A placebo item
-  withholds or changes only such observations, so all three gaps should be 0.
-- **The `false:` key.** YAML reads a bare `false:` key as a boolean; it is still read
-  correctly, and `told:` is accepted as a synonym.
+| setting | cases | condition keys |
+|---|---|---|
+| `partial`, `placebo` | A, B, M, D, C | A, B, M, D, C |
+| `false` | B_false, M_false, D_false, C_false | B_F, M_F, D_F, C_F |
+| `report_assignment_control` | C_report_control | C_ctrl_F |
 
-Optional fields:
-
-| Field | Use |
-|---|---|
-| `bayes: {full: p, partial: p, false: p}` | Bayes answers given directly, for items without `p_true`/`p_false` |
-| `prompts: {A: "...", C_F: "...", ...}` | Verbatim prompts per condition (A, B, C, M, D, B_F, C_F, M_F, D_F), replacing the generated ones. Each must contain the JSON probability instruction |
-| `comprehension: {C: {stem, options, answer}, C_F: {...}}` | Your own follow-up question; `answer` is the 0-based index of the correct option |
-
-Generated prompts are the scenario, then `Evidence:` with the observations the model
-is shown, then (about PERSON) one paragraph on what PERSON knows, then the question,
-then the JSON probability instruction of the first-order CKD prompt. Answers are read
-from the JSON object only: bespoke propositions contain numbers ("Bag 1"), so the
-first-order fallback (any number after the word "probability") is not used.
+- **Columns used:**
+  - `normative_p` and `normative_logodds`: the Bayes answer given the believer's
+    evidence (the model's for A and B, PERSON's otherwise);
+  - `full_leak_p`: on C rows, the answer with the model's evidence;
+  - `comprehension_q` and `comprehension_a`: the follow-up after C, C_F and C_ctrl_F;
+  - `check_relation`.
+- **Sampling:** each row is sampled `datasets.bespoke.samples` times per run, and A, B
+  and B_F get a second run.
+- **Answers:** read from the JSON object only. The first-order fallback, any number after
+  the word "probability", would misread the numbers in the propositions.
+- **Follow-ups:** scored by the observation statements in the answer ("Draw 2: red.",
+  "Witness 1: says "Sam".", "Test 3: positive."):
+  - "Which ... did PERSON see/hear" needs exactly the keyed statements;
+  - "What was PERSON told about ..." needs every mention of that observation to carry the
+    keyed value.
 
 ## The belief format
 
 `data/beliefs/<model>/<dataset>_<method>.parquet` has one row per case, condition and
-run. It is the input to the estimators:
+run, and is the input to the estimators:
 
 | Column | Meaning |
 |---|---|

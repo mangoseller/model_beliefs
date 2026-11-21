@@ -17,13 +17,13 @@ the Claude Code and Codex CLIs. It then runs `second_order/runner.py`, whose sta
 
 | Stage | What it does |
 |---|---|
-| `fetch_data` | Downloads the paper's results bundle from Zenodo and checks it. Resolves the bespoke items (`datasets/bespoke_items.yaml`, else the example items as a marked placeholder) |
+| `fetch_data` | Downloads the paper's results bundle from Zenodo (for `paper`) and checks it; checks the datasets in `datasets/` against their SHA-256 sums |
 | `fetch_models` | Downloads each model and pins its snapshot hash in the run's config |
-| `checks` | Unit tests, the bespoke item checks, GPU and disk |
+| `checks` | Unit tests, the CKD dataset's own validator, GPU and disk |
 | `paper` | `latent_beliefs/reproduce.sh analysis`, compared with the paper's CKD numbers |
 | `tune` | Times a few vLLM engine settings on real calls and keeps the fastest. Stops the run if answers don't parse or are truncated |
 | `generate` | Every condition, run, sample and follow-up, with a progress bar. Each model's fits start in the background as soon as its generation ends |
-| `activations` | Residual-stream activations (every layer) for the numeric-probability answers |
+| `activations` | Residual-stream activations (every layer) for the probability answers |
 | `fits` | Waits for the background latent fits |
 | `analyze` | `second_order.curse` (tables, `RESULTS.md`) and `second_order.figures` |
 | `report` | `RUN_REPORT.md` and `record/`: every constant, the estimator, usage, example prompts |
@@ -36,35 +36,35 @@ later stages are skipped (`--continue-on-error` overrides this). `fits`, `analyz
 ## Step by step
 
 ```bash
-python -m second_order.bespoke                          # check the bespoke items: Bayes answers, warnings
-python -m second_order.run_generation --model qwen3_8b  # both datasets, then the comprehension turns
+python -m second_order.run_generation --model qwen3_8b  # both datasets, then the bespoke follow-ups
 python -m second_order.phase3 --model qwen3_8b          # parse, latent fits, beliefs, retention
 python -m second_order.curse                            # outputs/curse/*.csv and RESULTS.md
 python -m second_order.figures                          # figures/
 ```
 
-`SO_CONFIG`, `SO_DATA_DIR`, `SO_RESULTS_DIR`, `SO_FIGURES_DIR` and `SO_BESPOKE_ITEMS`
-redirect a run (`second_order/config.py`).
+`SO_CONFIG`, `SO_DATA_DIR`, `SO_RESULTS_DIR`, `SO_FIGURES_DIR` and `SO_DATASETS_DIR`
+redirect a run (`second_order/config.py`). `--cases N` runs a seeded sample of N CKD patients.
 
 ## Calls per model
 
 | Part | Calls |
 |---|---|
-| CKD: 9 conditions × 500 cases × 16 outputs | 72,000 |
-| CKD: second runs of A, B, B_F | 24,000 |
-| CKD: comprehension (C, C_F) | 1,000 |
-| Bespoke: 20 items × 20 samples × 12 runs | 4,800 |
-| Bespoke: comprehension | 800 |
+| CKD main battery: 150 patients × 438 prompts | 65,700 |
+| CKD high-threshold supplement | 37,800 |
+| CKD role swaps | 1,500 |
+| Bespoke: 248 runs of the 190 prompts × 20 samples | 4,960 |
+| Bespoke: comprehension follow-ups | 1,120 |
 
-Sampling is at temperature 1, with at most 4,096 output tokens, thinking off and no
-system prompt.
+CKD answers are a number or a letter (at most 256 output tokens); bespoke answers reason
+first (at most 4,096). Sampling is at temperature 1, with thinking off and no system prompt.
 
 ## The generation cache
 
 Responses are cached in `data/generation_cache/<model>.jsonl`. Each item is keyed by
-`sha256([model, case, condition, output, replicate(, sample)])`. Reruns skip cached
-items. A cached record is refused if its prompt, or its generation settings (sampling,
-chat template, weights), differ from the current ones.
+`sha256([model, dataset, case, condition, output, replicate(, sample)])`. Reruns skip
+cached items. A cached record is refused if its prompt, or its generation settings
+(sampling, chat template, weights), differ from the current ones. vLLM responses also
+keep the top log-probabilities of their first token.
 
 | Backend | Use |
 |---|---|
@@ -78,7 +78,7 @@ chat template, weights), differ from the current ones.
 |---|---|
 | `curse_schematic` | What λ, φ and τ measure |
 | `curse_decomposition` | The same diagram with each setting's estimates |
-| `curse_estimates` | λ and τ per setting and the shared φ, against Camerer et al.'s w |
+| `curse_estimates` | λ and τ per setting and the shared φ, against Camerer et al.'s w (CKD: two-record references) |
 | `curse_scatter`, `curse_linearity` | The two regressions behind λ, and their binned means |
 | `curse_case_leakage` | Per-case (ℓ_C − ℓ_M)/(ℓ_D − ℓ_M) |
 | `curse_comprehension` | λ on all answers and on comprehension-passing answers |
@@ -90,7 +90,6 @@ chat template, weights), differ from the current ones.
 ## Tests
 
 ```bash
-python -m unittest tests.test_prompts_second_order tests.test_leakage tests.test_bespoke \
-    tests.test_generation tests.test_runner
+python -m unittest tests.test_datasets tests.test_leakage tests.test_generation tests.test_runner
 python -m unittest tests.test_pipeline                  # end to end on the synthetic backend (minutes)
 ```

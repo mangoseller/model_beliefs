@@ -1,15 +1,24 @@
-"""Pooled latent fits and latent export.
+"""Pooled latent fits of the CKD answers, and latent export.
 
-A pooled fit shares item parameters and one latent prior across the conditions
-whose instructions are identical (``conditions.fit_family``): the model's own
-belief (A and every B, both runs) and PERSON's belief (every C, M and D).  The
-leakage estimator relies on C, M and D sharing that one prior.  Each fit uses
-the model (``ProbabilisticLatentModel``), optimiser (``fit_model``) and settings
-of the first-order main fit: 128-point Gauss-Legendre quadrature, Adam lr 0.02,
-at most 30,000 epochs, patience 500, early stopping on validation rows.  Item
-parameters are estimated on train-split rows only.
+A pooled fit shares item parameters and one latent prior across the conditions whose
+instructions are identical (``conditions.fit_family``): the model's own belief (A and
+every B, both replicates) and PERSON's belief (every M, D, M2, D2 and C).  The leakage
+estimator relies on C and its references sharing that one prior.
 
-Posteriors of logit z (mean and sd) are exported for every complete row from all 16 outputs.
+The outputs are the CKD questions of ``latent.batteries`` (``responses.latent_specs``):
+the stated probability (Beta likelihood, which anchors the scale), each decision as a
+binary item and the Likert and quintile scales as ordered items, every question in each
+option order an output of its own, so position bias is absorbed by its own parameters.
+Each fit uses the model (``ProbabilisticLatentModel``), optimiser (``fit_model``) and
+settings of the first-order main fit: 128-point Gauss-Legendre quadrature, Adam lr
+0.02, at most 30,000 epochs, patience 500, early stopping on validation rows.  Item
+parameters are estimated on train-split patients only.
+
+With ``latent.anchor_cutoffs``, decisions with a stated cutoff c (threshold, bet and
+cost questions: c = 1 / (1 + k)) are fixed to cross 1/2 at c: logit P(screen | z) =
+b (logit z - logit c).  By default their intercepts are free, as in the paper.
+
+Posteriors of logit z (mean and sd) are exported for every usable row (``responses.matrix``).
 """
 
 from __future__ import annotations
@@ -22,14 +31,27 @@ import numpy as np
 import pandas as pd
 import torch
 
-from latent_beliefs.latent.domains import CKD_SPECS, likelihood_values
-from latent_beliefs.latent.model import FitConfig, ProbabilisticLatentModel, fit_model, restore_model
+from latent_beliefs.latent.domains import likelihood_values
+from latent_beliefs.latent.model import FitConfig, ProbabilisticLatentModel, fit_model
 from second_order import config as C
-
-SPEC_NAMES = [s.name for s in CKD_SPECS]
-SUBSETS = {"all": SPEC_NAMES}  # output subsets with an exported posterior
+from second_order.responses import configured_specs
 QUADRATURE_POINTS = 128
 PROBABILITY_EPSILON = 1e-4
+
+
+class AnchoredLatentModel(ProbabilisticLatentModel):
+    """The paper's model with each stated-cutoff decision crossing 1/2 at its cutoff."""
+
+    def binary_logits(self, spec):
+        if spec.nominal_threshold is None:
+            return super().binary_logits(spec)
+        c = torch.as_tensor(float(spec.nominal_threshold), dtype=self.dtype)
+        return self.binary_slope(spec.name) * (self.logit_z_grid - torch.log(c / (1 - c)))
+
+
+def new_model() -> ProbabilisticLatentModel:
+    cls = AnchoredLatentModel if C.load()["latent"].get("anchor_cutoffs") else ProbabilisticLatentModel
+    return cls(configured_specs(), quadrature_points=QUADRATURE_POINTS, probability_epsilon=PROBABILITY_EPSILON)
 
 def groups(conditions: Sequence[str]) -> list[tuple[str, ...]]:
     """Fit groups (one per fit family) for the conditions present, in a stable order."""
@@ -49,15 +71,15 @@ def fit_group(wide: pd.DataFrame, conditions: Sequence[str], seed: int,
               config: FitConfig | None = None) -> tuple[ProbabilisticLatentModel, dict[str, Any]]:
     # ``latent_fit`` in the config may override FitConfig fields (the end-to-end test shortens fits).
     config = config or FitConfig(progress_every=0, **(C.load().get("latent_fit") or {}))
-    rows = wide[wide.condition.isin(conditions) & wide.complete]
+    rows = wide[wide.condition.isin(conditions) & wide.usable]
     train, val = rows[rows.split == "train"], rows[rows.split == "val"]
     if train.empty or val.empty:
         raise ValueError(f"{conditions}: no train or validation rows")
     torch.manual_seed(seed)
     np.random.seed(seed)
-    model = ProbabilisticLatentModel(CKD_SPECS, quadrature_points=QUADRATURE_POINTS,
-                                     probability_epsilon=PROBABILITY_EPSILON)
-    info = fit_model(model, likelihood_values(train, CKD_SPECS), likelihood_values(val, CKD_SPECS), config)
+    model = new_model()
+    specs = model.specs
+    info = fit_model(model, likelihood_values(train, specs), likelihood_values(val, specs), config)
     info.update({
         "conditions": "+".join(conditions), "seed": seed, "n_train_rows": len(train),
         "n_val_rows": len(val), "hit_epoch_limit": bool(info["epochs_ran"] >= config.epochs),
@@ -67,33 +89,19 @@ def fit_group(wide: pd.DataFrame, conditions: Sequence[str], seed: int,
 
 
 def posteriors(model: ProbabilisticLatentModel, frame: pd.DataFrame) -> pd.DataFrame:
-    """Posterior mean and sd of logit z (and mean z) for each subset of outputs."""
-    obs = torch.as_tensor(likelihood_values(frame, CKD_SPECS), dtype=model.dtype)
-    out: dict[str, np.ndarray] = {}
+    """Posterior mean and sd of logit z, and the posterior mean of z, from every output."""
+    obs = torch.as_tensor(likelihood_values(frame, model.specs), dtype=model.dtype)
     with torch.no_grad():
-        log_by_output = model.log_likelihood_by_output(obs)
-        prior = model.prior_log_weights()[None, :]
+        w = torch.exp(model.posterior_log_weights(obs))
         grid = model.logit_z_grid
-        for name, members in SUBSETS.items():
-            idx = [SPEC_NAMES.index(m) for m in members]
-            joint = log_by_output[:, idx, :].sum(dim=1) + prior
-            w = torch.exp(joint - torch.logsumexp(joint, dim=1, keepdim=True))
-            mean = w @ grid
-            var = (w * (grid[None, :] - mean[:, None]).square()).sum(dim=1)
-            out[f"ell_{name}"] = mean.numpy()
-            out[f"sd_{name}"] = var.clamp_min(0).sqrt().numpy()
-            if name == "all":
-                out["z_mean_all"] = (w @ model.z_grid).numpy()
-    return pd.DataFrame(out, index=frame.index)
+        mean = w @ grid
+        var = (w * (grid[None, :] - mean[:, None]).square()).sum(dim=1)
+        return pd.DataFrame({"ell": mean.numpy(), "sd": var.clamp_min(0).sqrt().numpy(),
+                             "z_mean": (w @ model.z_grid).numpy()}, index=frame.index)
 
 
 def parameter_frame(model: ProbabilisticLatentModel) -> pd.DataFrame:
     return pd.DataFrame(model.parameter_rows())
-
-
-def restore(parameters: pd.DataFrame) -> ProbabilisticLatentModel:
-    return restore_model(CKD_SPECS, parameters, quadrature_points=QUADRATURE_POINTS,
-                         probability_epsilon=PROBABILITY_EPSILON)
 
 
 def fit_all(model_key: str, wide: pd.DataFrame, *, base_seed: int,
@@ -103,18 +111,16 @@ def fit_all(model_key: str, wide: pd.DataFrame, *, base_seed: int,
     for group in groups(wide.condition.unique()):
         seed = stable_seed(base_seed, model_key, "pooled", *group)
         model, info = fit_group(wide, group, seed, config)
-        rows = wide[wide.condition.isin(group) & wide.complete]
+        rows = wide[wide.condition.isin(group) & wide.usable]
         post = posteriors(model, rows)
         from second_order.measurement import calibration
 
-        cal = calibration(model, seed=seed)
-        for _, c in cal.iterrows():
-            post[f"cal_{c.subset}"] = (post[f"ell_{c.subset}"] - c.intercept) / c.slope
-            info[f"calibration_slope_{c.subset}"] = c.slope
-            info[f"calibration_intercept_{c.subset}"] = c.intercept
+        slope, intercept = calibration(model, seed=seed)
+        post["cal"] = (post["ell"] - intercept) / slope
+        info["calibration_slope"], info["calibration_intercept"] = slope, intercept
         keep = [c for c in ("model", "case_id", "condition", "replicate", "split") if c in rows]
         part = pd.concat([rows[keep], post], axis=1)
-        part["numeric_probability"] = rows["probability"].to_numpy()
+        part["numeric_probability"] = rows["probability/normal"].to_numpy()
         part["fit_group"] = "+".join(group)
         latents.append(part)
         summaries.append({"model": model_key, **info})
@@ -133,8 +139,8 @@ def anchor_check(latents: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "n": g.size(),
         "mean_numeric_probability": g.numeric_probability.mean(),
-        "mean_posterior_z": g.z_mean_all.mean(),
-        "mean_ell_all": g.ell_all.mean(),
+        "mean_posterior_z": g.z_mean.mean(),
+        "mean_ell": g.ell.mean(),
         "mean_logit_numeric": g.numeric_probability.apply(
             lambda s: np.mean(np.log(np.clip(s, .01, .99)) - np.log1p(-np.clip(s, .01, .99)))),
     }).reset_index()
