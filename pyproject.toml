@@ -11,5 +11,18 @@ dependencies = [
     "peft",
 ]
 
+[project.optional-dependencies]
+# second_order/ and the latent_beliefs replication package (pinned versions: environment.yml)
+second-order = [
+    "pandas",
+    "pyyaml",
+    "pyarrow",
+    "scikit-learn",
+    "matplotlib",
+    "xgboost",
+    "requests",
+]
+vllm = ["vllm"]
+
 [tool.setuptools.packages.find]
-include = ["model_beliefs*"]
+include = ["model_beliefs*", "latent_beliefs*", "second_order*"]

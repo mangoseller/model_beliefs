@@ -6,7 +6,16 @@ data/*
 *.npy
 
 __pycache__/
+*.pyc
 *.egg-info/
 .venv/
 *.npz
 .DS_Store
+.ruff_cache/
+
+# second-order experiment and replication package (see README.md)
+build/
+outputs/
+figures/
+experiments/
+plans/
