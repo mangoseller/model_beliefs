@@ -22,7 +22,7 @@ and ``direct`` for CKD, ``direct`` for bespoke), on the main analysis set:
 * ``scatter.csv``: per case, x = l_A - l_B, l_C - l_M and l_D - l_M (figures).
 * ``thresholds.csv``: CKD decision thresholds implied by each pooled fit (where
   P(decide) = 1/2, i.e. z = sigmoid(-a/b)) against the instructed ones, for the
-  model's own family and John's (the paper's Figure 5, per fit family).
+  model's own family and PERSON's (the paper's Figure 5, per fit family).
 * ``decision_curves.csv``: the plain screening decision smoothed against the
   all-output posterior mean z per condition (Nadaraya-Watson, Gaussian kernel,
   bandwidth 0.10, all complete cases, pointwise 95% case-bootstrap bands; the

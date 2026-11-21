@@ -126,7 +126,8 @@ analyses: coherence, probes and the pilot, whose code is in
 ## Conditions
 
 All conditions live in one table, `second_order/conditions.py`. Each has a
-**role**, a **framing** (the model itself, John, or the user) and a **pair**.
+**role**, a **framing** (the model itself, PERSON, or the user) and a **pair**. PERSON is the
+agent whose belief is asked about; the prompts currently name them John.
 
 | Role | Whose belief | Model is shown | Agent holds |
 |---|---|---|---|
@@ -187,7 +188,7 @@ lists conditions.
 
 - **One pooled fit per family.** Conditions with identical instructions
   share item parameters and one latent prior: the model's own belief (A and
-  every B), John's belief (D, every C, every M), the user's belief. Same
+  every B), PERSON's belief (D, every C, every M), the user's belief. Same
   model, optimiser and settings as the first-order main fit; item
   parameters from train rows, early stopping on validation rows. A
   `separate` variant fits each condition alone as a robustness check.
@@ -211,7 +212,7 @@ lists conditions.
   own view shows there, not in λ); κ (`kappa_halves`), how strongly answers
   about the agent follow evidence when nothing is hidden; tracking
   τ = κ(1 − λ) (`tau_halves`), available without a matched control; λ within
-  thirds of |x|; contrasts between pairs (F − H, user − John, ladder rungs
+  thirds of |x|; contrasts between pairs (F − H, user − PERSON, ladder rungs
   against S4). These are the halves-based forms; the curse-of-knowledge
   experiment's φ and τ come from a second run (above).
 - **Ratio rule.** A ratio is left blank when its denominator's interval
@@ -236,7 +237,7 @@ lists conditions.
 - **Original estimator, through the latent fit** (no compression). n = 500,
   2,000 resamples, normalised λ:
 
-  | True λ | John | User |
+  | True λ | PERSON | User |
   |---|---|---|
   | 0 | 0.017 [−0.045, 0.075] | −0.049 [−0.119, 0.012] |
   | 0.3 | 0.280 [0.220, 0.336] | 0.271 [0.209, 0.329] |

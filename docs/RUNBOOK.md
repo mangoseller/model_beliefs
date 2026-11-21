@@ -168,7 +168,7 @@ Variants:
 | `curse_case_leakage` | Per-case leakage (l_C − l_M) / (l_D − l_M) |
 | `curse_comprehension` | λ on all answers and on comprehension-passing answers |
 | `curse_decision_curves` | The screening decision against the latent belief per condition (after the paper's Figure 3) |
-| `curse_thresholds` | Implied against instructed decision thresholds, own fit and John's (after Figure 5) |
+| `curse_thresholds` | Implied against instructed decision thresholds, own fit and PERSON's (after Figure 5) |
 | `curse_bayes` | Bespoke answers against the Bayes answer of the believer's evidence |
 | `retention` | Complete-call retention by condition |
 

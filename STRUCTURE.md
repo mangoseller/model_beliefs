@@ -178,7 +178,7 @@ command-line interface (`python -m second_order.<module>`); settings are in
 | `run_generation.py` | Cached, resumable generation (vLLM, transformers, synthetic, Bedrock, OpenAI, MLX) with a cost-approval gate; second runs, samples and two-turn comprehension items; the cache refuses responses made with other prompts or settings |
 | `synthetic.py` | The `synthetic` backend: response text from known λ, φ and noise |
 | `responses.py` | Parses cached responses (after removing `<think>` blocks); complete-case matrices; seeded splits for local models; retention; comprehension scoring |
-| `fit_pooled.py` | One pooled latent fit per family (own belief, John, user); posteriors for each output subset |
+| `fit_pooled.py` | One pooled latent fit per family (own belief, PERSON, user); posteriors for each output subset |
 | `measurement.py` | Sampling from a fitted measurement model; shrinkage calibration |
 | `phase3.py` | Driver: parse, fit, export latents and beliefs, retention, comprehension, transcripts |
 | `beliefs.py` | The shared belief format every method writes and the analysis reads |

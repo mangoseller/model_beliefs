@@ -30,7 +30,8 @@ from second_order.bespoke import FORMAT, table as bespoke_table
 from second_order.comprehension import is_followup
 from second_order.conditions import CONDITIONS, SETTINGS, field_label, pair_spec
 from second_order.fit_pooled import PROBABILITY_EPSILON, QUADRATURE_POINTS, SUBSETS
-from second_order.prompts_second_order import OUTPUTS, bin_boundaries, comprehension, output_kind, prompt_for, specs
+from second_order.prompts_second_order import (OUTPUTS, PERSON, bin_boundaries, comprehension, output_kind,
+                                               prompt_for, specs)
 from second_order.report import display, md_table
 from second_order.run_generation import sampling, settings_signature, template_kwargs
 
@@ -38,7 +39,7 @@ ESTIMATOR = """# Estimators, as implemented
 
 All beliefs are on the log-odds scale. Stated probabilities are clipped to [0.01, 0.99]
 before the logit. Latent beliefs are posterior means of logit z from the pooled
-Smolin & Wilder fit of the believer's family (own belief: A and every B; John: every C,
+Smolin & Wilder fit of the believer's family (own belief: A and every B; PERSON: every C,
 M and D). Per case and setting (partial = pair S4, false belief = pair F):
 
     x   = l_A  - l_B                    the model's own gap (main run, replicate 0)
@@ -91,7 +92,7 @@ def constants() -> dict:
         "design": {
             "settings": SETTINGS, "conditions": {c: asdict(CONDITIONS[c]) for c in cfg["experiment"]["conditions"]},
             "replicates": cfg["experiment"]["replicates"], "comprehension": cfg["experiment"]["comprehension"],
-            "camerer_w": cfg["experiment"]["camerer_w"], "agent": "John",
+            "camerer_w": cfg["experiment"]["camerer_w"], "person_name_in_prompts": PERSON["john"]["A"],
         },
         "ckd": available(lambda: {
             "cases": cfg["main_cases"], "withheld_fields_partial": {f: field_label(f) for f in fields_s4},

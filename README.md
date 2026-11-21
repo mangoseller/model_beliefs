@@ -7,19 +7,19 @@ Wilder, *Beliefs and Behavior in Language Models*
 
 ## The experiment
 
-The model reads a patient's chart. John, a physician as capable as the model, has a copy that
+The model reads a patient's chart. PERSON, a physician as capable as the model, has a copy that
 is missing some fields.
 
 | We ask the model | Condition | Example |
 | --- | --- | --- |
 | Its own view, from the full chart | A | 30% |
-| Its own view, from John's copy | B | 12% |
-| What John thinks; it sees only John's copy | M | 13% |
-| What John thinks; it sees the full chart | C | 25% |
-| What John thinks, if John had the full chart | D | 28% |
+| Its own view, from PERSON's copy | B | 12% |
+| What PERSON thinks; it sees only PERSON's copy | M | 13% |
+| What PERSON thinks; it sees the full chart | C | 25% |
+| What PERSON thinks, if PERSON had the full chart | D | 28% |
 
 **Leakage** $\lambda$ is where C falls between M and D in log-odds $\ell$: $0$ means the model
-kept its private evidence out of John's belief, $1$ means it all leaked in. Here
+kept its private evidence out of PERSON's belief, $1$ means it all leaked in. Here
 $\lambda = (\ell_C - \ell_M)/(\ell_D - \ell_M) \approx 0.84$; people score about $0.51$
 (Camerer, Loewenstein and Weber, 1989).
 
@@ -35,10 +35,10 @@ $$
 $$
 
 where $\beta_C$ and $\beta_D$ are the slopes of $\ell_C - \ell_M$ and $\ell_D - \ell_M$ on $x$. $\rho$
-corrects for noise in $x$, $\varphi$ is how strongly John's belief follows the evidence, and $\tau$
+corrects for noise in $x$, $\varphi$ is how strongly PERSON's belief follows the evidence, and $\tau$
 is a theory-of-mind score.
 
-The study runs two settings, John missing evidence and John told something false, on two
+The study runs two settings, PERSON missing evidence and PERSON told something false, on two
 datasets: the paper's 500 kidney-disease cases and a set of fictional puzzles with known Bayes
 answers ([`docs/BESPOKE.md`](docs/BESPOKE.md)). The full design is in
 [`docs/IMPLEMENTATION_NOTES.md`](docs/IMPLEMENTATION_NOTES.md).

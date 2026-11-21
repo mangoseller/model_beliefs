@@ -17,7 +17,7 @@ Headline and diagnostics:
 After the paper's figures:
 
 * ``curse_thresholds``: implied against instructed decision thresholds for the
-  model's own fit family and John's (Figure 5);
+  model's own fit family and PERSON's (Figure 5);
 * ``curse_decision_curves``: the screening decision against the latent belief,
   per condition (Figure 3).
 
@@ -175,7 +175,7 @@ def groups_of(frame, keys=("model", "dataset", "method")):
 
 
 def curse_thresholds(thr):
-    """Implied vs instructed decision thresholds, own fit family against John's (paper Figure 5)."""
+    """Implied vs instructed decision thresholds, own fit family against PERSON's (paper Figure 5)."""
     thr = thr[thr.nominal_threshold.notna()]
     if thr.empty:
         return
@@ -230,7 +230,7 @@ def curse_bayes(points):
     lim = np.nanmax(np.abs(np.r_[points.value, points.bayes_logit])) * 1.05
     for i, model in enumerate(models):
         for j, (title, roles) in enumerate((("own beliefs (A, B, B_F)", ("A", "B")),
-                                            ("about John (D, M, C)", ("D", "M", "C")))):
+                                            ("about PERSON (D, M, C)", ("D", "M", "C")))):
             ax = axes[i][j]
             ax.plot([-lim, lim], [-lim, lim], color=MUTED, lw=0.8, ls=":")
             for role in roles:
@@ -350,7 +350,7 @@ def brace(ax, x0: float, x1: float, y: float, height: float, *, color=INK2, lw: 
 
 
 def draw_decomposition(ax, lam: float, phi: float) -> None:
-    """The model's own gap (top) and the belief attributed to John (bottom), with delta = 1.
+    """The model's own gap (top) and the belief attributed to PERSON (bottom), with delta = 1.
 
     l_B = l_M = 0, l_A = 1, l_D = phi, l_C = phi * lambda; dashed: D's shortfall from phi = 1.
     """
@@ -369,7 +369,7 @@ def draw_decomposition(ax, lam: float, phi: float) -> None:
     ax.scatter([1], [bottom], s=70, facecolor="white", edgecolor=MUTED, lw=1.2, zorder=3)
     ax.text(1, bottom + 0.1, "$\\varphi = 1$", color=MUTED, ha="center", fontsize=10)
     ax.text(-0.05, top, "own", ha="right", va="center", fontsize=11, color=INK2)
-    ax.text(-0.05, bottom, "John", ha="right", va="center", fontsize=11, color=INK2)
+    ax.text(-0.05, bottom, "PERSON", ha="right", va="center", fontsize=11, color=INK2)
     brace(ax, 0, 1, top + 0.3, 0.08)
     ax.text(0.5, top + 0.45, "$\\delta$", ha="center", fontsize=12, color=INK2)
     for x0, x1, label, color in ((0, c, "$\\lambda\\varphi\\delta$", C_COLOR), (c, d, "$\\tau\\delta$", D_COLOR),
