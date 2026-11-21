@@ -52,9 +52,12 @@ tuning:
   min_parse_rate: 0.8
   max_truncated_rate: 0.1
   bespoke_share: 0.1
+  # Measured on an H200 NVL (vLLM 0.8.5) with 5,082 real CKD calls in the runner's order and chunks:
+  # 1,024 sequences beat 256 by 16% (Qwen3-8B, 11.0k out tok/s) and 512 by 10% (14B, 7.8k); 2,048
+  # gained nothing, and the GPU, not the engine loop, is the limit (two engines on one GPU were slower).
+  # The tuner's random 1,024-call sample cannot separate these, so it runs this one configuration and
+  # keeps its parse and truncation checks.
   candidates:
-    - {max_num_seqs: 256, max_num_batched_tokens: 8192, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
-    - {max_num_seqs: 512, max_num_batched_tokens: 16384, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
     - {max_num_seqs: 1024, max_num_batched_tokens: 32768, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
 
 # Residual-stream activations frozen after generation (second_order/freeze.py).
