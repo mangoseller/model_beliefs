@@ -10,9 +10,9 @@ layer and three positions:
 * ``evidence_end``: the last token before the question: the end of the records (CKD) or
   of the scenario and evidence (bespoke);
 * ``prompt_end``: the last token of the chat-formatted prompt (where generation began);
-* ``pre_answer``: the last token before the final answer: for the bespoke items, before
-  the last ``{"probability"`` JSON object, after the model's reasoning; for CKD, whose
-  answers are a bare number or letter, the same token as ``prompt_end``.
+* ``pre_answer``: the last token before the final answer: for probability questions,
+  before the last ``{"probability"`` JSON object, after the model's reasoning; for the
+  single-letter answers, the same token as ``prompt_end``.
 
 Which items: ``activations`` in the config (default: the probability question of every
 case and condition, main run, first sample), so that every direct belief the estimators
@@ -49,8 +49,8 @@ from second_order.run_generation import Item, experiment_items, lookup, template
 
 POSITIONS = ("evidence_end", "prompt_end", "pre_answer")
 ANSWER_JSON = re.compile(r'\{\s*"probability"')
-# Where each dataset's answer instructions begin; the question is the paragraph before.
-INSTRUCTIONS = {"ckd": "\nAnswer with a single", "bespoke": "\n\nProvide your reasoning first."}
+# Where the answer instructions begin; the question is the paragraph before.
+INSTRUCTIONS = ("\n\nProvide your reasoning first.", "\nAnswer with a single")
 
 
 def settings() -> dict:
@@ -66,13 +66,13 @@ def freeze_items(model: str, dataset: str, case_ids: list[str], conditions: list
 
 def evidence_end(item: Item) -> int:
     """Character offset just past everything before the question paragraph (-1 if not found)."""
-    end = item.prompt.rfind(INSTRUCTIONS[item.dataset])
+    end = max(item.prompt.rfind(marker) for marker in INSTRUCTIONS)
     return -1 if end < 0 else item.prompt.rfind("\n\n", 0, end)
 
 
-def answer_start(dataset: str, text: str) -> int:
+def answer_start(output: str, text: str) -> int:
     """Character offset of the final answer in a response (-1 if none)."""
-    if dataset == "ckd":
+    if not output.startswith("probability"):
         return 0
     matches = list(ANSWER_JSON.finditer(text))
     return matches[-1].start() if matches else -1
@@ -126,7 +126,7 @@ class Replayer:
         template, ids, offsets, n_prompt = self.encode(item.prompt, response or "")
         prompt_at = template.find(item.prompt)
         evidence = evidence_end(item)
-        answer = answer_start(item.dataset, response) if response else -1
+        answer = answer_start(item.output, response) if response else -1
         index = [token_at(offsets, prompt_at + evidence) if evidence >= 0 and prompt_at >= 0 else -1,
                  n_prompt - 1,
                  token_before(offsets, len(template) + answer) if answer >= 0 else -1]

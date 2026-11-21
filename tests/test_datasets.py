@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 import unittest
 
-import numpy as np
 
 from second_order import bespoke as BS
 from second_order import datasets as DS
@@ -141,12 +140,13 @@ class BespokeDesign(unittest.TestCase):
 
 
 class Parsing(unittest.TestCase):
-    def test_percent(self):
-        for text, value in (("37", 0.37), ("37%", 0.37), (" 5.5 ", 0.055), ("Answer: 80.", 0.8), ("0", 0.0),
-                            ("100", 1.0)):
-            self.assertAlmostEqual(DS.parse_percent(text), value, msg=text)
-        for text in ("30 to 40", "150", "about thirty", "", "1,000"):
-            self.assertIsNone(DS.parse_percent(text), text)
+    def test_both_datasets_ask_for_the_same_answers(self):
+        json_ask = ('\n\nProvide your reasoning first.\nThen output valid JSON on a new line in exactly this '
+                    'structure:\n{"probability": <number>}\n\nThe number must be between 0 and 1.')
+        probability = CKD[CKD.question_id == "probability"]
+        self.assertTrue(probability.prompt.str.endswith(json_ask).all())
+        self.assertTrue(BESPOKE.prompt.str.endswith(json_ask).all())
+        self.assertTrue(CKD[CKD.question_id != "probability"].prompt.str.endswith("Answer with a single letter.").all())
 
     def test_letters(self):
         opts = {"A": "Accept the bet", "B": "Decline the bet"}
@@ -164,13 +164,17 @@ class Parsing(unittest.TestCase):
             prompt = ckd_prompt(case_id, "A", f"likert/{order}")
             self.assertEqual(DS.parse("ckd", f"likert/{order}", prompt, "A")[0], 1.0 if order == "normal" else 5.0)
 
-    def test_bespoke_json_only(self):
+    def test_probabilities_are_read_from_the_json_only(self):
         for text, value in (('reasoning\n{"probability": 0.42}', 0.42), ('```json\n{"probability": 0.0}\n```', 0.0),
                             ('{"probability": 0.9} then {"probability": 0.3}', 0.3), ('"probability": "65%"', 0.65)):
-            self.assertEqual(BS.parse_response(text)[0], value, text)
-        text = "We need the probability that the marbles were drawn from Bag A, after Draw 2.\nFinal: 0.9"
-        self.assertIsNone(BS.parse_response(text)[0])
-        self.assertIsNone(BS.parse_response('{"answer": 0.4}')[0])
+            self.assertEqual(DS.parse_probability(text)[0], value, text)
+        for text in ("We need the probability that the marbles were drawn from Bag A, after Draw 2.\nFinal: 0.9",
+                     "The probability for a 46-year-old is low.", '{"answer": 0.4}', "", None):
+            self.assertIsNone(DS.parse_probability(text)[0], text)
+        case_id = DS.case_ids("ckd")[0]
+        prompt = ckd_prompt(case_id, "C")
+        self.assertEqual(DS.parse("ckd", "probability/normal", prompt, 'Age matters.\n{"probability": 0.12}')[0], 0.12)
+        self.assertEqual(DS.parse("bespoke", "probability", "", '{"probability": 0.8}')[0], 0.8)
 
     def test_free_text_comprehension(self):
         q, a = "Which draws did Alice see? List them with their results.", "Draw 2: red. Draw 3: red. Draw 4: blue."

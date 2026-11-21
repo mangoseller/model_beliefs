@@ -143,9 +143,10 @@ class Backends(unittest.TestCase):
     def test_qwen_settings(self):
         self.assertEqual(G.template_kwargs("qwen3_8b"), {"enable_thinking": False})
         self.assertEqual(G.template_kwargs("synthetic"), {})
-        self.assertEqual(G.sampling("qwen3_14b", "ckd")["max_tokens"], 256)
-        self.assertEqual(G.sampling("qwen3_14b", "bespoke")["max_tokens"], 4096)
-        self.assertEqual(G.sampling("qwen3_14b", "ckd")["temperature"], 1.0)
+        self.assertEqual(G.sampling("qwen3_14b", "ckd", "bet_4/flip")["max_tokens"], 256)
+        self.assertEqual(G.sampling("qwen3_14b", "ckd", "probability/normal")["max_tokens"], 4096)
+        self.assertEqual(G.sampling("qwen3_14b", "bespoke", "probability")["max_tokens"], 4096)
+        self.assertEqual(G.sampling("qwen3_14b", "ckd", "likert/normal")["temperature"], 1.0)
         for model in C.load()["experiment"]["models"]:
             self.assertIn(C.model_config(model)["backend"], G.BACKENDS)
             self.assertEqual(set(C.datasets_for(model)), {"ckd", "bespoke"})

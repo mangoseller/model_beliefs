@@ -448,6 +448,14 @@ def assign_checks(items, setting):
             it[setting + "_check"] = (code, relation, options, answer)
 
 
+PROBABILITY_INSTRUCTION = (
+    "Provide your reasoning first.\n"
+    "Then output valid JSON on a new line in exactly this structure:\n"
+    '{"probability": <number>}\n\n'
+    "The number must be between 0 and 1."
+)
+
+
 def build_item(it, labels, first, second, q_order, stems, battery):
     i = it["item_id"]
     rows = []
@@ -466,6 +474,9 @@ def build_item(it, labels, first, second, q_order, stems, battery):
 
     def emit(setting, case, replicate, key, question, own=None, person=None, check_answer=""):
         q, opt_order = key
+        if q == "probability":
+            question = sub_once(question, "\nAnswer with a single number from 0 to 100.",
+                                "\n\n" + PROBABILITY_INSTRUCTION)
         blocks = []
         if own is not None:
             task = "first_order" if person is None else "attribution"
@@ -523,7 +534,7 @@ def role_swap_rows(it, canonical):
     own_head = "Your record for this patient:"
     person_head = STUDY_PERSON_HEADER.format(name=name)
     swap = {own_head: person_head, person_head: own_head}
-    *records, question = canonical["prompt"].split("\n\n")
+    *records, question = canonical["prompt"].split("\n\n", 2)
     assert len(records) == 2
     reversed_records = []
     for record in records:

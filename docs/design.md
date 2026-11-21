@@ -48,9 +48,10 @@ keys end in `_F`).
 ## Beliefs
 
 - **Direct elicitation:** the logit of the stated probability, clipped to [0.01, 0.99].
-  CKD answers a single number from 0 to 100, which is divided by 100. Bespoke answers
-  are read from the JSON object, `samples` calls per item, condition and run; the belief
-  is the mean sample logit, with its standard error as `sd`.
+  Both datasets ask for it the same way: reasoning first, then the JSON object
+  `{"probability": <number>}` with a number between 0 and 1, read from that object only.
+  Bespoke items get `samples` calls per item, condition and run; the belief is the mean
+  sample logit, with its standard error as `sd`.
 - **Latent ("Bayesian marginalization", CKD only):** the Smolin & Wilder latent model,
   with the first-order fit's settings, fitted to the probability question and the 15
   multiple-choice questions.

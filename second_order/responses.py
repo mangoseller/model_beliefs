@@ -4,8 +4,8 @@
 case, output, run (``replicate``) and ``sample``, with the raw text, the parsed value
 and a parse status.  Nothing is imputed: a response that does not parse is a
 ``parse_failure`` and is counted in the retention table.  Reasoning in ``<think>``
-tags is removed before parsing.  Values are the probability in [0, 1] (CKD: the
-stated 0-100 divided by 100), the meaning of the chosen option (1 = screen or
+tags is removed before parsing.  Values are the probability in [0, 1] (from the JSON
+object both datasets ask for), the meaning of the chosen option (1 = screen or
 accept, 0 = not; 1-5 for the Likert and quintile scales), or, for the CKD checks
 and role probes, 1 if the chosen letter is the keyed answer.
 

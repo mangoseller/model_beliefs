@@ -14,9 +14,9 @@ the bespoke items it is the row's Bayes answer (``normative_logodds``, and
 ``full_leak_p`` for the model's evidence in C).
 
 Every call draws its belief once, ``call_noise`` logits around the value above; CKD
-numbers are stated from 0 to 100, decisions follow a logistic around each question's
+decisions follow a logistic around each question's
 cutoff, and the Likert and quintile answers an ordered logit, answered by letter as
-the prompt asks.  Checks and role probes are answered correctly with probability
+the prompt asks; probabilities come after a line of reasoning as the JSON object.  Checks and role probes are answered correctly with probability
 ``comprehension_accuracy``, as are the bespoke follow-ups.  A share
 ``parse_failure_rate`` of responses has no answer, and ``think_tags`` wraps the
 reasoning in ``<think>`` tags.  Settings: ``models.synthetic.truth`` in the config.
@@ -151,13 +151,11 @@ def respond(model: str, item, seed: int) -> str:
     if question == "probability":
         p = 1 / (1 + np.exp(-z))
         k = float(t["probability_precision"])
-        report = float(rng.beta(p * k, (1 - p) * k))
-        if item.dataset == "bespoke":
-            reasoning = "Weighing the evidence step by step."
-            if t["think_tags"]:
-                reasoning = f"<think>\n{reasoning}\n</think>\n\n{reasoning}"
-            return f'{reasoning}\n{{"probability": {np.clip(report, 0.001, 0.999):.3f}}}'
-        return str(int(np.clip(round(100 * report), 1, 99)))
+        report = float(np.clip(rng.beta(p * k, (1 - p) * k), 0.001, 0.999))
+        reasoning = "Weighing the evidence step by step."
+        if t["think_tags"]:
+            reasoning = f"<think>\n{reasoning}\n</think>\n\n{reasoning}"
+        return f'{reasoning}\n{{"probability": {report:.3f}}}'
     letter = letter_for(question, item.prompt, choice_value(question, z, t, rng))
     return f"{letter}. {DS.options(item.prompt)[letter]}" if rng.random() < 0.2 else letter
 

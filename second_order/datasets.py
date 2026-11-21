@@ -1,9 +1,9 @@
 """The two datasets, loaded verbatim: every prompt is sent exactly as the dataset gives it.
 
 * ``ckd``: ``datasets/ckd_second_order_v3`` (its README describes the battery).  150
-  patients; per condition one probability question (0 to 100) and 15 multiple-choice
-  questions in two option orders, standalone comprehension checks after C, a
-  high-threshold supplement and role-swap diagnostics.  One call per row; A and B
+  patients; per condition one probability question and 15 multiple-choice questions
+  in two option orders, standalone comprehension checks after C, a high-threshold
+  supplement and role-swap diagnostics.  One call per row; A and B
   have two replicates in the file.  The large CSVs are stored gzipped.
 * ``bespoke``: ``datasets/second_order_simple_prompts.csv``.  20 items (2 of them
   placebo) in three families, with Bayes answers; the numeric probability only,
@@ -14,12 +14,17 @@
 (``conditions.KEYS``), the output name and the metadata the analysis needs.
 CKD outputs are ``<question_id>/<order>`` (``probability/normal``, ``bet_4/flip``,
 ``check/normal``, ...); the bespoke output is ``probability``.
+
+Both datasets ask for a probability the same way: reasoning first, then the JSON
+object ``{"probability": <number>}`` with a number between 0 and 1.  Multiple-choice
+questions ask for a single letter.
 """
 
 from __future__ import annotations
 
-import hashlib
 import gzip
+import hashlib
+import json
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -27,6 +32,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from latent_beliefs.ckd.parse import normalize_probability
 from second_order import config as C
 from second_order.conditions import condition_key
 
@@ -133,8 +139,10 @@ def replicates(dataset: str, condition: str) -> int:
     return int(C.load()["datasets"]["bespoke"]["replicates"].get(condition, 1))
 
 
-def max_tokens(dataset: str) -> int:
-    return int(C.load()["datasets"][dataset]["max_tokens"])
+def max_tokens(dataset: str, output: str) -> int:
+    """Output-token limit: reasoned probability answers get ``probability``, single letters ``choice``."""
+    limits = C.load()["datasets"][dataset]["max_tokens"]
+    return int(limits["probability" if output.split("/")[0] == "probability" else "choice"])
 
 
 # ---------------------------------------------------------------- answers
@@ -145,7 +153,7 @@ LIKERT = {"Very unlikely": 1.0, "Somewhat unlikely": 2.0, "Neither likely nor un
           "Somewhat likely": 4.0, "Very likely": 5.0}
 QUINTILE = {"Less than 5.07%": 1.0, "5.07% to less than 7.49%": 2.0, "7.49% to less than 13.02%": 3.0,
             "13.02% to less than 29.72%": 4.0, "29.72% or higher": 5.0}
-NUMBER = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)(?![\w.]*\d)")
+QUOTED_KEY = re.compile(r'"probability"\s*:\s*"?([0-9]*\.?[0-9]+)\s*(%?)"?', flags=re.I)
 LETTER = re.compile(r"\s*[*_`(\[]*([A-E])[*_`)\].:]*(?:\s+(.*?))?[\s.*_`]*", flags=re.S)
 
 
@@ -176,13 +184,29 @@ def parse_letter(text: str, opts: dict[str, str]) -> str | None:
     return by_text[0] if len(by_text) == 1 else None
 
 
-def parse_percent(text: str) -> float | None:
-    """A probability stated from 0 to 100: the answer must hold exactly one number."""
-    numbers = NUMBER.findall(text.replace(",", ""))
-    if len(numbers) != 1:
-        return None
-    value = float(numbers[0])
-    return value / 100 if 0 <= value <= 100 else None
+def parse_probability(text: str | None) -> tuple[float | None, str | None]:
+    """The answer from the last JSON object with a ``probability`` key (or a quoted key).
+
+    The first-order parser also accepts any number after the word "probability"; the
+    prompts here contain numbers ("Bag A", "Draw 2", a patient's age), so that fallback
+    is not used.
+    """
+    if not text:
+        return None, None
+    for candidate in reversed(re.findall(r"\{[^{}]*\}", text, flags=re.DOTALL)):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and "probability" in parsed:
+            p = normalize_probability(parsed["probability"])
+            if p is not None:
+                return p, "json"
+    for number, percent in reversed(QUOTED_KEY.findall(text)):
+        p = normalize_probability(number + percent)
+        if p is not None:
+            return p, "quoted_key"
+    return None, None
 
 
 def _norm(text: str) -> str:
@@ -193,22 +217,12 @@ def parse(dataset: str, output: str, prompt: str, text: str | None) -> tuple[flo
     """(value, method): the probability in [0, 1], an option's meaning, or None if unparseable."""
     if text is None:
         return None, None
-    if dataset == "bespoke":
-        from second_order.bespoke import parse_response
-
-        return parse_response(text)
     question = output.split("/")[0]
     if question == "probability":
-        value = parse_percent(text)
-        return (value, "number") if value is not None else (None, None)
+        return parse_probability(text)
     opts = options(prompt)
     letter = parse_letter(text, opts)
     return (option_value(question, opts[letter]), "letter") if letter else (None, None)
-
-
-def is_belief_output(dataset: str, output: str) -> bool:
-    """Outputs that measure a belief (not the comprehension or role checks)."""
-    return dataset == "bespoke" or output.split("/")[0] not in ("check", "role_check")
 
 
 def logit(p) -> np.ndarray:

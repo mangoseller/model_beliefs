@@ -33,8 +33,9 @@ record E. E_p withholds three fields; E_f alters two. Every column is read as a 
     `patients.csv` gives each patient's PERSON name, record order and false-record
     direction, and marks the 64 patients eligible for the direction contrast.
 - **Answers:**
-  - **Probability:** a single number from 0 to 100, divided by 100. The answer must hold
-    exactly one number; anything else is a parse failure.
+  - **Probability:** reasoning, then the JSON object `{"probability": <number>}` with a
+    number between 0 and 1, the same format as the bespoke items. Only the JSON object is
+    read (`datasets.parse_probability`); anything else is a parse failure.
   - **Multiple choice:** a single letter, optionally with its option text, or the option
     text alone. It is decoded through the row's own options: 1 or 0 for screen/accept
     or not, 1 to 5 up the Likert and quintile scales.
@@ -61,8 +62,8 @@ tests); `p01` and `p02` are placebo items. One row per item and case:
   - `check_relation`.
 - **Sampling:** each row is sampled `datasets.bespoke.samples` times per run, and A, B
   and B_F get a second run.
-- **Answers:** read from the JSON object only. The first-order fallback, any number after
-  the word "probability", would misread the numbers in the propositions.
+- **Answers:** read from the JSON object only, as for CKD. The first-order fallback (any
+  number after the word "probability") would misread the numbers in the propositions.
 - **Follow-ups:** scored by the observation statements in the answer ("Draw 2: red.",
   "Witness 1: says "Sam".", "Test 3: positive."):
   - "Which ... did PERSON see/hear" needs exactly the keyed statements;

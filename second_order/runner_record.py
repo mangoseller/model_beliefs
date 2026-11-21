@@ -35,8 +35,8 @@ from second_order.run_generation import FOLLOWUP, sampling, settings_signature, 
 
 ESTIMATOR = """# Estimators, as implemented
 
-All beliefs are on the log-odds scale. Stated probabilities (CKD: the 0-100 answer
-divided by 100) are clipped to [0.01, 0.99] before the logit. Latent beliefs are
+All beliefs are on the log-odds scale. Stated probabilities (read from the JSON object
+both datasets ask for) are clipped to [0.01, 0.99] before the logit. Latent beliefs are
 posterior means of logit z from the pooled Smolin & Wilder fit of the believer's family
 (own belief: A and every B; PERSON: every M, D, M2, D2 and C), with each CKD question in
 each option order an output with its own item parameters. Per case (CKD patient or
@@ -114,7 +114,8 @@ def constants() -> dict:
         }),
         "generation": {m: {"backend": C.model_config(m)["backend"], "weights": C.model_config(m).get("path"),
                            "revision": C.model_config(m).get("revision"),
-                           "sampling": {d: sampling(m, d) for d in C.datasets_for(m)},
+                           "sampling": {d: {o: sampling(m, d, o) for o in ("probability", "choice")}
+                                        for d in C.datasets_for(m)},
                            "chat_template": template_kwargs(m),
                            "settings_signature": {d: settings_signature(m, d) for d in C.datasets_for(m)},
                            "max_model_len": C.model_config(m).get("max_model_len"),
@@ -254,8 +255,8 @@ def settings_table(consts: dict) -> str:
                           f"{consts['estimators']['interval']}, seed {consts['seed']}"),
             ("Camerer et al. w", str(d["camerer_w"]))]
     for m, g in gen.items():
-        s = next(iter(g["sampling"].values()))
-        limits = ", ".join(f"{d} {v['max_tokens']}" for d, v in g["sampling"].items())
+        s = next(iter(next(iter(g["sampling"].values())).values()))
+        limits = ", ".join(f"{d} {o} {v['max_tokens']}" for d, by in g["sampling"].items() for o, v in by.items())
         rows.append((f"Generation, {display(m)}", f"{g['backend']}, temperature {s['temperature']}, top-p {s['top_p']}, "
                      f"top-k {s['top_k']}, max tokens {limits}, chat template {g['chat_template']}, "
                      f"no system prompt"))

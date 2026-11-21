@@ -55,8 +55,9 @@ redirect a run (`second_order/config.py`). `--cases N` runs a seeded sample of N
 | Bespoke: 248 runs of the 190 prompts × 20 samples | 4,960 |
 | Bespoke: comprehension follow-ups | 1,120 |
 
-CKD answers are a number or a letter (at most 256 output tokens); bespoke answers reason
-first (at most 4,096). Sampling is at temperature 1, with thinking off and no system prompt.
+Probability answers, in both datasets, reason first and then give JSON (at most 4,096
+output tokens); the CKD multiple-choice answers are a single letter (at most 256). Sampling
+is at temperature 1, with thinking off and no system prompt.
 
 ## The generation cache
 

@@ -44,8 +44,7 @@ class Tuning(unittest.TestCase):
 
     def test_smoke_stats(self):
         items = [Item(**d) for d in T.benchmark_items("synthetic", 40, 2)]
-        records = [{"text": '{"probability": 0.3}' if i.dataset == "bespoke" else
-                    "40" if i.output.startswith("probability") else "A",
+        records = [{"text": 'Reasoning.\n{"probability": 0.3}' if i.output.startswith("probability") else "A",
                     "stop_reason": "stop", "usage": {"output_tokens": 10}} for i in items]
         stats = T.smoke_stats(items, records)
         self.assertEqual(stats["calls"], len(items))
@@ -65,9 +64,10 @@ class Freeze(unittest.TestCase):
         self.assertEqual(F.token_before(merged, 5), 0)
         self.assertEqual(F.token_before(merged, 7), 1)
         text = 'thinking {"probability": 0.2} wait {"probability": 0.3}'
-        self.assertEqual(F.answer_start("bespoke", text), text.rindex("{"))
-        self.assertEqual(F.answer_start("bespoke", "no answer"), -1)
-        self.assertEqual(F.answer_start("ckd", "37"), 0)
+        self.assertEqual(F.answer_start("probability", text), text.rindex("{"))
+        self.assertEqual(F.answer_start("probability/normal", text), text.rindex("{"))
+        self.assertEqual(F.answer_start("probability", "no answer"), -1)
+        self.assertEqual(F.answer_start("likert/flip", "B"), 0)
 
     def test_evidence_end_is_just_before_the_question(self):
         for dataset, case_id in (("ckd", DS.case_ids("ckd")[0]), ("bespoke", "b01")):

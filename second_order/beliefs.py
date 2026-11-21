@@ -6,8 +6,8 @@ and run (``replicate``), holding a belief on the logit scale:
     model, dataset, case_id, split, condition, replicate, method, value, sd, value_calibrated, n_samples
 
 * ``latent`` (CKD): value = posterior mean of logit z from the pooled fit; sd = posterior sd.
-* ``direct``: value = logit of the stated probability (CKD: the 0-100 answer divided
-  by 100), clipped to [0.01, 0.99].  With several samples per run (bespoke dataset),
+* ``direct``: value = logit of the stated probability (the JSON answer both datasets
+  ask for), clipped to [0.01, 0.99].  With several samples per run (bespoke dataset),
   value = the mean of the sample logits and sd = its standard error.
 * ``value_calibrated``: for ``latent``, the posterior mean de-shrunk with the
   fit's own calibration line (``measurement.calibration``); otherwise equal to ``value``.

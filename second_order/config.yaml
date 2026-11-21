@@ -6,12 +6,12 @@ datasets:
   ckd:                     # datasets/ckd_second_order_v3 (its README.md describes the battery)
     dir: datasets/ckd_second_order_v3
     batteries: [main, high_thresholds, role_swap]   # prompt files to generate
-    max_tokens: 256        # answers are a single number or letter
+    max_tokens: {probability: 4096, choice: 256}   # reasoning then JSON; a single letter
   bespoke:                 # datasets/second_order_simple_prompts.csv
     file: datasets/second_order_simple_prompts.csv
     samples: 20            # samples per item, condition and run
     replicates: {A: 2, B: 2, B_F: 2}   # runs of the own-belief conditions; the second gives rho
-    max_tokens: 4096       # prompts ask for reasoning, then JSON
+    max_tokens: {probability: 4096, choice: 4096}  # every prompt asks for reasoning, then JSON
 
 experiment:
   models: [qwen3_8b, qwen3_14b]

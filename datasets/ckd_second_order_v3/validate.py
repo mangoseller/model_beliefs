@@ -98,7 +98,14 @@ def verify():
                     canonical[i,s]=prompt
                 question = '\n\n'.join(parts[len(evidence_roles):])
                 opts = OPTION.findall(question)
-                if q!='probability':
+                if q=='probability':
+                    assert question.endswith(
+                        '\n\nProvide your reasoning first.\n'
+                        'Then output valid JSON on a new line in exactly this structure:\n'
+                        '{"probability": <number>}\n\nThe number must be between 0 and 1.'
+                    )
+                    assert 'single number from 0 to 100' not in question
+                else:
                     assert len(opts)==(5 if q in ('likert','quintile') else 2)
                 if o=='flip':
                     normal = bykey[s,c,b,q,'normal']['prompt']

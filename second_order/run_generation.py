@@ -16,8 +16,9 @@ The CKD checks are ordinary standalone rows.
 Backends: ``vllm`` (local open weights on CUDA, one seed per item), ``hf``
 (transformers fallback) and ``synthetic`` (``second_order/synthetic.py``: text from
 known parameters, for end-to-end checks).  A single user message and no system
-prompt; temperature from ``generation``, the token limit per dataset, both
-overridable per model (``temperature``, ``top_p``, ``top_k``, ``max_tokens``,
+prompt; temperature from ``generation`` and the token limit per answer type (reasoning
+then JSON for probabilities, a single letter otherwise: ``datasets.<name>.max_tokens``),
+both overridable per model (``temperature``, ``top_p``, ``top_k``, ``max_tokens``,
 ``enable_thinking``).  vLLM also keeps the top log-probabilities of the first
 answer token (``generation.logprobs``), so the letter answers can be scored by
 answer probability as well as by the sampled choice.
@@ -82,7 +83,8 @@ def settings_signature(model: str, dataset: str) -> str:
     """Hash of what besides the prompt shapes a response: backend, weights, sampling, chat template."""
     mcfg = C.model_config(model)
     payload = {"backend": mcfg["backend"], "weights": mcfg.get("path"), "revision": mcfg.get("revision"),
-               "sampling": sampling(model, dataset), "template": template_kwargs(model), "truth": mcfg.get("truth")}
+               "sampling": {o: sampling(model, dataset, o) for o in ("probability", "choice")},
+               "template": template_kwargs(model), "truth": mcfg.get("truth")}
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -142,14 +144,14 @@ def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
 
 
 # ---------------------------------------------------------------- backends
-def sampling(model: str, dataset: str) -> dict[str, Any]:
+def sampling(model: str, dataset: str, output: str) -> dict[str, Any]:
     """Temperature, top-p, top-k, token limit and log-probabilities, overridable per model."""
     from second_order.datasets import max_tokens
 
     gen, mcfg = C.load()["generation"], C.model_config(model)
     return {"temperature": float(mcfg.get("temperature", gen["temperature"])),
             "top_p": float(mcfg.get("top_p", 1.0)), "top_k": int(mcfg.get("top_k", -1)),
-            "max_tokens": int(mcfg.get("max_tokens", max_tokens(dataset))),
+            "max_tokens": int(mcfg.get("max_tokens", max_tokens(dataset, output))),
             "logprobs": int(gen.get("logprobs") or 0)}
 
 
@@ -177,7 +179,7 @@ def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, An
     llm = _LOCAL[model]
     params = []
     for i in items:
-        s = sampling(model, i.dataset)
+        s = sampling(model, i.dataset, i.output)
         params.append(SamplingParams(n=1, temperature=s["temperature"], top_p=s["top_p"], top_k=s["top_k"],
                                      max_tokens=s["max_tokens"], seed=item_seed(seed, i),
                                      logprobs=s["logprobs"] or None))
@@ -215,7 +217,8 @@ def generate_hf(model: str, items: list[Item], seed: int) -> list[dict[str, Any]
         lm.eval()
         _LOCAL[model] = (lm, tok)
     lm, tok = _LOCAL[model]
-    s = sampling(model, items[0].dataset)  # run() calls a backend with one dataset at a time
+    s = sampling(model, items[0].dataset, items[0].output)
+    s["max_tokens"] = max(sampling(model, i.dataset, i.output)["max_tokens"] for i in items)  # one limit per batch
     texts = [tok.apply_chat_template(i.chat(), add_generation_prompt=True, tokenize=False, **template_kwargs(model))
              for i in items]
     enc = tok(texts, return_tensors="pt", padding=True, add_special_tokens=False).to(lm.device)
