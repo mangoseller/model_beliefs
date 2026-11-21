@@ -13,7 +13,8 @@ import torch
 from second_order import datasets as DS
 from second_order import freeze as F
 from second_order import tune as T
-from second_order.run_generation import Item
+from second_order.responses import score_answer
+from second_order.run_generation import FOLLOWUP, Item
 from second_order.runner import last_line
 
 
@@ -60,6 +61,40 @@ class Tuning(unittest.TestCase):
         self.assertEqual(stats["by_output"]["bespoke/probability"], 1.0)
         bad = T.smoke_stats(items, [{"text": "no answer", "stop_reason": "length"} for _ in items])
         self.assertEqual((bad["parse_rate"], bad["truncated_rate"]), (0.0, 1.0))
+
+
+class AnswerScoring(unittest.TestCase):
+    def test_wrong_followup_is_parsed_and_fallback_probability_is_excluded(self):
+        followup = Item("m", "c", "C", FOLLOWUP, 0, "What was she told?", dataset="bespoke")
+        meta = {"comprehension_q": followup.prompt, "comprehension_a": "Draw 1: blue."}
+        wrong = {"text": "Draw 1: red.", "ok": True}
+        score = score_answer(followup, wrong, meta)
+        self.assertEqual((score.status, score.value), ("parsed", 0.0))
+
+        probability = Item("m", "c", "C", "probability", 0, "Report a probability.", dataset="bespoke")
+        fallback = {"text": '"probability": "22%"', "ok": True}
+        score = score_answer(probability, fallback)
+        self.assertEqual((score.status, score.value, score.fallback_value), ("fallback", None, .22))
+        with patch.object(DS, "row", return_value=meta):
+            stats = T.smoke_stats([followup, probability], [wrong, fallback])
+        self.assertEqual(stats["groups"]["bespoke/followup"]["parse_rate"], 1.0)
+        self.assertEqual(stats["groups"]["bespoke/probability"]["parse_rate"], 0.0)
+
+    def test_check_parseability_needs_only_the_prompt_and_correctness_uses_the_key(self):
+        item = Item("m", "case", "C", "check/normal", 0, "A. Yes\nB. No")
+        record = {"ok": True, "text": "B"}
+        score = score_answer(item, record, {"check_answer": "A"})
+        self.assertEqual((score.status, score.value), ("parsed", 0.0))
+        stats = T.smoke_stats([item], [record])
+        self.assertEqual(stats["parse_rate"], 1.0)
+
+    def test_truncated_answer_keeps_extracted_value_but_fails_tuning(self):
+        item = Item("m", "c", "A", "probability/normal", 0, "Report a probability.")
+        record = {"text": '{"probability": 0.22}', "stop_reason": "length", "ok": True}
+        score = score_answer(item, record)
+        self.assertEqual((score.status, score.parse_method, score.value), ("truncated", "json", .22))
+        stats = T.smoke_stats([item], [record])
+        self.assertEqual((stats["parse_rate"], stats["truncated_rate"]), (0.0, 1.0))
 
 
 class AnchoredExport(unittest.TestCase):

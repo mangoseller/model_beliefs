@@ -243,7 +243,8 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().strip(".").strip()).lower()
 
 
-def parse(dataset: str, output: str, prompt: str, text: str | None) -> tuple[float | str | None, str | None]:
+def parse(dataset: str, output: str, prompt: str, text: str | None, *,
+          check_answer: str | None = None) -> tuple[float | str | None, str | None]:
     """(value, method): the probability in [0, 1], an option's meaning, or None if unparseable."""
     if text is None:
         return None, None
@@ -252,7 +253,11 @@ def parse(dataset: str, output: str, prompt: str, text: str | None) -> tuple[flo
         return parse_probability(text)
     opts = options(prompt)
     letter = parse_letter(text, opts)
-    return (option_value(question, opts[letter]), "letter") if letter else (None, None)
+    if not letter:
+        return None, None
+    if check_answer is not None:
+        return float(letter == check_answer), "letter"
+    return option_value(question, opts[letter]), "letter"
 
 
 def logit(p) -> np.ndarray:

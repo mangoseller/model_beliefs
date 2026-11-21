@@ -18,6 +18,7 @@ the latent model masks the missing ones) and a seeded patient-level split.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from functools import lru_cache
 
 import numpy as np
@@ -28,7 +29,7 @@ from second_order import config as C
 from second_order import datasets as DS
 from second_order.bespoke import score_comprehension
 from second_order.conditions import CONDITIONS
-from second_order.run_generation import FOLLOWUP, comprehension_items, experiment_items, lookup
+from second_order.run_generation import FOLLOWUP, Item, comprehension_items, experiment_items, lookup
 
 UNIT = ["case_id", "replicate", "sample"]  # one model call per output
 CHECKS = ("check", "role_check")
@@ -80,31 +81,57 @@ def configured_specs() -> tuple[OutputSpec, ...]:
 
 
 # ---------------------------------------------------------------- parsing
+@dataclass(frozen=True)
+class AnswerScore:
+    """Value extracted from the text. Only status 'parsed' qualifies for primary analysis."""
+    status: str
+    value: float | str | None = None
+    parse_method: str | None = None
+    fallback_value: float | None = np.nan
+
+
+def score_answer(item: Item, record: dict | None, metadata: dict | None = None) -> AnswerScore:
+    if record is None:
+        return AnswerScore("not_generated")
+    if not record.get("ok", True):
+        return AnswerScore("call_error")
+
+    text = visible_text(record.get("text"))
+    question = item.output.split("/")[0]
+    fallback = None
+    if question == FOLLOWUP:
+        if metadata is None:
+            metadata = DS.row(item.dataset, item.case_id, item.condition, "probability", item.replicate)
+        value = score_comprehension(metadata["comprehension_q"], metadata["comprehension_a"], text)
+        method = "comprehension" if value is not None else "invalid"
+    else:
+        key = metadata["check_answer"] if metadata is not None and question in CHECKS else None
+        value, method = DS.parse(item.dataset, item.output, item.prompt, text, check_answer=key)
+        if value is None and question == "probability":
+            fallback = DS.fallback_probability(text)
+
+    if record.get("stop_reason") == "length":
+        status = "truncated"
+    elif value is not None:
+        status = "parsed"
+    elif fallback is not None:
+        status = "fallback"
+    else:
+        status = "parse_failure"
+    return AnswerScore(status, value, method or "invalid", fallback)
+
+
 def collect(model: str, dataset: str, case_ids: list[str], write: bool = True) -> pd.DataFrame:
     items = experiment_items(model, dataset, case_ids)
     rows = []
     for item, record in zip(items, lookup(items)):
         meta = DS.row(dataset, item.case_id, item.condition, item.output, item.replicate)
-        base = {"parse_method": None, "fallback_value": np.nan, "stop_reason": (record or {}).get("stop_reason"), "case_id": item.case_id, "condition": item.condition, "output": item.output,
-                "battery": meta["battery"], "replicate": item.replicate, "sample": item.sample}
-        if record is None:
-            rows.append({**base, "status": "not_generated", "text": None, "value": np.nan})
-            continue
-        if not record["ok"]:
-            rows.append({**base, "status": "call_error", "text": record["text"], "value": np.nan})
-            continue
-        value, method = DS.parse(dataset, item.output, item.prompt, visible_text(record["text"]))
-        if value is not None and item.output.split("/")[0] in CHECKS:
-            letter = DS.parse_letter(visible_text(record["text"]), DS.options(item.prompt))
-            value = float(letter == meta["check_answer"])
-        fallback = (DS.fallback_probability(visible_text(record["text"]))
-                    if value is None and item.output.startswith("probability") else None)
-        status = ("truncated" if record.get("stop_reason") == "length" else "parsed" if value is not None
-                  else "fallback" if fallback is not None else "parse_failure")
-        if status != "parsed":
-            value = None
-        rows.append({**base, "status": status, "fallback_value": fallback, "parse_method": method or "invalid",
-                     "text": record["text"], "value": np.nan if value is None else float(value)})
+        score = score_answer(item, record, meta)
+        rows.append({"parse_method": score.parse_method, "fallback_value": score.fallback_value,
+                     "stop_reason": (record or {}).get("stop_reason"), "case_id": item.case_id,
+                     "condition": item.condition, "output": item.output, "battery": meta["battery"],
+                     "replicate": item.replicate, "sample": item.sample, "status": score.status,
+                     "text": (record or {}).get("text"), "value": score.value if score.status == "parsed" else np.nan})
     frame = pd.DataFrame(rows)
     frame.insert(0, "model", model)
     frame.insert(1, "dataset", dataset)
@@ -193,20 +220,17 @@ def comprehension(model: str, dataset: str, case_ids: list[str], write: bool = T
     from second_order.bespoke import COMPREHENSION_CONDITIONS
 
     scheduled = experiment_items(model, dataset, case_ids, list(COMPREHENSION_CONDITIONS))
-    records = {(i.case_id, i.condition, i.sample): r for i, r in zip(items, lookup(items), strict=True)}
+    records = {(i.case_id, i.condition, i.sample): (i, r) for i, r in zip(items, lookup(items), strict=True)}
     rows = []
     for item in scheduled:
         if item.replicate != 0:
             continue
-        record = records.get((item.case_id, item.condition, item.sample))
+        child, record = records.get((item.case_id, item.condition, item.sample), (item, None))
         meta = DS.row(dataset, item.case_id, item.condition, "probability")
-        text = visible_text(record["text"]) if record and record["ok"] else None
-        score = score_comprehension(meta["comprehension_q"], meta["comprehension_a"], text)
-        status = ("not_generated" if record is None else "call_error" if not record["ok"]
-                  else "truncated" if record.get("stop_reason") == "length" else "parsed" if score is not None else "parse_failure")
+        score = score_answer(child, record, meta)
         rows.append({"model": model, "dataset": dataset, "case_id": item.case_id, "condition": item.condition,
-                     "output": FOLLOWUP, "replicate": item.replicate, "sample": item.sample, "status": status,
-                     "check_relation": meta["check_relation"], "value": np.nan if score is None else score,
+                     "output": FOLLOWUP, "replicate": item.replicate, "sample": item.sample, "status": score.status,
+                     "check_relation": meta["check_relation"], "value": np.nan if score.value is None else score.value,
                      "text": None if record is None else record["text"]})
     frame = pd.DataFrame(rows, columns=["model", "dataset", "case_id", "condition", "output", "replicate",
                                         "sample", "status", "check_relation", "value", "text"])

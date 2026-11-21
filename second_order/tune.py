@@ -81,22 +81,18 @@ def benchmark_items(model: str, n: int, seed: int) -> list[dict]:
 
 
 def smoke_stats(items, records) -> dict:
-    from second_order.responses import visible_text
+    from second_order.responses import score_answer
+    from second_order.run_generation import FOLLOWUP
 
     stats: dict = {"calls": len(items), "by_output": {}}
     parsed, truncated, thinking, lengths = [], [], [], []
-    from second_order.bespoke import score_comprehension
     groups = {}
     for item, record in zip(items, records, strict=True):
         text = record.get("text") or ""
         kind = "probability" if item.output.startswith("probability") else "choice"
-        if item.output == "comprehension":
+        if item.output == FOLLOWUP:
             kind = "followup"
-            meta = DS.row(item.dataset, item.case_id, item.condition, "probability")
-            value = score_comprehension(meta["comprehension_q"], meta["comprehension_a"], visible_text(text))
-        else:
-            value, _ = DS.parse(item.dataset, item.output, item.prompt, visible_text(text))
-        valid = record.get("ok", True) and value is not None and record.get("stop_reason") != "length"
+        valid = score_answer(item, record).status == "parsed"
         parsed.append(valid)
         groups.setdefault(f"{item.dataset}/{kind}", []).append((valid, record.get("stop_reason") == "length"))
         truncated.append(record.get("stop_reason") == "length")
