@@ -131,12 +131,26 @@ nohup bash run_experiment.sh > run.out 2>&1 &     # or --smoke first: 20 cases, 
 2. It downloads the Zenodo bundle and the Qwen3 8B and 14B weights, and pins
    their exact Hugging Face snapshots.
 3. It runs the unit tests and reproduces the original paper.
-4. It generates every condition, run, sample and comprehension follow-up.
-5. It fits, analyses and draws every figure.
-6. It writes `runs/<run_id>/RUN_REPORT.md` and `record/`: every constant, the
-   estimator as implemented, model revisions, hardware, data checksums, usage
-   and example prompts.
-7. It ends with `runs/<run_id>.tar.gz`.
+4. It **tunes inference and smoke-tests the model**. A sample of about 1,000
+   real calls runs under a few vLLM engine settings (concurrent sequences,
+   token budget, KV-cache memory, prefix caching), and the fastest is kept.
+   The run stops here if the answers don't parse or are truncated.
+5. It generates every condition, run, sample and comprehension follow-up,
+   with a progress bar. Each model's latent fits start in the background on
+   CPU, and meanwhile the GPU **freezes residual-stream activations**: every
+   layer at three positions (end of the evidence, end of the prompt, just
+   before the answer) for every numeric-probability answer. That's about
+   4 GB for 8B and 6 GB for 14B.
+6. It analyses the results and draws every figure.
+7. It writes `runs/<run_id>/RUN_REPORT.md` and `record/`: every constant, the
+   estimator as implemented, model revisions, tuning trials, hardware, data
+   checksums, usage and example prompts.
+8. It ends with `runs/<run_id>.tar.gz`, plus `runs/<run_id>_activations.tar`
+   for the activations.
+
+The console (`run.out`) shows `[stage n/11]` lines, progress bars for
+downloads, inference and freezing, background-fit status every 5 minutes,
+and a summary of λ, φ and τ at the end.
 
 `--run-id <run_id>` resumes an interrupted run without regenerating anything.
 Expect roughly 120 GB of disk. A 48 GB GPU runs Qwen3 14B in bf16; 24 GB is

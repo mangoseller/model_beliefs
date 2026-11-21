@@ -46,6 +46,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from tqdm import tqdm
+
 from second_order import config as C
 
 # Mean tokens per call in the first-order CKD cache (docs/ORIENTATION.md).
@@ -309,10 +311,13 @@ def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, An
 
     mcfg = C.model_config(model)
     if model not in _LOCAL:
+        # Engine settings (max_num_seqs, max_num_batched_tokens, gpu_memory_utilization,
+        # enable_prefix_caching, ...) come from the model's `engine` entry, which the runner's
+        # tune stage fills in; they change speed, not what is sampled.
+        engine = {"gpu_memory_utilization": 0.9, "enable_prefix_caching": True, **(mcfg.get("engine") or {})}
         _LOCAL[model] = LLM(model=mcfg["path"], revision=mcfg.get("revision"), dtype=mcfg.get("dtype", "auto"),
                             max_model_len=mcfg.get("max_model_len"), seed=int(seed),
-                            tensor_parallel_size=int(mcfg.get("tensor_parallel_size", 1)),
-                            gpu_memory_utilization=float(mcfg.get("gpu_memory_utilization", 0.9)))
+                            tensor_parallel_size=int(mcfg.get("tensor_parallel_size", 1)), **engine)
     llm = _LOCAL[model]
     s = sampling(model)
     params = [SamplingParams(n=1, temperature=s["temperature"], top_p=s["top_p"], top_k=s["top_k"],
@@ -416,10 +421,14 @@ def run(items: list[Item], *, approve: bool = False, label: str = "") -> None:
     seed = int(C.load()["seed"])
     cache = Cache(model)
     signature = settings_signature(model)
-    done = 0
     started = time.time()
+    tokens_out = errors = 0
     # Group by output so batches have similar lengths.
     todo.sort(key=lambda i: (i.output, i.condition, i.case_id, i.replicate, i.sample))
+    # One bar over every call (stderr; in a log file it updates every 30 s instead of continuously).
+    bar = tqdm(total=len(todo), desc=label or model, unit="call", smoothing=0.1, dynamic_ncols=True,
+               mininterval=float(os.environ.get("SO_PROGRESS_INTERVAL", 1 if sys.stderr.isatty() else 30)),
+               file=sys.stderr)
     for start in range(0, len(todo), batch):
         chunk = todo[start:start + batch]
         results = generate(model, chunk, seed)
@@ -428,10 +437,14 @@ def run(items: list[Item], *, approve: bool = False, label: str = "") -> None:
                       "sample": i.sample, "prompt_sha": i.prompt_sha, "settings_sha": signature,
                       "backend": backend,
                       "time": time.time(), **r} for i, r in zip(chunk, results))
-        done += len(chunk)
-        rate = (time.time() - started) / done
-        print(f"[{label or model}] {done}/{len(todo)} done; {rate:.2f}s/call; "
-              f"eta {rate * (len(todo) - done) / 60:.1f} min", flush=True)
+        tokens_out += sum((r.get("usage") or {}).get("output_tokens") or 0 for r in results)
+        errors += sum(not r.get("ok") for r in results)
+        bar.set_postfix_str(f"{tokens_out / max(time.time() - started, 1e-9):,.0f} out tok/s; {errors} errors; "
+                            f"now {chunk[-1].dataset}/{chunk[-1].output}", refresh=False)
+        bar.update(len(chunk))
+    bar.close()
+    print(f"[{label or model}] {len(todo)} calls in {(time.time() - started) / 60:.1f} min; "
+          f"{tokens_out:,} output tokens; {errors} errors", flush=True)
 
 
 def experiment_items(model: str, dataset: str, case_ids: list[str], conditions: list[str],

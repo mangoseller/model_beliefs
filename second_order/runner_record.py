@@ -235,6 +235,31 @@ def write_report(run_dir: Path) -> None:
                      "c-indices may differ by up to about 0.01 off the pinned macOS build:\n\n"
                      + md_table(pd.DataFrame([{"metric": k, **v} for k, v in paper.items()]),
                                 ["metric", "max_abs_diff", "exact_rows", "rows"], 4) + "\n")
+    tuning = manifest.get("tuning", {})
+    if tuning:
+        rows = []
+        for m, t in tuning.items():
+            for k, trial in enumerate(t.get("trials", []), 1):
+                rows.append({"model": m, "trial": k, "engine": json.dumps(trial.get("engine")),
+                             "output tok/s": trial.get("output_tokens_per_second"),
+                             "chosen": "yes" if trial.get("engine") == t.get("engine") else "",
+                             "error": (trial.get("error") or "")[:80]})
+        smoke = pd.DataFrame([{"model": m, **{k: v for k, v in (t.get("smoke") or {}).items() if k != "by_output"},
+                               "batch_size": t.get("batch_size")} for m, t in tuning.items()])
+        parts.append("## Inference tuning and smoke test\n\nEach vLLM engine configuration generated the same "
+                     "sample of real calls; the fastest was used for the run (full detail in `record/tuning/`).\n\n"
+                     + md_table(pd.DataFrame(rows), ["model", "trial", "engine", "output tok/s", "chosen", "error"], 0)
+                     + "\nSmoke checks on the chosen configuration's answers:\n\n"
+                     + md_table(smoke, [c for c in ("model", "calls", "parse_rate", "truncated_rate", "thinking_rate",
+                                                    "mean_output_tokens", "p95_output_tokens", "batch_size")
+                                        if c in smoke]) + "\n")
+    acts = manifest.get("activations", {})
+    if acts:
+        parts.append("## Frozen activations\n\nResidual stream at the end of the evidence, the end of the prompt and "
+                     "just before the answer, every layer, bfloat16 (`second_order/freeze.py`; `freeze.load` reads "
+                     f"them). In `{manifest['run_id']}_activations.tar`, not the main tarball.\n\n"
+                     + md_table(pd.DataFrame([{"model": m, **v} for m, v in acts.items()]),
+                                ["model", "exit_code", "gb", "minutes"], 2) + "\n")
     if use:
         rows = [{"model": m, "part": part, **{k: int(v) for k, v in u.items() if k != "first_to_last_response_hours"}}
                 for m, parts_ in use.items() for part, u in parts_.items() if part != "all"]
@@ -248,6 +273,8 @@ def write_report(run_dir: Path) -> None:
                  "- `outputs/retention/`, `outputs/fits/`, `outputs/comprehension/`, `outputs/transcripts_C/`\n"
                  "- `data/`: generation cache (every prompt hash and response), parsed responses, latents, beliefs\n"
                  "- `figures/`: the figures above (PDF and PNG); `paper/`: the reproduced paper\n"
+                 "- `record/tuning/`: every inference-tuning trial and its smoke checks\n"
+                 "- `<run_id>_activations.tar` (separate): `data/activations/<model>/<dataset>/` acts.npy, index, meta\n"
                  "- `logs/`: one log per stage and model\n")
     (run_dir / "RUN_REPORT.md").write_text("".join(parts))
 

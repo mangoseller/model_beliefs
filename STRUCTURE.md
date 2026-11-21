@@ -188,6 +188,8 @@ command-line interface (`python -m second_order.<module>`); settings are in
 | `report.py` | Model display names and markdown tables |
 | `runner.py` | One command for everything (`run_experiment.sh`): data, model snapshots, checks, the paper, generation, fits, analysis, report, tarball |
 | `runner_record.py` | A run's `record/` (constants, estimator, usage, example prompts) and `RUN_REPORT.md` |
+| `tune.py` | Inference tuning and smoke test: vLLM engine settings timed on a sample of real calls |
+| `freeze.py` | Frozen residual-stream activations (prefill replay of cached prompts and responses with transformers) and their loader |
 | `baseline_check.py` | Confirms the first-order baseline still reproduces |
 
 `second_order/deprecated/` holds the earlier RQ1–RQ3 design, still runnable

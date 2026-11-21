@@ -34,10 +34,13 @@ CPU_ONLY=1 bash run_experiment.sh --models synthetic --smoke                # th
 | `fetch_models` | Downloads the weights, tokenizer and config, and pins each model's snapshot hash in the run's `config.yaml` |
 | `checks` | Unit tests, `nvidia-smi`, disk |
 | `paper` | `./reproduce.sh analysis` into `runs/<run_id>/paper/`, compared with `docs/baseline_ckd.csv` |
-| `generate` | Generation per model; each model's phase 3 runs in the background while the next generates |
+| `tune` | `second_order.tune`: times the `tuning.candidates` vLLM engine settings on `tuning.items` real calls; the fastest goes into the run's config (`engine`, `batch_size`). Fails if the answers' parse rate or truncation miss `tuning.min_parse_rate` / `max_truncated_rate` |
+| `generate` | Generation per model with a progress bar; each model's phase 3 starts in the background as soon as it ends |
+| `activations` | `second_order.freeze`: residual stream (every layer, bf16) at the end of the evidence, the end of the prompt and before the answer, for the `activations.outputs` answers, while the fits run |
+| `fits` | Waits for the background phase 3 jobs (or runs them on a resumed run), with a status line every 5 minutes |
 | `analyze` | `second_order.curse` and `second_order.figures` |
 | `report` | `RUN_REPORT.md`, plus `record/`: constants, estimator, usage, example prompts, `pip freeze` |
-| `package` | `runs/<run_id>.tar.gz` and its SHA-256 |
+| `package` | `runs/<run_id>.tar.gz` and its SHA-256; the activations go in `runs/<run_id>_activations.tar` |
 
 A failed stage is recorded, and later stages are skipped unless you pass
 `--continue-on-error`; `report` and `package` always run.

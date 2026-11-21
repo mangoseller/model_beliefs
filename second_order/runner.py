@@ -18,14 +18,21 @@ Stages, in order (``--stages`` runs a subset, ``--skip`` leaves some out):
 3. ``checks``: unit tests, the bespoke item checks, the GPU and disk.
 4. ``paper``: ``./reproduce.sh analysis`` (the original paper's figures and tables) and a
    comparison with the recorded CKD numbers.
-5. ``generate``: every condition, run, sample and comprehension follow-up per model
-   (``run_generation``).  Each model's parsing and CPU latent fits (``phase3``) start in the
-   background as soon as its generation ends, while the next model generates.
-6. ``analyze``: ``second_order.curse`` (estimates, checks, tables) and ``second_order.figures``.
-7. ``report``: ``RUN_REPORT.md`` and ``record/`` (every constant, the estimator, the
-   environment, the model snapshots, the data provenance, usage, example prompts).
-8. ``package``: ``runs/<run_id>.tar.gz`` with everything except the model weights and files
-   rebuilt from the bundle.
+5. ``tune``: a smoke test and inference tuning per model (``second_order.tune``): a sample
+   of real calls under a few vLLM engine settings, the fastest kept in the run's config;
+   stops the run if the answers do not parse or are truncated.
+6. ``generate``: every condition, run, sample and comprehension follow-up per model
+   (``run_generation``, with a progress bar).  Each model's parsing and CPU latent fits
+   (``phase3``) start in the background as soon as its generation ends.
+7. ``activations``: residual-stream activations at three positions and every layer, for
+   the numeric-probability answers (``second_order.freeze``), on the GPU while the fits run.
+8. ``fits``: waits for the background fits (or runs them, on a resumed run).
+9. ``analyze``: ``second_order.curse`` (estimates, checks, tables) and ``second_order.figures``.
+10. ``report``: ``RUN_REPORT.md`` and ``record/`` (every constant, the estimator, the
+    environment, the model snapshots, the tuning, the data provenance, usage, example prompts).
+11. ``package``: ``runs/<run_id>.tar.gz`` with everything except the model weights, the
+    activations and files rebuilt from the bundle; ``runs/<run_id>_activations.tar`` holds
+    the activations.
 
 Everything a run writes is under ``runs/<run_id>/``: ``config.yaml`` (the exact settings
 used), ``data/`` (generation cache, responses, latents, beliefs), ``outputs/`` (tables and
@@ -46,6 +53,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -55,13 +63,14 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "runs"
 DEFAULT_MODELS = ("qwen3_8b", "qwen3_14b")
-STAGES = ("fetch_data", "fetch_models", "checks", "paper", "generate", "analyze", "report", "package")
+STAGES = ("fetch_data", "fetch_models", "checks", "paper", "tune", "generate", "activations", "fits", "analyze",
+          "report", "package")
 ZENODO_RECORD = "23350428"
 ZENODO_FILE = "llm_beliefs_replication_results.tar.gz"
 FIXTURE_ITEMS = ROOT / "tests" / "fixtures" / "bespoke_items.yaml"
 DEFAULT_ITEMS = ROOT / "data" / "bespoke" / "items.yaml"
 MODEL_FILES = ["*.json", "*.safetensors", "*.txt", "*.model", "*.jinja", "*.py", "*.tiktoken", "LICENSE*"]
-EXCLUDE_FROM_TARBALL = ("paper/prompts", "paper/parsed", "paper/sources")
+EXCLUDE_FROM_TARBALL = ("paper/prompts", "paper/parsed", "paper/sources", "data/activations")
 SO_ENV = ("SO_CONFIG", "SO_DATA_DIR", "SO_RESULTS_DIR", "SO_FIGURES_DIR", "SO_BESPOKE_ITEMS")
 
 
@@ -73,6 +82,8 @@ class Run:
         self.dir = RUNS / self.id
         for sub in ("logs", "record", "data", "outputs", "figures", "paper"):
             (self.dir / sub).mkdir(parents=True, exist_ok=True)
+        self.fits: list[tuple[str, subprocess.Popen]] = []  # background phase3 jobs of this invocation
+        self.heartbeat: Heartbeat | None = None
         self.manifest_path = self.dir / "manifest.json"
         self.manifest = json.loads(self.manifest_path.read_text()) if self.manifest_path.exists() else {
             "run_id": self.id, "created": now(), "stages": {}}
@@ -82,7 +93,9 @@ class Run:
         self.env = dict(os.environ, PYTHONPATH=str(ROOT) + os.pathsep + os.environ.get("PYTHONPATH", ""),
                         SO_CONFIG=str(self.config_path), SO_DATA_DIR=str(self.dir / "data"),
                         SO_RESULTS_DIR=str(self.dir / "outputs"), SO_FIGURES_DIR=str(self.dir / "figures"),
-                        PYTHONUNBUFFERED="1")
+                        PYTHONUNBUFFERED="1",
+                        # progress bars: every second when someone watches a terminal, else every 30 s
+                        SO_PROGRESS_INTERVAL="1" if sys.stdout.isatty() else "30")
         if self.manifest.get("bespoke_items"):
             self.env["SO_BESPOKE_ITEMS"] = self.manifest["bespoke_items"]["path"]
         if self.manifest.get("models_pinned"):
@@ -100,19 +113,30 @@ class Run:
             handle.write(line + "\n")
 
     def sh(self, command: list[str], log: str, *, env: dict | None = None, check: bool = True,
-           cwd: Path = ROOT) -> int:
-        """Run a command, streaming its output into logs/<log>.log; returns the exit code."""
+           cwd: Path = ROOT, echo: bool = False) -> int:
+        """Run a command, its output into logs/<log>.log (and to the console with ``echo``)."""
         self.log(f"$ {' '.join(command)}  (log: logs/{log}.log)")
-        with (self.dir / "logs" / f"{log}.log").open("a") as handle:
-            handle.write(f"\n=== {now()} $ {' '.join(command)}\n")
+        with (self.dir / "logs" / f"{log}.log").open("ab") as handle:
+            handle.write(f"\n=== {now()} $ {' '.join(command)}\n".encode())
             handle.flush()
-            code = subprocess.run(command, cwd=cwd, env=env or self.env, stdout=handle, stderr=subprocess.STDOUT).returncode
+            if not echo:
+                code = subprocess.run(command, cwd=cwd, env=env or self.env, stdout=handle,
+                                      stderr=subprocess.STDOUT).returncode
+            else:  # tee, byte for byte, so progress bars (carriage returns) survive
+                proc = subprocess.Popen(command, cwd=cwd, env=env or self.env, stdout=subprocess.PIPE,
+                                        stderr=subprocess.STDOUT)
+                while chunk := os.read(proc.stdout.fileno(), 65536):
+                    handle.write(chunk)
+                    handle.flush()
+                    sys.stdout.buffer.write(chunk)
+                    sys.stdout.buffer.flush()
+                code = proc.wait()
         if check and code:
             raise RuntimeError(f"{command[2] if len(command) > 2 else command[0]} exited with {code}; see logs/{log}.log")
         return code
 
-    def py(self, module: str, *args: str, log: str, check: bool = True) -> int:
-        return self.sh([sys.executable, "-m", module, *args], log, check=check)
+    def py(self, module: str, *args: str, log: str, check: bool = True, echo: bool = False) -> int:
+        return self.sh([sys.executable, "-m", module, *args], log, check=check, echo=echo)
 
     def popen(self, module: str, *args: str, log: str) -> subprocess.Popen:
         command = [sys.executable, "-m", module, *args]
@@ -173,12 +197,17 @@ def stage_fetch_data(run: Run, cfg: dict) -> None:
         target = ROOT / "data" / "downloads" / ZENODO_FILE
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists() or hashlib.md5(target.read_bytes()).hexdigest() != entry["checksum"].split(":")[1]:
+            from tqdm import tqdm
+
             run.log(f"downloading the results bundle ({entry['size'] / 1e6:.0f} MB) from Zenodo")
-            with requests.get(entry["links"]["self"], stream=True, timeout=600) as r:
+            with requests.get(entry["links"]["self"], stream=True, timeout=600) as r, \
+                    tqdm(total=entry["size"], unit="B", unit_scale=True, desc="Zenodo bundle",
+                         mininterval=float(run.env["SO_PROGRESS_INTERVAL"])) as bar:
                 r.raise_for_status()
                 with target.open("wb") as handle:
                     for chunk in r.iter_content(1 << 20):
                         handle.write(chunk)
+                        bar.update(len(chunk))
         md5 = hashlib.md5(target.read_bytes()).hexdigest()
         if md5 != entry["checksum"].split(":")[1]:
             raise RuntimeError(f"Zenodo bundle MD5 {md5} does not match {entry['checksum']}")
@@ -230,7 +259,7 @@ def stage_fetch_models(run: Run, cfg: dict) -> None:
 def stage_checks(run: Run, cfg: dict) -> None:
     clean = {k: v for k, v in run.env.items() if k not in SO_ENV}  # the tests use the repository config
     run.sh([sys.executable, "-m", "unittest", "tests.test_prompts_second_order", "tests.test_leakage",
-            "tests.test_bespoke", "tests.test_generation"], "checks", env=clean)
+            "tests.test_bespoke", "tests.test_generation", "tests.test_runner"], "checks", env=clean)
     (run.dir / "record" / "nvidia_smi.txt").write_text(capture(["nvidia-smi"]))
     gpus = capture(["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"])
     free = shutil.disk_usage(ROOT).free / 1e9
@@ -248,7 +277,7 @@ def stage_checks(run: Run, cfg: dict) -> None:
 def stage_paper(run: Run, cfg: dict) -> None:
     env = dict(run.env, LB_BUILD_DIR=str(run.dir / "paper"), PYTHON=sys.executable,
                WORKERS=str(max(1, min(8, (os.cpu_count() or 2) - 1))))
-    run.sh(["bash", "reproduce.sh", "analysis"], "paper", env=env)
+    run.sh(["bash", "reproduce.sh", "analysis"], "paper", env=env, echo=True)
     import pandas as pd
 
     ref = pd.read_csv(ROOT / "docs" / "baseline_ckd.csv")
@@ -264,32 +293,137 @@ def stage_paper(run: Run, cfg: dict) -> None:
     run.manifest["paper_reproduction"] = summary
 
 
-def stage_generate(run: Run, cfg: dict) -> None:
-    """Generation per model; each model's phase3 runs in the background during the next generation."""
-    cases = ["--cases", str(cfg["main_cases"])]
-    fits: list[tuple[str, subprocess.Popen]] = []
+def last_line(path: Path, marker: str) -> str:
+    """The last line of a log that contains ``marker`` (for progress updates)."""
+    try:
+        lines = [line for line in path.read_text(errors="replace").splitlines() if marker in line]
+    except OSError:
+        return ""
+    return lines[-1].strip() if lines else ""
+
+
+class Heartbeat:
+    """Every few minutes, report background jobs (latent fits) while the foreground runs."""
+
+    def __init__(self, run: Run, every: float = 300):
+        self.run, self.every, self.jobs, self.stop = run, every, [], threading.Event()
+        self.thread = threading.Thread(target=self.loop, daemon=True)
+        self.thread.start()
+
+    def add(self, model: str, job: subprocess.Popen) -> None:
+        self.jobs.append((model, job, time.time()))
+
+    def loop(self) -> None:
+        while not self.stop.wait(self.every):
+            for model, job, started in self.jobs:
+                if job.poll() is None:
+                    latest = last_line(self.run.dir / "logs" / f"phase3_{model}.log", "fit ") or "parsing responses"
+                    self.run.log(f"background: phase3 {model} running {(time.time() - started) / 60:.0f} min; "
+                                 f"latest: {latest}")
+
+    def close(self) -> None:
+        self.stop.set()
+
+
+def stage_tune(run: Run, cfg: dict) -> None:
+    """Smoke test and engine tuning for each vLLM model; the winner goes into the run's config."""
     failures = []
-    for model in run.args.models:
+    for model in [m for m in run.args.models if cfg["models"][m]["backend"] == "vllm"]:
+        out = run.dir / "record" / "tuning" / f"{model}.json"
+        extra = ["--items", "256", "--candidates", "2"] if run.args.smoke else []
+        run.log(f"tuning {model}: timing engine settings on a sample of real calls (log: logs/tune_{model}.log)")
+        code = run.py("second_order.tune", "--model", model, "--out", str(out), *extra, log=f"tune_{model}",
+                      check=False, echo=True)
+        summary = json.loads(out.read_text()) if out.exists() else {"error": f"tune exited with {code}"}
+        if summary.get("engine"):
+            cfg["models"][model]["engine"] = summary["engine"]
+            cfg["models"][model]["batch_size"] = summary["batch_size"]
+        run.manifest.setdefault("tuning", {})[model] = {
+            k: summary.get(k) for k in ("engine", "batch_size", "output_tokens_per_second", "speedup_over_first",
+                                        "error")} | {"smoke": {k: v for k, v in (summary.get("smoke") or {}).items()
+                                                              if k != "examples"},
+                                                     "trials": [{k: t.get(k) for k in ("engine", "ok", "error",
+                                                                                       "output_tokens_per_second")}
+                                                                for t in summary.get("trials", [])]}
+        if summary.get("error"):
+            failures.append(f"{model}: {summary['error']}")
+    run.config_path.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    if failures:
+        raise RuntimeError("; ".join(failures))
+
+
+def stage_generate(run: Run, cfg: dict) -> None:
+    """Generation per model; each model's phase3 starts in the background as soon as it ends."""
+    cases = ["--cases", str(cfg["main_cases"])]
+    failures = []
+    run.heartbeat = run.heartbeat or Heartbeat(run)
+    for n, model in enumerate(run.args.models, 1):
+        run.log(f"model {n}/{len(run.args.models)}: {model}: generating (progress bar below; "
+                f"log: logs/generate_{model}.log)")
         started = time.time()
         code = run.py("second_order.run_generation", "--model", model, "--approve", *cases,
-                      log=f"generate_{model}", check=False)
+                      log=f"generate_{model}", check=False, echo=True)
         run.manifest.setdefault("generation", {})[model] = {"exit_code": code,
                                                              "minutes": round((time.time() - started) / 60, 1)}
         run.save()
         if code:
             failures.append(f"generation for {model} exited with {code}")
             continue
+        run.log(f"model {model}: generation done in {(time.time() - started) / 60:.1f} min; "
+                f"parsing and latent fits start in the background (log: logs/phase3_{model}.log)")
         job = run.popen("second_order.phase3", "--model", model, *cases, log=f"phase3_{model}")
+        run.heartbeat.add(model, job)
         if run.args.no_parallel_fits:
             job.wait()
-        fits.append((model, job))
-    for model, job in fits:
+        run.fits.append((model, job))
+    if failures:
+        raise RuntimeError("; ".join(failures))
+
+
+def generated(run: Run) -> list[str]:
+    return [m for m in run.args.models if run.manifest.get("generation", {}).get(m, {}).get("exit_code") == 0]
+
+
+def stage_activations(run: Run, cfg: dict) -> None:
+    """Freeze residual-stream activations (GPU) while the latent fits run (CPU)."""
+    failures = []
+    for model in [m for m in generated(run) if cfg["models"][m]["backend"] in ("vllm", "hf")]:
+        started = time.time()
+        code = run.py("second_order.freeze", "--model", model, "--cases", str(cfg["main_cases"]),
+                      log=f"activations_{model}", check=False, echo=True)
+        folder = run.dir / "data" / "activations" / model
+        size = sum(p.stat().st_size for p in folder.rglob("*") if p.is_file()) if folder.exists() else 0
+        run.manifest.setdefault("activations", {})[model] = {"exit_code": code, "gb": round(size / 1e9, 2),
+                                                              "minutes": round((time.time() - started) / 60, 1)}
+        if code:
+            failures.append(f"freezing activations for {model} exited with {code}")
+    if failures:
+        raise RuntimeError("; ".join(failures))
+
+
+def stage_fits(run: Run, cfg: dict) -> None:
+    """Wait for the background phase3 jobs; run phase3 for generated models that have none."""
+    run.heartbeat = run.heartbeat or Heartbeat(run)
+    started_here = {m for m, _ in run.fits}
+    for model in [m for m in generated(run) if m not in started_here]:
+        job = run.popen("second_order.phase3", "--model", model, "--cases", str(cfg["main_cases"]),
+                        log=f"phase3_{model}")
+        run.fits.append((model, job))
+        run.heartbeat.add(model, job)
+    if any(job.poll() is None for _, job in run.fits):
+        run.log("waiting for the latent fits (CPU) to finish; progress every 5 minutes")
+    failures = []
+    for model, job in run.fits:
         started = time.time()
         code = job.wait()
+        run.log(f"model {model}: phase3 finished (exit {code}); "
+                f"{last_line(run.dir / 'logs' / f'phase3_{model}.log', 'cases complete') or ''}")
         run.manifest.setdefault("phase3", {})[model] = {"exit_code": code,
                                                          "wait_minutes": round((time.time() - started) / 60, 1)}
         if code:
             failures.append(f"phase3 for {model} exited with {code}")
+    run.heartbeat.close()
+    run.heartbeat = None
     if failures:
         raise RuntimeError("; ".join(failures))
 
@@ -302,6 +436,16 @@ def stage_analyze(run: Run, cfg: dict) -> None:
     run.py("second_order.curse", "--models", *done, "--resamples", str(cfg["analysis"]["bootstrap_resamples"]),
            log="analyze")
     run.py("second_order.figures", log="analyze")
+    import pandas as pd
+
+    est = pd.read_csv(run.dir / "outputs" / "curse" / "estimates.csv")
+    head = est[(est.case_set == "all") & est.statistic.isin(["lambda", "phi", "tau"])
+               & (est.setting != "false_minus_partial")]
+    for (model, dataset, method, setting), g in head.groupby(["model", "dataset", "method", "setting"], sort=False):
+        g = g.set_index("statistic")
+        cells = [f"{s} {g.loc[s].estimate:.2f} [{g.loc[s].ci_lower:.2f}, {g.loc[s].ci_upper:.2f}]"
+                 for s in ("lambda", "phi", "tau") if s in g.index and pd.notna(g.loc[s].estimate)]
+        run.log(f"result: {model} {dataset} {method} {setting}: " + ("; ".join(cells) or "blank (ratio rule)"))
 
 
 def stage_report(run: Run, cfg: dict) -> None:
@@ -330,6 +474,13 @@ def stage_package(run: Run, cfg: dict) -> None:
     digest = sha256(target)
     (RUNS / f"{run.id}.tar.gz.sha256").write_text(f"{digest}  {target.name}\n")
     run.log(f"packaged {target} ({target.stat().st_size / 1e6:.0f} MB, sha256 {digest[:16]}...)")
+    acts = run.dir / "data" / "activations"
+    if acts.exists() and any(acts.rglob("acts.npy")):
+        extra = RUNS / f"{run.id}_activations.tar"  # bfloat16 bits barely compress
+        with tarfile.open(extra, "w") as archive:
+            archive.add(acts, arcname=f"{run.id}/data/activations")
+        run.manifest["activations_tarball"] = str(extra)
+        run.log(f"packaged {extra} ({extra.stat().st_size / 1e9:.2f} GB): the frozen activations")
 
 
 STAGE_FUNCTIONS = {name: globals()[f"stage_{name}"] for name in STAGES}
@@ -358,11 +509,13 @@ def main() -> None:
     cfg = write_config(run)
     run.log(f"run {run.id}: models {', '.join(args.models)}; directory {run.dir}")
     failed = False
-    for stage in [s for s in STAGES if s in args.stages and s not in args.skip]:
+    run_started = time.time()
+    selected = [s for s in STAGES if s in args.stages and s not in args.skip]
+    for number, stage in enumerate(selected, 1):
         if failed and stage not in ("report", "package") and not args.continue_on_error:
             run.manifest["stages"][stage] = {"status": "skipped after an earlier failure"}
             continue
-        run.log(f"stage {stage}: start")
+        run.log(f"[stage {number}/{len(selected)}] {stage}: start")
         started = time.time()
         record = {"started": now()}
         try:
@@ -375,7 +528,8 @@ def main() -> None:
         record["minutes"] = round((time.time() - started) / 60, 2)
         run.manifest["stages"][stage] = record
         run.save()
-        run.log(f"stage {stage}: {record['status']} ({record['minutes']} min)")
+        run.log(f"[stage {number}/{len(selected)}] {stage}: {record['status']} ({record['minutes']} min; "
+                f"{(time.time() - run_started) / 3600:.2f} h so far)")
     if run.manifest.get("bespoke_items", {}).get("placeholder"):
         run.log("NOTE: this run used PLACEHOLDER bespoke items (tests/fixtures/bespoke_items.yaml)")
     run.log(f"done; tarball: {run.manifest.get('tarball', '(not packaged)')}")

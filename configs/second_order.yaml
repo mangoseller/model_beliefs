@@ -60,6 +60,25 @@ experiment:
     outputs: [probability]                # CKD: after the numeric probability only
   camerer_w: 0.51                         # Camerer, Loewenstein and Weber (1989)
 
+# Before the main run, the runner's tune stage times these vLLM engine settings on a
+# sample of real calls, keeps the fastest (written into the run's config as the model's
+# `engine` and `batch_size`) and stops the run if the answers do not parse.
+tuning:
+  items: 1024                 # benchmark calls per configuration
+  min_parse_rate: 0.8
+  max_truncated_rate: 0.1
+  bespoke_share: 0.1
+  candidates:
+    - {max_num_seqs: 256, max_num_batched_tokens: 8192, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
+    - {max_num_seqs: 512, max_num_batched_tokens: 16384, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
+    - {max_num_seqs: 1024, max_num_batched_tokens: 32768, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
+
+# Residual-stream activations frozen after generation (second_order/freeze.py): which outputs.
+activations:
+  outputs: {ckd: [probability], bespoke: [probability]}
+  samples: 1
+  replicates: [0]
+
 bespoke:
   items: data/bespoke/items.yaml          # local item file (schema: docs/BESPOKE.md); SO_BESPOKE_ITEMS overrides
   samples: 20                             # samples per item, condition and run
@@ -82,9 +101,9 @@ models:
   gemma3_12b_mlx: {backend: mlx, path: build/activation_pilot_12b/model, cached_a: false, split_from: gemma3_12b, batch_size: 8}
   # Curse-of-knowledge models: local open weights on a CUDA machine (vLLM), thinking off.
   qwen3_8b:  {backend: vllm, path: Qwen/Qwen3-8B, cached_a: false, split: own, datasets: [ckd, bespoke],
-              conditions: *curse, dtype: bfloat16, enable_thinking: false, max_model_len: 16384, batch_size: 2048}
+              conditions: *curse, dtype: bfloat16, enable_thinking: false, max_model_len: 16384, batch_size: 1024}
   qwen3_14b: {backend: vllm, path: Qwen/Qwen3-14B, cached_a: false, split: own, datasets: [ckd, bespoke],
-              conditions: *curse, dtype: bfloat16, enable_thinking: false, max_model_len: 16384, batch_size: 2048}
+              conditions: *curse, dtype: bfloat16, enable_thinking: false, max_model_len: 16384, batch_size: 1024}
   # Transformers fallback and a CPU-sized smoke model for the chat template and parsing path.
   qwen3_8b_hf:   {backend: hf, path: Qwen/Qwen3-8B, cached_a: false, split: own, datasets: [ckd, bespoke],
                   conditions: *curse, dtype: bfloat16, enable_thinking: false, batch_size: 16}
