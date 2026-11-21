@@ -1,0 +1,3423 @@
+item_id,family,setting,case,person,n_shown,n_hidden_or_altered,model_evidence,person_evidence,normative_p,normative_logodds,full_leak_p,comprehension_q,comprehension_a,prompt,partial_c_indices,report_position,check_relation
+b01,bags,partial,A,Alice,3,1,+++-,,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 3, 4",,
+b01,bags,partial,B,Alice,3,1,++-,,0.7,0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 3, 4",,
+b01,bags,partial,M,Alice,3,1,++-,++-,0.7,0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Alice knows everything above about the bags and the coin, but does not know which bag was chosen. Alice watched the draws.
+
+The draws were:
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+What probability would Alice assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 3, 4",,
+b01,bags,partial,D,Alice,3,1,+++-,+++-,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Alice knows everything above about the bags and the coin, but does not know which bag was chosen. Alice watched the draws.
+
+The draws were:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+What probability would Alice assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 3, 4",,
+b01,bags,partial,C,Alice,3,1,+++-,++-,0.7,0.8473,0.8448,Which draws did Alice see? List them with their results.,Draw 2: red. Draw 3: red. Draw 4: blue.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Alice knows everything above about the bags and the coin, but does not know which bag was chosen.
+
+The draws were:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+Alice watched only draws 2, 3, 4. Alice does not know any of the other results.
+
+What probability would Alice assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 3, 4",,
+b01,bags,false,B_false,Alice,4,1,-++-,,0.5,0.0,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b01,bags,false,M_false,Alice,4,1,-++-,-++-,0.5,0.0,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Alice knows everything above about the bags and the coin, but does not know which bag was chosen. Alice did not observe the results directly; a friend reported them to Alice, and Alice has no reason to doubt the report.
+
+A friend told Alice:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+What probability would Alice assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b01,bags,false,D_false,Alice,4,1,+++-,+++-,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Alice knows everything above about the bags and the coin, but does not know which bag was chosen. Alice did not observe the results directly; a friend reported them to Alice, and Alice has no reason to doubt the report.
+
+A friend told Alice:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+What probability would Alice assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b01,bags,false,C_false,Alice,4,1,+++-,-++-,0.5,0.0,0.8448,What was Alice told about draw 1?,Draw 1: blue.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Alice knows everything above about the bags and the coin, but does not know which bag was chosen. Alice did not observe the results directly; a friend reported them to Alice, and Alice has no reason to doubt the report.
+
+Record Y:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+Record X:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+Record Y contains the actual results. The friend read Record X to Alice. Alice heard only that record and could not check it against the actual results.
+
+What probability would Alice assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,changed
+b01,bags,report_assignment_control,C_report_control,Alice,4,0,+++-,+++-,0.8448,1.6946,0.8448,What was Alice told about draw 1?,Draw 1: red.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Alice knows everything above about the bags and the coin, but does not know which bag was chosen. Alice did not observe the results directly; a friend reported them to Alice, and Alice has no reason to doubt the report.
+
+Record Y:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+Record X:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+Record Y contains the actual results. The friend read Record Y to Alice. Alice heard only that record and could not check it against the actual results.
+
+What probability would Alice assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+b02,bags,partial,A,Ben,3,3,--+--+,,0.1552,-1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: blue.
+Draw 6: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 5, 6",,
+b02,bags,partial,B,Ben,3,3,+-+,,0.7,0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 3: red.
+Draw 5: blue.
+Draw 6: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 5, 6",,
+b02,bags,partial,M,Ben,3,3,+-+,+-+,0.7,0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Ben knows everything above about the bags and the coin, but does not know which bag was chosen. Ben watched the draws.
+
+The draws were:
+Draw 3: red.
+Draw 5: blue.
+Draw 6: red.
+
+What probability would Ben assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 5, 6",,
+b02,bags,partial,D,Ben,3,3,--+--+,--+--+,0.1552,-1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Ben knows everything above about the bags and the coin, but does not know which bag was chosen. Ben watched the draws.
+
+The draws were:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: blue.
+Draw 6: red.
+
+What probability would Ben assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 5, 6",,
+b02,bags,partial,C,Ben,3,3,--+--+,+-+,0.7,0.8473,0.1552,Which draws did Ben see? List them with their results.,Draw 3: red. Draw 5: blue. Draw 6: red.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Ben knows everything above about the bags and the coin, but does not know which bag was chosen.
+
+The draws were:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: blue.
+Draw 6: red.
+
+Ben watched only draws 3, 5, 6. Ben does not know any of the other results.
+
+What probability would Ben assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 5, 6",,
+b02,bags,false,B_false,Ben,6,2,+++--+,,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: blue.
+Draw 6: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b02,bags,false,M_false,Ben,6,2,+++--+,+++--+,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Ben knows everything above about the bags and the coin, but does not know which bag was chosen. Ben did not observe the results directly; a friend reported them to Ben, and Ben has no reason to doubt the report.
+
+A friend told Ben:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: blue.
+Draw 6: red.
+
+What probability would Ben assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b02,bags,false,D_false,Ben,6,2,--+--+,--+--+,0.1552,-1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Ben knows everything above about the bags and the coin, but does not know which bag was chosen. Ben did not observe the results directly; a friend reported them to Ben, and Ben has no reason to doubt the report.
+
+A friend told Ben:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: blue.
+Draw 6: red.
+
+What probability would Ben assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b02,bags,false,C_false,Ben,6,2,--+--+,+++--+,0.8448,1.6946,0.1552,What was Ben told about draw 2?,Draw 2: red.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Ben knows everything above about the bags and the coin, but does not know which bag was chosen. Ben did not observe the results directly; a friend reported them to Ben, and Ben has no reason to doubt the report.
+
+Record Y:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: blue.
+Draw 6: red.
+
+Record X:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: blue.
+Draw 6: red.
+
+Record X contains the actual results. The friend read Record Y to Ben. Ben heard only that record and could not check it against the actual results.
+
+What probability would Ben assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,changed
+b02,bags,report_assignment_control,C_report_control,Ben,6,0,--+--+,--+--+,0.1552,-1.6946,0.1552,What was Ben told about draw 2?,Draw 2: blue.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Ben knows everything above about the bags and the coin, but does not know which bag was chosen. Ben did not observe the results directly; a friend reported them to Ben, and Ben has no reason to doubt the report.
+
+Record Y:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: blue.
+Draw 6: red.
+
+Record X:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: blue.
+Draw 6: red.
+
+Record X contains the actual results. The friend read Record X to Ben. Ben heard only that record and could not check it against the actual results.
+
+What probability would Ben assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+b03,bags,partial,A,Priya,2,4,--++++,,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: red.
+Draw 5: red.
+Draw 6: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2",,
+b03,bags,partial,B,Priya,2,4,--,,0.1552,-1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: blue.
+Draw 2: blue.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2",,
+b03,bags,partial,M,Priya,2,4,--,--,0.1552,-1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Priya knows everything above about the bags and the coin, but does not know which bag was chosen. Priya watched the draws.
+
+The draws were:
+Draw 1: blue.
+Draw 2: blue.
+
+What probability would Priya assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2",,
+b03,bags,partial,D,Priya,2,4,--++++,--++++,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Priya knows everything above about the bags and the coin, but does not know which bag was chosen. Priya watched the draws.
+
+The draws were:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: red.
+Draw 5: red.
+Draw 6: red.
+
+What probability would Priya assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2",,
+b03,bags,partial,C,Priya,2,4,--++++,--,0.1552,-1.6946,0.8448,Which draws did Priya see? List them with their results.,Draw 1: blue. Draw 2: blue.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Priya knows everything above about the bags and the coin, but does not know which bag was chosen.
+
+The draws were:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: red.
+Draw 5: red.
+Draw 6: red.
+
+Priya watched only draws 1, 2. Priya does not know any of the other results.
+
+What probability would Priya assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2",,
+b03,bags,false,B_false,Priya,6,2,----++,,0.1552,-1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b03,bags,false,M_false,Priya,6,2,----++,----++,0.1552,-1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Priya knows everything above about the bags and the coin, but does not know which bag was chosen. Priya did not observe the results directly; a friend reported them to Priya, and Priya has no reason to doubt the report.
+
+A friend told Priya:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+What probability would Priya assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b03,bags,false,D_false,Priya,6,2,--++++,--++++,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Priya knows everything above about the bags and the coin, but does not know which bag was chosen. Priya did not observe the results directly; a friend reported them to Priya, and Priya has no reason to doubt the report.
+
+A friend told Priya:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: red.
+Draw 5: red.
+Draw 6: red.
+
+What probability would Priya assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b03,bags,false,C_false,Priya,6,2,--++++,----++,0.1552,-1.6946,0.8448,What was Priya told about draw 3?,Draw 3: blue.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Priya knows everything above about the bags and the coin, but does not know which bag was chosen. Priya did not observe the results directly; a friend reported them to Priya, and Priya has no reason to doubt the report.
+
+Record Y:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: red.
+Draw 5: red.
+Draw 6: red.
+
+Record X:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+Record Y contains the actual results. The friend read Record X to Priya. Priya heard only that record and could not check it against the actual results.
+
+What probability would Priya assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,changed
+b03,bags,report_assignment_control,C_report_control,Priya,6,0,--++++,--++++,0.8448,1.6946,0.8448,What was Priya told about draw 3?,Draw 3: red.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Priya knows everything above about the bags and the coin, but does not know which bag was chosen. Priya did not observe the results directly; a friend reported them to Priya, and Priya has no reason to doubt the report.
+
+Record Y:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: red.
+Draw 5: red.
+Draw 6: red.
+
+Record X:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+Record Y contains the actual results. The friend read Record Y to Priya. Priya heard only that record and could not check it against the actual results.
+
+What probability would Priya assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+b04,bags,partial,A,Tom,3,1,+++-,,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2, 3",,
+b04,bags,partial,B,Tom,3,1,+++,,0.927,2.5419,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2, 3",,
+b04,bags,partial,M,Tom,3,1,+++,+++,0.927,2.5419,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Tom knows everything above about the bags and the coin, but does not know which bag was chosen. Tom watched the draws.
+
+The draws were:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+
+What probability would Tom assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2, 3",,
+b04,bags,partial,D,Tom,3,1,+++-,+++-,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Tom knows everything above about the bags and the coin, but does not know which bag was chosen. Tom watched the draws.
+
+The draws were:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+What probability would Tom assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2, 3",,
+b04,bags,partial,C,Tom,3,1,+++-,+++,0.927,2.5419,0.8448,Which draws did Tom see? List them with their results.,Draw 1: red. Draw 2: red. Draw 3: red.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Tom knows everything above about the bags and the coin, but does not know which bag was chosen.
+
+The draws were:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+Tom watched only draws 1, 2, 3. Tom does not know any of the other results.
+
+What probability would Tom assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2, 3",,
+b04,bags,false,B_false,Tom,4,1,-++-,,0.5,0.0,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b04,bags,false,M_false,Tom,4,1,-++-,-++-,0.5,0.0,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Tom knows everything above about the bags and the coin, but does not know which bag was chosen. Tom did not observe the results directly; a friend reported them to Tom, and Tom has no reason to doubt the report.
+
+A friend told Tom:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+What probability would Tom assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b04,bags,false,D_false,Tom,4,1,+++-,+++-,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Tom knows everything above about the bags and the coin, but does not know which bag was chosen. Tom did not observe the results directly; a friend reported them to Tom, and Tom has no reason to doubt the report.
+
+A friend told Tom:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+What probability would Tom assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b04,bags,false,C_false,Tom,4,1,+++-,-++-,0.5,0.0,0.8448,What was Tom told about draw 3?,Draw 3: red.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Tom knows everything above about the bags and the coin, but does not know which bag was chosen. Tom did not observe the results directly; a friend reported them to Tom, and Tom has no reason to doubt the report.
+
+Record X:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+Record Y:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+Record Y contains the actual results. The friend read Record X to Tom. Tom heard only that record and could not check it against the actual results.
+
+What probability would Tom assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+b04,bags,report_assignment_control,C_report_control,Tom,4,0,+++-,+++-,0.8448,1.6946,0.8448,What was Tom told about draw 3?,Draw 3: red.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Tom knows everything above about the bags and the coin, but does not know which bag was chosen. Tom did not observe the results directly; a friend reported them to Tom, and Tom has no reason to doubt the report.
+
+Record X:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+Record Y:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+
+Record Y contains the actual results. The friend read Record Y to Tom. Tom heard only that record and could not check it against the actual results.
+
+What probability would Tom assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+b05,bags,partial,A,Mei,2,3,---++,,0.3,-0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: red.
+Draw 5: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 4",,
+b05,bags,partial,B,Mei,2,3,-+,,0.5,0.0,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 2: blue.
+Draw 4: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 4",,
+b05,bags,partial,M,Mei,2,3,-+,-+,0.5,0.0,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Mei knows everything above about the bags and the coin, but does not know which bag was chosen. Mei watched the draws.
+
+The draws were:
+Draw 2: blue.
+Draw 4: red.
+
+What probability would Mei assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 4",,
+b05,bags,partial,D,Mei,2,3,---++,---++,0.3,-0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Mei knows everything above about the bags and the coin, but does not know which bag was chosen. Mei watched the draws.
+
+The draws were:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: red.
+Draw 5: red.
+
+What probability would Mei assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 4",,
+b05,bags,partial,C,Mei,2,3,---++,-+,0.5,0.0,0.3,Which draws did Mei see? List them with their results.,Draw 2: blue. Draw 4: red.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Mei knows everything above about the bags and the coin, but does not know which bag was chosen.
+
+The draws were:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: red.
+Draw 5: red.
+
+Mei watched only draws 2, 4. Mei does not know any of the other results.
+
+What probability would Mei assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 4",,
+b05,bags,false,B_false,Mei,5,1,+--++,,0.7,0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: red.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: red.
+Draw 5: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b05,bags,false,M_false,Mei,5,1,+--++,+--++,0.7,0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Mei knows everything above about the bags and the coin, but does not know which bag was chosen. Mei did not observe the results directly; a friend reported them to Mei, and Mei has no reason to doubt the report.
+
+A friend told Mei:
+Draw 1: red.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: red.
+Draw 5: red.
+
+What probability would Mei assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b05,bags,false,D_false,Mei,5,1,---++,---++,0.3,-0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Mei knows everything above about the bags and the coin, but does not know which bag was chosen. Mei did not observe the results directly; a friend reported them to Mei, and Mei has no reason to doubt the report.
+
+A friend told Mei:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: red.
+Draw 5: red.
+
+What probability would Mei assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b05,bags,false,C_false,Mei,5,1,---++,+--++,0.7,0.8473,0.3,What was Mei told about draw 2?,Draw 2: blue.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Mei knows everything above about the bags and the coin, but does not know which bag was chosen. Mei did not observe the results directly; a friend reported them to Mei, and Mei has no reason to doubt the report.
+
+Record X:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: red.
+Draw 5: red.
+
+Record Y:
+Draw 1: red.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: red.
+Draw 5: red.
+
+Record X contains the actual results. The friend read Record Y to Mei. Mei heard only that record and could not check it against the actual results.
+
+What probability would Mei assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+b05,bags,report_assignment_control,C_report_control,Mei,5,0,---++,---++,0.3,-0.8473,0.3,What was Mei told about draw 2?,Draw 2: blue.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Mei knows everything above about the bags and the coin, but does not know which bag was chosen. Mei did not observe the results directly; a friend reported them to Mei, and Mei has no reason to doubt the report.
+
+Record X:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: red.
+Draw 5: red.
+
+Record Y:
+Draw 1: red.
+Draw 2: blue.
+Draw 3: blue.
+Draw 4: red.
+Draw 5: red.
+
+Record X contains the actual results. The friend read Record X to Mei. Mei heard only that record and could not check it against the actual results.
+
+What probability would Mei assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+b06,bags,partial,A,Omar,4,2,-++-++,,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 4, 5, 6",,
+b06,bags,partial,B,Omar,4,2,+-++,,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 3: red.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 4, 5, 6",,
+b06,bags,partial,M,Omar,4,2,+-++,+-++,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Omar knows everything above about the bags and the coin, but does not know which bag was chosen. Omar watched the draws.
+
+The draws were:
+Draw 3: red.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+What probability would Omar assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 4, 5, 6",,
+b06,bags,partial,D,Omar,4,2,-++-++,-++-++,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Omar knows everything above about the bags and the coin, but does not know which bag was chosen. Omar watched the draws.
+
+The draws were:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+What probability would Omar assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 4, 5, 6",,
+b06,bags,partial,C,Omar,4,2,-++-++,+-++,0.8448,1.6946,0.8448,Which draws did Omar see? List them with their results.,Draw 3: red. Draw 4: blue. Draw 5: red. Draw 6: red.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Omar knows everything above about the bags and the coin, but does not know which bag was chosen.
+
+The draws were:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+Omar watched only draws 3, 4, 5, 6. Omar does not know any of the other results.
+
+What probability would Omar assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 4, 5, 6",,
+b06,bags,false,B_false,Omar,6,1,+++-++,,0.9674,3.3892,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+The draws were:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b06,bags,false,M_false,Omar,6,1,+++-++,+++-++,0.9674,3.3892,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Omar knows everything above about the bags and the coin, but does not know which bag was chosen. Omar did not observe the results directly; a friend reported them to Omar, and Omar has no reason to doubt the report.
+
+A friend told Omar:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+What probability would Omar assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b06,bags,false,D_false,Omar,6,1,-++-++,-++-++,0.8448,1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Omar knows everything above about the bags and the coin, but does not know which bag was chosen. Omar did not observe the results directly; a friend reported them to Omar, and Omar has no reason to doubt the report.
+
+A friend told Omar:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+What probability would Omar assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+b06,bags,false,C_false,Omar,6,1,-++-++,+++-++,0.9674,3.3892,0.8448,What was Omar told about draw 3?,Draw 3: red.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Omar knows everything above about the bags and the coin, but does not know which bag was chosen. Omar did not observe the results directly; a friend reported them to Omar, and Omar has no reason to doubt the report.
+
+Record Y:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+Record X:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+Record X contains the actual results. The friend read Record Y to Omar. Omar heard only that record and could not check it against the actual results.
+
+What probability would Omar assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+b06,bags,report_assignment_control,C_report_control,Omar,6,0,-++-++,-++-++,0.8448,1.6946,0.8448,What was Omar told about draw 3?,Draw 3: red.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Omar knows everything above about the bags and the coin, but does not know which bag was chosen. Omar did not observe the results directly; a friend reported them to Omar, and Omar has no reason to doubt the report.
+
+Record Y:
+Draw 1: red.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+Record X:
+Draw 1: blue.
+Draw 2: red.
+Draw 3: red.
+Draw 4: blue.
+Draw 5: red.
+Draw 6: red.
+
+Record X contains the actual results. The friend read Record X to Omar. Omar heard only that record and could not check it against the actual results.
+
+What probability would Omar assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+w07,witnesses,partial,A,Sofia,2,1,++-,,0.75,1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2",,
+w07,witnesses,partial,B,Sofia,2,1,++,,0.9,2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2",,
+w07,witnesses,partial,M,Sofia,2,1,++,++,0.9,2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Sofia knows everything above about the situation and how reliable the coworkers are. Sofia heard the witnesses.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Sam"".
+
+What probability would Sofia assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2",,
+w07,witnesses,partial,D,Sofia,2,1,++-,++-,0.75,1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Sofia knows everything above about the situation and how reliable the coworkers are. Sofia heard the witnesses.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+
+What probability would Sofia assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2",,
+w07,witnesses,partial,C,Sofia,2,1,++-,++,0.9,2.1972,0.75,Which witnesses did Sofia hear? List them with their results.,"Witness 1: says ""Sam"". Witness 2: says ""Sam"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Sofia knows everything above about the situation and how reliable the coworkers are.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+
+Sofia heard only witnesses 1, 2. Sofia does not know any of the other results.
+
+What probability would Sofia assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2",,
+w07,witnesses,false,B_false,Sofia,3,1,+++,,0.9643,3.2958,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w07,witnesses,false,M_false,Sofia,3,1,+++,+++,0.9643,3.2958,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Sofia knows everything above about the situation and how reliable the coworkers are. Sofia did not observe the results directly; a colleague reported them to Sofia, and Sofia has no reason to doubt the report.
+
+A colleague told Sofia:
+Witness 1: says ""Sam"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Sam"".
+
+What probability would Sofia assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w07,witnesses,false,D_false,Sofia,3,1,++-,++-,0.75,1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Sofia knows everything above about the situation and how reliable the coworkers are. Sofia did not observe the results directly; a colleague reported them to Sofia, and Sofia has no reason to doubt the report.
+
+A colleague told Sofia:
+Witness 1: says ""Sam"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+
+What probability would Sofia assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w07,witnesses,false,C_false,Sofia,3,1,++-,+++,0.9643,3.2958,0.75,What was Sofia told about witness 3?,"Witness 3: says ""Sam"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Sofia knows everything above about the situation and how reliable the coworkers are. Sofia did not observe the results directly; a colleague reported them to Sofia, and Sofia has no reason to doubt the report.
+
+Record Y:
+Witness 1: says ""Sam"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+
+Record X:
+Witness 1: says ""Sam"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Sam"".
+
+Record Y contains the actual results. The colleague read Record X to Sofia. Sofia heard only that record and could not check it against the actual results.
+
+What probability would Sofia assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,changed
+w07,witnesses,report_assignment_control,C_report_control,Sofia,3,0,++-,++-,0.75,1.0986,0.75,What was Sofia told about witness 3?,"Witness 3: says ""Kim"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Sofia knows everything above about the situation and how reliable the coworkers are. Sofia did not observe the results directly; a colleague reported them to Sofia, and Sofia has no reason to doubt the report.
+
+Record Y:
+Witness 1: says ""Sam"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+
+Record X:
+Witness 1: says ""Sam"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Sam"".
+
+Record Y contains the actual results. The colleague read Record Y to Sofia. Sofia heard only that record and could not check it against the actual results.
+
+What probability would Sofia assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+w08,witnesses,partial,A,Kwame,1,3,-+++,,0.9,2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+w08,witnesses,partial,B,Kwame,1,3,-,,0.25,-1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+w08,witnesses,partial,M,Kwame,1,3,-,-,0.25,-1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Kwame knows everything above about the situation and how reliable the coworkers are. Kwame heard the witnesses.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+
+What probability would Kwame assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+w08,witnesses,partial,D,Kwame,1,3,-+++,-+++,0.9,2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Kwame knows everything above about the situation and how reliable the coworkers are. Kwame heard the witnesses.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+What probability would Kwame assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+w08,witnesses,partial,C,Kwame,1,3,-+++,-,0.25,-1.0986,0.9,Which witnesses did Kwame hear? List them with their results.,"Witness 1: says ""Kim"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Kwame knows everything above about the situation and how reliable the coworkers are.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+Kwame heard only witness 1. Kwame does not know any of the other results.
+
+What probability would Kwame assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+w08,witnesses,false,B_false,Kwame,4,2,---+,,0.1,-2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w08,witnesses,false,M_false,Kwame,4,2,---+,---+,0.1,-2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Kwame knows everything above about the situation and how reliable the coworkers are. Kwame did not observe the results directly; a colleague reported them to Kwame, and Kwame has no reason to doubt the report.
+
+A colleague told Kwame:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+
+What probability would Kwame assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w08,witnesses,false,D_false,Kwame,4,2,-+++,-+++,0.9,2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Kwame knows everything above about the situation and how reliable the coworkers are. Kwame did not observe the results directly; a colleague reported them to Kwame, and Kwame has no reason to doubt the report.
+
+A colleague told Kwame:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+What probability would Kwame assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w08,witnesses,false,C_false,Kwame,4,2,-+++,---+,0.1,-2.1972,0.9,What was Kwame told about witness 3?,"Witness 3: says ""Kim"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Kwame knows everything above about the situation and how reliable the coworkers are. Kwame did not observe the results directly; a colleague reported them to Kwame, and Kwame has no reason to doubt the report.
+
+Record X:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+
+Record Y:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+Record Y contains the actual results. The colleague read Record X to Kwame. Kwame heard only that record and could not check it against the actual results.
+
+What probability would Kwame assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,changed
+w08,witnesses,report_assignment_control,C_report_control,Kwame,4,0,-+++,-+++,0.9,2.1972,0.9,What was Kwame told about witness 3?,"Witness 3: says ""Sam"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Kwame knows everything above about the situation and how reliable the coworkers are. Kwame did not observe the results directly; a colleague reported them to Kwame, and Kwame has no reason to doubt the report.
+
+Record X:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+
+Record Y:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+Record Y contains the actual results. The colleague read Record Y to Kwame. Kwame heard only that record and could not check it against the actual results.
+
+What probability would Kwame assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+w09,witnesses,partial,A,Alice,1,2,--+,,0.25,-1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",3,,
+w09,witnesses,partial,B,Alice,1,2,+,,0.75,1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 3: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",3,,
+w09,witnesses,partial,M,Alice,1,2,+,+,0.75,1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Alice knows everything above about the situation and how reliable the coworkers are. Alice heard the witnesses.
+
+The witness statements were:
+Witness 3: says ""Sam"".
+
+What probability would Alice assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",3,,
+w09,witnesses,partial,D,Alice,1,2,--+,--+,0.25,-1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Alice knows everything above about the situation and how reliable the coworkers are. Alice heard the witnesses.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+
+What probability would Alice assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",3,,
+w09,witnesses,partial,C,Alice,1,2,--+,+,0.75,1.0986,0.25,Which witnesses did Alice hear? List them with their results.,"Witness 3: says ""Sam"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Alice knows everything above about the situation and how reliable the coworkers are.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+
+Alice heard only witness 3. Alice does not know any of the other results.
+
+What probability would Alice assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",3,,
+w09,witnesses,false,B_false,Alice,3,1,+-+,,0.75,1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w09,witnesses,false,M_false,Alice,3,1,+-+,+-+,0.75,1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Alice knows everything above about the situation and how reliable the coworkers are. Alice did not observe the results directly; a colleague reported them to Alice, and Alice has no reason to doubt the report.
+
+A colleague told Alice:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+
+What probability would Alice assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w09,witnesses,false,D_false,Alice,3,1,--+,--+,0.25,-1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Alice knows everything above about the situation and how reliable the coworkers are. Alice did not observe the results directly; a colleague reported them to Alice, and Alice has no reason to doubt the report.
+
+A colleague told Alice:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+
+What probability would Alice assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w09,witnesses,false,C_false,Alice,3,1,--+,+-+,0.75,1.0986,0.25,What was Alice told about witness 3?,"Witness 3: says ""Sam"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Alice knows everything above about the situation and how reliable the coworkers are. Alice did not observe the results directly; a colleague reported them to Alice, and Alice has no reason to doubt the report.
+
+Record X:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+
+Record Y:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+
+Record X contains the actual results. The colleague read Record Y to Alice. Alice heard only that record and could not check it against the actual results.
+
+What probability would Alice assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+w09,witnesses,report_assignment_control,C_report_control,Alice,3,0,--+,--+,0.25,-1.0986,0.25,What was Alice told about witness 3?,"Witness 3: says ""Sam"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Alice knows everything above about the situation and how reliable the coworkers are. Alice did not observe the results directly; a colleague reported them to Alice, and Alice has no reason to doubt the report.
+
+Record X:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+
+Record Y:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+
+Record X contains the actual results. The colleague read Record X to Alice. Alice heard only that record and could not check it against the actual results.
+
+What probability would Alice assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+w10,witnesses,partial,A,Ben,2,2,-+-+,,0.5,0.0,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 3",,
+w10,witnesses,partial,B,Ben,2,2,--,,0.1,-2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 3: says ""Kim"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 3",,
+w10,witnesses,partial,M,Ben,2,2,--,--,0.1,-2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Ben knows everything above about the situation and how reliable the coworkers are. Ben heard the witnesses.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 3: says ""Kim"".
+
+What probability would Ben assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 3",,
+w10,witnesses,partial,D,Ben,2,2,-+-+,-+-+,0.5,0.0,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Ben knows everything above about the situation and how reliable the coworkers are. Ben heard the witnesses.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+
+What probability would Ben assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 3",,
+w10,witnesses,partial,C,Ben,2,2,-+-+,--,0.1,-2.1972,0.5,Which witnesses did Ben hear? List them with their results.,"Witness 1: says ""Kim"". Witness 3: says ""Kim"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Ben knows everything above about the situation and how reliable the coworkers are.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+
+Ben heard only witnesses 1, 3. Ben does not know any of the other results.
+
+What probability would Ben assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 3",,
+w10,witnesses,false,B_false,Ben,4,1,-+--,,0.1,-2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Kim"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w10,witnesses,false,M_false,Ben,4,1,-+--,-+--,0.1,-2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Ben knows everything above about the situation and how reliable the coworkers are. Ben did not observe the results directly; a colleague reported them to Ben, and Ben has no reason to doubt the report.
+
+A colleague told Ben:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Kim"".
+
+What probability would Ben assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w10,witnesses,false,D_false,Ben,4,1,-+-+,-+-+,0.5,0.0,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Ben knows everything above about the situation and how reliable the coworkers are. Ben did not observe the results directly; a colleague reported them to Ben, and Ben has no reason to doubt the report.
+
+A colleague told Ben:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+
+What probability would Ben assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w10,witnesses,false,C_false,Ben,4,1,-+-+,-+--,0.1,-2.1972,0.5,What was Ben told about witness 1?,"Witness 1: says ""Kim"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Ben knows everything above about the situation and how reliable the coworkers are. Ben did not observe the results directly; a colleague reported them to Ben, and Ben has no reason to doubt the report.
+
+Record X:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Kim"".
+
+Record Y:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+
+Record Y contains the actual results. The colleague read Record X to Ben. Ben heard only that record and could not check it against the actual results.
+
+What probability would Ben assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+w10,witnesses,report_assignment_control,C_report_control,Ben,4,0,-+-+,-+-+,0.5,0.0,0.5,What was Ben told about witness 1?,"Witness 1: says ""Kim"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Ben knows everything above about the situation and how reliable the coworkers are. Ben did not observe the results directly; a colleague reported them to Ben, and Ben has no reason to doubt the report.
+
+Record X:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Kim"".
+
+Record Y:
+Witness 1: says ""Kim"".
+Witness 2: says ""Sam"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+
+Record Y contains the actual results. The colleague read Record Y to Ben. Ben heard only that record and could not check it against the actual results.
+
+What probability would Ben assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+w11,witnesses,partial,A,Priya,3,2,+--++,,0.75,1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+Witness 5: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2, 4",,
+w11,witnesses,partial,B,Priya,3,2,+-+,,0.75,1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 4: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2, 4",,
+w11,witnesses,partial,M,Priya,3,2,+-+,+-+,0.75,1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Priya knows everything above about the situation and how reliable the coworkers are. Priya heard the witnesses.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 4: says ""Sam"".
+
+What probability would Priya assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2, 4",,
+w11,witnesses,partial,D,Priya,3,2,+--++,+--++,0.75,1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Priya knows everything above about the situation and how reliable the coworkers are. Priya heard the witnesses.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+Witness 5: says ""Sam"".
+
+What probability would Priya assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2, 4",,
+w11,witnesses,partial,C,Priya,3,2,+--++,+-+,0.75,1.0986,0.75,Which witnesses did Priya hear? List them with their results.,"Witness 1: says ""Sam"". Witness 2: says ""Kim"". Witness 4: says ""Sam"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Priya knows everything above about the situation and how reliable the coworkers are.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+Witness 5: says ""Sam"".
+
+Priya heard only witnesses 1, 2, 4. Priya does not know any of the other results.
+
+What probability would Priya assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 2, 4",,
+w11,witnesses,false,B_false,Priya,5,1,+--+-,,0.25,-1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+Witness 5: says ""Kim"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w11,witnesses,false,M_false,Priya,5,1,+--+-,+--+-,0.25,-1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Priya knows everything above about the situation and how reliable the coworkers are. Priya did not observe the results directly; a colleague reported them to Priya, and Priya has no reason to doubt the report.
+
+A colleague told Priya:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+Witness 5: says ""Kim"".
+
+What probability would Priya assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w11,witnesses,false,D_false,Priya,5,1,+--++,+--++,0.75,1.0986,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Priya knows everything above about the situation and how reliable the coworkers are. Priya did not observe the results directly; a colleague reported them to Priya, and Priya has no reason to doubt the report.
+
+A colleague told Priya:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+Witness 5: says ""Sam"".
+
+What probability would Priya assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w11,witnesses,false,C_false,Priya,5,1,+--++,+--+-,0.25,-1.0986,0.75,What was Priya told about witness 3?,"Witness 3: says ""Kim"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Priya knows everything above about the situation and how reliable the coworkers are. Priya did not observe the results directly; a colleague reported them to Priya, and Priya has no reason to doubt the report.
+
+Record X:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+Witness 5: says ""Sam"".
+
+Record Y:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+Witness 5: says ""Kim"".
+
+Record X contains the actual results. The colleague read Record Y to Priya. Priya heard only that record and could not check it against the actual results.
+
+What probability would Priya assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+w11,witnesses,report_assignment_control,C_report_control,Priya,5,0,+--++,+--++,0.75,1.0986,0.75,What was Priya told about witness 3?,"Witness 3: says ""Kim"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Priya knows everything above about the situation and how reliable the coworkers are. Priya did not observe the results directly; a colleague reported them to Priya, and Priya has no reason to doubt the report.
+
+Record X:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+Witness 5: says ""Sam"".
+
+Record Y:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Kim"".
+Witness 4: says ""Sam"".
+Witness 5: says ""Kim"".
+
+Record X contains the actual results. The colleague read Record X to Priya. Priya heard only that record and could not check it against the actual results.
+
+What probability would Priya assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+w12,witnesses,partial,A,Tom,2,2,--++,,0.5,0.0,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 4",,
+w12,witnesses,partial,B,Tom,2,2,++,,0.9,2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 4",,
+w12,witnesses,partial,M,Tom,2,2,++,++,0.9,2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Tom knows everything above about the situation and how reliable the coworkers are. Tom heard the witnesses.
+
+The witness statements were:
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+What probability would Tom assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 4",,
+w12,witnesses,partial,D,Tom,2,2,--++,--++,0.5,0.0,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Tom knows everything above about the situation and how reliable the coworkers are. Tom heard the witnesses.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+What probability would Tom assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 4",,
+w12,witnesses,partial,C,Tom,2,2,--++,++,0.9,2.1972,0.5,Which witnesses did Tom hear? List them with their results.,"Witness 3: says ""Sam"". Witness 4: says ""Sam"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Tom knows everything above about the situation and how reliable the coworkers are.
+
+The witness statements were:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+Tom heard only witnesses 3, 4. Tom does not know any of the other results.
+
+What probability would Tom assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","3, 4",,
+w12,witnesses,false,B_false,Tom,4,1,+-++,,0.9,2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+The witness statements were:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+What is the probability that it was Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w12,witnesses,false,M_false,Tom,4,1,+-++,+-++,0.9,2.1972,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Tom knows everything above about the situation and how reliable the coworkers are. Tom did not observe the results directly; a colleague reported them to Tom, and Tom has no reason to doubt the report.
+
+A colleague told Tom:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+What probability would Tom assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w12,witnesses,false,D_false,Tom,4,1,--++,--++,0.5,0.0,,,,"Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Tom knows everything above about the situation and how reliable the coworkers are. Tom did not observe the results directly; a colleague reported them to Tom, and Tom has no reason to doubt the report.
+
+A colleague told Tom:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+What probability would Tom assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+w12,witnesses,false,C_false,Tom,4,1,--++,+-++,0.9,2.1972,0.5,What was Tom told about witness 1?,"Witness 1: says ""Sam"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Tom knows everything above about the situation and how reliable the coworkers are. Tom did not observe the results directly; a colleague reported them to Tom, and Tom has no reason to doubt the report.
+
+Record Y:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+Record X:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+Record X contains the actual results. The colleague read Record Y to Tom. Tom heard only that record and could not check it against the actual results.
+
+What probability would Tom assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,changed
+w12,witnesses,report_assignment_control,C_report_control,Tom,4,0,--++,--++,0.5,0.0,0.5,What was Tom told about witness 1?,"Witness 1: says ""Kim"".","Someone took the last slice of cake from the office kitchen. It was either Sam or Kim, and before hearing from any witnesses both are equally likely. Several coworkers each independently glimpsed the person. Each coworker is right 3 times out of 4: if it was Sam, each coworker says ""Sam"" with probability 3/4 and ""Kim"" with probability 1/4, and the other way round if it was Kim.
+
+Tom knows everything above about the situation and how reliable the coworkers are. Tom did not observe the results directly; a colleague reported them to Tom, and Tom has no reason to doubt the report.
+
+Record Y:
+Witness 1: says ""Sam"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+Record X:
+Witness 1: says ""Kim"".
+Witness 2: says ""Kim"".
+Witness 3: says ""Sam"".
+Witness 4: says ""Sam"".
+
+Record X contains the actual results. The colleague read Record X to Tom. Tom heard only that record and could not check it against the actual results.
+
+What probability would Tom assign to it having been Sam who took the cake?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+t13,tests,partial,A,Mei,2,1,-++,,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 3",,
+t13,tests,partial,B,Mei,2,1,++,,0.8,1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 2: positive.
+Test 3: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 3",,
+t13,tests,partial,M,Mei,2,1,++,++,0.8,1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Mei knows everything above about the condition and the tests. Dr. Mei saw the test results.
+
+The test results were:
+Test 2: positive.
+Test 3: positive.
+
+What probability would Dr. Mei assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 3",,
+t13,tests,partial,D,Mei,2,1,-++,-++,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Mei knows everything above about the condition and the tests. Dr. Mei saw the test results.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+What probability would Dr. Mei assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 3",,
+t13,tests,partial,C,Mei,2,1,-++,++,0.8,1.3863,0.5,Which tests did Dr. Mei see? List them with their results.,Test 2: positive. Test 3: positive.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Mei knows everything above about the condition and the tests.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+Dr. Mei saw only tests 2, 3. Dr. Mei does not know any of the other results.
+
+What probability would Dr. Mei assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 3",,
+t13,tests,false,B_false,Mei,3,1,+++,,0.9412,2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: positive.
+Test 2: positive.
+Test 3: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t13,tests,false,M_false,Mei,3,1,+++,+++,0.9412,2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Mei knows everything above about the condition and the tests. Dr. Mei did not observe the results directly; a clerk reported them to Dr. Mei, and Dr. Mei has no reason to doubt the report.
+
+A clerk told Dr. Mei:
+Test 1: positive.
+Test 2: positive.
+Test 3: positive.
+
+What probability would Dr. Mei assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t13,tests,false,D_false,Mei,3,1,-++,-++,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Mei knows everything above about the condition and the tests. Dr. Mei did not observe the results directly; a clerk reported them to Dr. Mei, and Dr. Mei has no reason to doubt the report.
+
+A clerk told Dr. Mei:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+What probability would Dr. Mei assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t13,tests,false,C_false,Mei,3,1,-++,+++,0.9412,2.7726,0.5,What was Dr. Mei told about test 1?,Test 1: positive.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Mei knows everything above about the condition and the tests. Dr. Mei did not observe the results directly; a clerk reported them to Dr. Mei, and Dr. Mei has no reason to doubt the report.
+
+Record Y:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+Record X:
+Test 1: positive.
+Test 2: positive.
+Test 3: positive.
+
+Record Y contains the actual results. The clerk read Record X to Dr. Mei. Dr. Mei heard only that record and could not check it against the actual results.
+
+What probability would Dr. Mei assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,changed
+t13,tests,report_assignment_control,C_report_control,Mei,3,0,-++,-++,0.5,0.0,0.5,What was Dr. Mei told about test 1?,Test 1: negative.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Mei knows everything above about the condition and the tests. Dr. Mei did not observe the results directly; a clerk reported them to Dr. Mei, and Dr. Mei has no reason to doubt the report.
+
+Record Y:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+Record X:
+Test 1: positive.
+Test 2: positive.
+Test 3: positive.
+
+Record Y contains the actual results. The clerk read Record Y to Dr. Mei. Dr. Mei heard only that record and could not check it against the actual results.
+
+What probability would Dr. Mei assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+t14,tests,partial,A,Omar,1,2,-++,,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+t14,tests,partial,B,Omar,1,2,-,,0.0588,-2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: negative.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+t14,tests,partial,M,Omar,1,2,-,-,0.0588,-2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Omar knows everything above about the condition and the tests. Dr. Omar saw the test results.
+
+The test results were:
+Test 1: negative.
+
+What probability would Dr. Omar assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+t14,tests,partial,D,Omar,1,2,-++,-++,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Omar knows everything above about the condition and the tests. Dr. Omar saw the test results.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+What probability would Dr. Omar assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+t14,tests,partial,C,Omar,1,2,-++,-,0.0588,-2.7726,0.5,Which tests did Dr. Omar see? List them with their results.,Test 1: negative.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Omar knows everything above about the condition and the tests.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+Dr. Omar saw only test 1. Dr. Omar does not know any of the other results.
+
+What probability would Dr. Omar assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+t14,tests,false,B_false,Omar,3,1,--+,,0.0588,-2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t14,tests,false,M_false,Omar,3,1,--+,--+,0.0588,-2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Omar knows everything above about the condition and the tests. Dr. Omar did not observe the results directly; a clerk reported them to Dr. Omar, and Dr. Omar has no reason to doubt the report.
+
+A clerk told Dr. Omar:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+
+What probability would Dr. Omar assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t14,tests,false,D_false,Omar,3,1,-++,-++,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Omar knows everything above about the condition and the tests. Dr. Omar did not observe the results directly; a clerk reported them to Dr. Omar, and Dr. Omar has no reason to doubt the report.
+
+A clerk told Dr. Omar:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+What probability would Dr. Omar assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t14,tests,false,C_false,Omar,3,1,-++,--+,0.0588,-2.7726,0.5,What was Dr. Omar told about test 3?,Test 3: positive.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Omar knows everything above about the condition and the tests. Dr. Omar did not observe the results directly; a clerk reported them to Dr. Omar, and Dr. Omar has no reason to doubt the report.
+
+Record Y:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+
+Record X:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+Record X contains the actual results. The clerk read Record Y to Dr. Omar. Dr. Omar heard only that record and could not check it against the actual results.
+
+What probability would Dr. Omar assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+t14,tests,report_assignment_control,C_report_control,Omar,3,0,-++,-++,0.5,0.0,0.5,What was Dr. Omar told about test 3?,Test 3: positive.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Omar knows everything above about the condition and the tests. Dr. Omar did not observe the results directly; a clerk reported them to Dr. Omar, and Dr. Omar has no reason to doubt the report.
+
+Record Y:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+
+Record X:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+Record X contains the actual results. The clerk read Record X to Dr. Omar. Dr. Omar heard only that record and could not check it against the actual results.
+
+What probability would Dr. Omar assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+t15,tests,partial,A,Sofia,1,2,-++,,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",3,,
+t15,tests,partial,B,Sofia,1,2,+,,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 3: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",3,,
+t15,tests,partial,M,Sofia,1,2,+,+,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Sofia knows everything above about the condition and the tests. Dr. Sofia saw the test results.
+
+The test results were:
+Test 3: positive.
+
+What probability would Dr. Sofia assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",3,,
+t15,tests,partial,D,Sofia,1,2,-++,-++,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Sofia knows everything above about the condition and the tests. Dr. Sofia saw the test results.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+What probability would Dr. Sofia assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",3,,
+t15,tests,partial,C,Sofia,1,2,-++,+,0.5,0.0,0.5,Which tests did Dr. Sofia see? List them with their results.,Test 3: positive.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Sofia knows everything above about the condition and the tests.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+Dr. Sofia saw only test 3. Dr. Sofia does not know any of the other results.
+
+What probability would Dr. Sofia assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",3,,
+t15,tests,false,B_false,Sofia,3,1,--+,,0.0588,-2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t15,tests,false,M_false,Sofia,3,1,--+,--+,0.0588,-2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Sofia knows everything above about the condition and the tests. Dr. Sofia did not observe the results directly; a clerk reported them to Dr. Sofia, and Dr. Sofia has no reason to doubt the report.
+
+A clerk told Dr. Sofia:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+
+What probability would Dr. Sofia assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t15,tests,false,D_false,Sofia,3,1,-++,-++,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Sofia knows everything above about the condition and the tests. Dr. Sofia did not observe the results directly; a clerk reported them to Dr. Sofia, and Dr. Sofia has no reason to doubt the report.
+
+A clerk told Dr. Sofia:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+What probability would Dr. Sofia assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t15,tests,false,C_false,Sofia,3,1,-++,--+,0.0588,-2.7726,0.5,What was Dr. Sofia told about test 1?,Test 1: negative.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Sofia knows everything above about the condition and the tests. Dr. Sofia did not observe the results directly; a clerk reported them to Dr. Sofia, and Dr. Sofia has no reason to doubt the report.
+
+Record Y:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+
+Record X:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+Record X contains the actual results. The clerk read Record Y to Dr. Sofia. Dr. Sofia heard only that record and could not check it against the actual results.
+
+What probability would Dr. Sofia assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+t15,tests,report_assignment_control,C_report_control,Sofia,3,0,-++,-++,0.5,0.0,0.5,What was Dr. Sofia told about test 1?,Test 1: negative.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Sofia knows everything above about the condition and the tests. Dr. Sofia did not observe the results directly; a clerk reported them to Dr. Sofia, and Dr. Sofia has no reason to doubt the report.
+
+Record Y:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+
+Record X:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+
+Record X contains the actual results. The clerk read Record X to Dr. Sofia. Dr. Sofia heard only that record and could not check it against the actual results.
+
+What probability would Dr. Sofia assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+t16,tests,partial,A,Kwame,2,2,--++,,0.2,-1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+Test 4: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 4",,
+t16,tests,partial,B,Kwame,2,2,-+,,0.2,-1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: negative.
+Test 4: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 4",,
+t16,tests,partial,M,Kwame,2,2,-+,-+,0.2,-1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Kwame knows everything above about the condition and the tests. Dr. Kwame saw the test results.
+
+The test results were:
+Test 1: negative.
+Test 4: positive.
+
+What probability would Dr. Kwame assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 4",,
+t16,tests,partial,D,Kwame,2,2,--++,--++,0.2,-1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Kwame knows everything above about the condition and the tests. Dr. Kwame saw the test results.
+
+The test results were:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+Test 4: positive.
+
+What probability would Dr. Kwame assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 4",,
+t16,tests,partial,C,Kwame,2,2,--++,-+,0.2,-1.3863,0.2,Which tests did Dr. Kwame see? List them with their results.,Test 1: negative. Test 4: positive.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Kwame knows everything above about the condition and the tests.
+
+The test results were:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+Test 4: positive.
+
+Dr. Kwame saw only tests 1, 4. Dr. Kwame does not know any of the other results.
+
+What probability would Dr. Kwame assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","1, 4",,
+t16,tests,false,B_false,Kwame,4,1,+-++,,0.8,1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: positive.
+Test 2: negative.
+Test 3: positive.
+Test 4: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t16,tests,false,M_false,Kwame,4,1,+-++,+-++,0.8,1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Kwame knows everything above about the condition and the tests. Dr. Kwame did not observe the results directly; a clerk reported them to Dr. Kwame, and Dr. Kwame has no reason to doubt the report.
+
+A clerk told Dr. Kwame:
+Test 1: positive.
+Test 2: negative.
+Test 3: positive.
+Test 4: positive.
+
+What probability would Dr. Kwame assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t16,tests,false,D_false,Kwame,4,1,--++,--++,0.2,-1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Kwame knows everything above about the condition and the tests. Dr. Kwame did not observe the results directly; a clerk reported them to Dr. Kwame, and Dr. Kwame has no reason to doubt the report.
+
+A clerk told Dr. Kwame:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+Test 4: positive.
+
+What probability would Dr. Kwame assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t16,tests,false,C_false,Kwame,4,1,--++,+-++,0.8,1.3863,0.2,What was Dr. Kwame told about test 1?,Test 1: positive.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Kwame knows everything above about the condition and the tests. Dr. Kwame did not observe the results directly; a clerk reported them to Dr. Kwame, and Dr. Kwame has no reason to doubt the report.
+
+Record X:
+Test 1: positive.
+Test 2: negative.
+Test 3: positive.
+Test 4: positive.
+
+Record Y:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+Test 4: positive.
+
+Record Y contains the actual results. The clerk read Record X to Dr. Kwame. Dr. Kwame heard only that record and could not check it against the actual results.
+
+What probability would Dr. Kwame assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,changed
+t16,tests,report_assignment_control,C_report_control,Kwame,4,0,--++,--++,0.2,-1.3863,0.2,What was Dr. Kwame told about test 1?,Test 1: negative.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Kwame knows everything above about the condition and the tests. Dr. Kwame did not observe the results directly; a clerk reported them to Dr. Kwame, and Dr. Kwame has no reason to doubt the report.
+
+Record X:
+Test 1: positive.
+Test 2: negative.
+Test 3: positive.
+Test 4: positive.
+
+Record Y:
+Test 1: negative.
+Test 2: negative.
+Test 3: positive.
+Test 4: positive.
+
+Record Y contains the actual results. The clerk read Record Y to Dr. Kwame. Dr. Kwame heard only that record and could not check it against the actual results.
+
+What probability would Dr. Kwame assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+t17,tests,partial,A,Alice,1,2,+++,,0.9412,2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: positive.
+Test 2: positive.
+Test 3: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+t17,tests,partial,B,Alice,1,2,+,,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+t17,tests,partial,M,Alice,1,2,+,+,0.5,0.0,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Alice knows everything above about the condition and the tests. Dr. Alice saw the test results.
+
+The test results were:
+Test 1: positive.
+
+What probability would Dr. Alice assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+t17,tests,partial,D,Alice,1,2,+++,+++,0.9412,2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Alice knows everything above about the condition and the tests. Dr. Alice saw the test results.
+
+The test results were:
+Test 1: positive.
+Test 2: positive.
+Test 3: positive.
+
+What probability would Dr. Alice assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+t17,tests,partial,C,Alice,1,2,+++,+,0.5,0.0,0.9412,Which tests did Dr. Alice see? List them with their results.,Test 1: positive.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Alice knows everything above about the condition and the tests.
+
+The test results were:
+Test 1: positive.
+Test 2: positive.
+Test 3: positive.
+
+Dr. Alice saw only test 1. Dr. Alice does not know any of the other results.
+
+What probability would Dr. Alice assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",1,,
+t17,tests,false,B_false,Alice,3,2,+--,,0.0588,-2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: positive.
+Test 2: negative.
+Test 3: negative.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t17,tests,false,M_false,Alice,3,2,+--,+--,0.0588,-2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Alice knows everything above about the condition and the tests. Dr. Alice did not observe the results directly; a clerk reported them to Dr. Alice, and Dr. Alice has no reason to doubt the report.
+
+A clerk told Dr. Alice:
+Test 1: positive.
+Test 2: negative.
+Test 3: negative.
+
+What probability would Dr. Alice assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t17,tests,false,D_false,Alice,3,2,+++,+++,0.9412,2.7726,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Alice knows everything above about the condition and the tests. Dr. Alice did not observe the results directly; a clerk reported them to Dr. Alice, and Dr. Alice has no reason to doubt the report.
+
+A clerk told Dr. Alice:
+Test 1: positive.
+Test 2: positive.
+Test 3: positive.
+
+What probability would Dr. Alice assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t17,tests,false,C_false,Alice,3,2,+++,+--,0.0588,-2.7726,0.9412,What was Dr. Alice told about test 3?,Test 3: negative.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Alice knows everything above about the condition and the tests. Dr. Alice did not observe the results directly; a clerk reported them to Dr. Alice, and Dr. Alice has no reason to doubt the report.
+
+Record X:
+Test 1: positive.
+Test 2: positive.
+Test 3: positive.
+
+Record Y:
+Test 1: positive.
+Test 2: negative.
+Test 3: negative.
+
+Record X contains the actual results. The clerk read Record Y to Dr. Alice. Dr. Alice heard only that record and could not check it against the actual results.
+
+What probability would Dr. Alice assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,changed
+t17,tests,report_assignment_control,C_report_control,Alice,3,0,+++,+++,0.9412,2.7726,0.9412,What was Dr. Alice told about test 3?,Test 3: positive.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Alice knows everything above about the condition and the tests. Dr. Alice did not observe the results directly; a clerk reported them to Dr. Alice, and Dr. Alice has no reason to doubt the report.
+
+Record X:
+Test 1: positive.
+Test 2: positive.
+Test 3: positive.
+
+Record Y:
+Test 1: positive.
+Test 2: negative.
+Test 3: negative.
+
+Record X contains the actual results. The clerk read Record X to Dr. Alice. Dr. Alice heard only that record and could not check it against the actual results.
+
+What probability would Dr. Alice assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+t18,tests,partial,A,Ben,2,2,-+-+,,0.2,-1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: negative.
+Test 4: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 4",,
+t18,tests,partial,B,Ben,2,2,++,,0.8,1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 2: positive.
+Test 4: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 4",,
+t18,tests,partial,M,Ben,2,2,++,++,0.8,1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Ben knows everything above about the condition and the tests. Dr. Ben saw the test results.
+
+The test results were:
+Test 2: positive.
+Test 4: positive.
+
+What probability would Dr. Ben assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 4",,
+t18,tests,partial,D,Ben,2,2,-+-+,-+-+,0.2,-1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Ben knows everything above about the condition and the tests. Dr. Ben saw the test results.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: negative.
+Test 4: positive.
+
+What probability would Dr. Ben assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 4",,
+t18,tests,partial,C,Ben,2,2,-+-+,++,0.8,1.3863,0.2,Which tests did Dr. Ben see? List them with their results.,Test 2: positive. Test 4: positive.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Ben knows everything above about the condition and the tests.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: negative.
+Test 4: positive.
+
+Dr. Ben saw only tests 2, 4. Dr. Ben does not know any of the other results.
+
+What probability would Dr. Ben assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.","2, 4",,
+t18,tests,false,B_false,Ben,4,1,-+++,,0.8,1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+The test results were:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+Test 4: positive.
+
+What is the probability that the patient has Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t18,tests,false,M_false,Ben,4,1,-+++,-+++,0.8,1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Ben knows everything above about the condition and the tests. Dr. Ben did not observe the results directly; a clerk reported them to Dr. Ben, and Dr. Ben has no reason to doubt the report.
+
+A clerk told Dr. Ben:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+Test 4: positive.
+
+What probability would Dr. Ben assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t18,tests,false,D_false,Ben,4,1,-+-+,-+-+,0.2,-1.3863,,,,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Ben knows everything above about the condition and the tests. Dr. Ben did not observe the results directly; a clerk reported them to Dr. Ben, and Dr. Ben has no reason to doubt the report.
+
+A clerk told Dr. Ben:
+Test 1: negative.
+Test 2: positive.
+Test 3: negative.
+Test 4: positive.
+
+What probability would Dr. Ben assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+t18,tests,false,C_false,Ben,4,1,-+-+,-+++,0.8,1.3863,0.2,What was Dr. Ben told about test 1?,Test 1: negative.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Ben knows everything above about the condition and the tests. Dr. Ben did not observe the results directly; a clerk reported them to Dr. Ben, and Dr. Ben has no reason to doubt the report.
+
+Record Y:
+Test 1: negative.
+Test 2: positive.
+Test 3: negative.
+Test 4: positive.
+
+Record X:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+Test 4: positive.
+
+Record Y contains the actual results. The clerk read Record X to Dr. Ben. Dr. Ben heard only that record and could not check it against the actual results.
+
+What probability would Dr. Ben assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,second,unchanged
+t18,tests,report_assignment_control,C_report_control,Ben,4,0,-+-+,-+-+,0.2,-1.3863,0.2,What was Dr. Ben told about test 1?,Test 1: negative.,"A patient is being checked for Condition Z (a made-up condition). Before any tests, the chance that the patient has Condition Z is 20%. The patient takes several tests, each independent of the others. Each test is 80% accurate: a person with Condition Z tests positive 80% of the time, and a person without it tests negative 80% of the time.
+
+Dr. Ben knows everything above about the condition and the tests. Dr. Ben did not observe the results directly; a clerk reported them to Dr. Ben, and Dr. Ben has no reason to doubt the report.
+
+Record Y:
+Test 1: negative.
+Test 2: positive.
+Test 3: negative.
+Test 4: positive.
+
+Record X:
+Test 1: negative.
+Test 2: positive.
+Test 3: positive.
+Test 4: positive.
+
+Record Y contains the actual results. The clerk read Record Y to Dr. Ben. Dr. Ben heard only that record and could not check it against the actual results.
+
+What probability would Dr. Ben assign to the patient having Condition Z?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,first,unchanged
+p01,bags,placebo,A,Priya,3,3,++-|+++,,0.7,0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Draws from the chosen bag:
+Draw 1: red.
+Draw 2: red.
+Draw 3: blue.
+
+Separately, on another table there is an unrelated Bag C with 50 red and 50 blue marbles. It has nothing to do with the coin flip. Draws from Bag C:
+Bag C draw 1: red.
+Bag C draw 2: red.
+Bag C draw 3: red.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+p01,bags,placebo,B,Priya,3,3,++-,,0.7,0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Draws from the chosen bag:
+Draw 1: red.
+Draw 2: red.
+Draw 3: blue.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+p01,bags,placebo,M,Priya,3,3,++-,++-,0.7,0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Priya knows everything above about the bags and the coin, but does not know which bag was chosen.
+
+Draws from the chosen bag:
+Draw 1: red.
+Draw 2: red.
+Draw 3: blue.
+
+Priya watched these draws.
+
+What probability would Priya assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+p01,bags,placebo,D,Priya,3,3,++-|+++,++-|+++,0.7,0.8473,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Priya knows everything above about the bags and the coin, but does not know which bag was chosen.
+
+Draws from the chosen bag:
+Draw 1: red.
+Draw 2: red.
+Draw 3: blue.
+
+Separately, on another table there is an unrelated Bag C with 50 red and 50 blue marbles. It has nothing to do with the coin flip. Draws from Bag C:
+Bag C draw 1: red.
+Bag C draw 2: red.
+Bag C draw 3: red.
+
+Priya watched all of these draws.
+
+What probability would Priya assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+p01,bags,placebo,C,Priya,3,3,++-|+++,++-,0.7,0.8473,0.7,Which draws did Priya see?,Draw 1: red. Draw 2: red. Draw 3: blue.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Priya knows everything above about the bags and the coin, but does not know which bag was chosen.
+
+Draws from the chosen bag:
+Draw 1: red.
+Draw 2: red.
+Draw 3: blue.
+
+Separately, on another table there is an unrelated Bag C with 50 red and 50 blue marbles. It has nothing to do with the coin flip. Draws from Bag C:
+Bag C draw 1: red.
+Bag C draw 2: red.
+Bag C draw 3: red.
+
+Priya watched the draws from the chosen bag only, and did not see the Bag C draws.
+
+What probability would Priya assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+p02,bags,placebo,A,Tom,4,2,--+-|--,,0.1552,-1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Draws from the chosen bag:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: blue.
+
+Separately, on another table there is an unrelated Bag C with 50 red and 50 blue marbles. It has nothing to do with the coin flip. Draws from Bag C:
+Bag C draw 1: blue.
+Bag C draw 2: blue.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+p02,bags,placebo,B,Tom,4,2,--+-,,0.1552,-1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Draws from the chosen bag:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: blue.
+
+What is the probability that the marbles were drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+p02,bags,placebo,M,Tom,4,2,--+-,--+-,0.1552,-1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Tom knows everything above about the bags and the coin, but does not know which bag was chosen.
+
+Draws from the chosen bag:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: blue.
+
+Tom watched these draws.
+
+What probability would Tom assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+p02,bags,placebo,D,Tom,4,2,--+-|--,--+-|--,0.1552,-1.6946,,,,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Tom knows everything above about the bags and the coin, but does not know which bag was chosen.
+
+Draws from the chosen bag:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: blue.
+
+Separately, on another table there is an unrelated Bag C with 50 red and 50 blue marbles. It has nothing to do with the coin flip. Draws from Bag C:
+Bag C draw 1: blue.
+Bag C draw 2: blue.
+
+Tom watched all of these draws.
+
+What probability would Tom assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,
+p02,bags,placebo,C,Tom,4,2,--+-|--,--+-,0.1552,-1.6946,0.1552,Which draws did Tom see?,Draw 1: blue. Draw 2: blue. Draw 3: red. Draw 4: blue.,"There are two bags of marbles. Bag A contains 70 red and 30 blue marbles. Bag B contains 30 red and 70 blue marbles. A fair coin was flipped to choose one bag, and then marbles were drawn one at a time from that bag, with replacement (each marble is put back before the next draw).
+
+Tom knows everything above about the bags and the coin, but does not know which bag was chosen.
+
+Draws from the chosen bag:
+Draw 1: blue.
+Draw 2: blue.
+Draw 3: red.
+Draw 4: blue.
+
+Separately, on another table there is an unrelated Bag C with 50 red and 50 blue marbles. It has nothing to do with the coin flip. Draws from Bag C:
+Bag C draw 1: blue.
+Bag C draw 2: blue.
+
+Tom watched the draws from the chosen bag only, and did not see the Bag C draws.
+
+What probability would Tom assign to the marbles having been drawn from Bag A?
+
+Provide your reasoning first.
+Then output valid JSON on a new line in exactly this structure:
+{""probability"": <number>}
+
+The number must be between 0 and 1.",,,

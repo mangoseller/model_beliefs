@@ -1,0 +1,10 @@
+# Local generation on a CUDA GPU: vLLM (Qwen3 needs vllm >= 0.8.4, transformers >= 4.51).
+# vllm 0.8.5 pins torch 2.6.0, the version environment.yml uses.
+# On Linux x86_64, run_experiment.sh installs requirements/lock-cuda.txt instead: every package
+# pinned, resolved from this file and experiment.txt with packages uploaded by 2025-05-31 (around
+# vLLM 0.8.5's release; scikit-learn and tqdm excepted). Regenerate it with the command in its header.
+vllm==0.8.5
+torch==2.6.0
+transformers==4.51.3
+accelerate==1.6.0
+hf_transfer==0.1.9

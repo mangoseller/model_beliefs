@@ -1,12 +1,23 @@
-# large run outputs (answers + activations) live outside git
-data/*
-!data/.gitkeep
+# downloaded and generated data (docs/data.md)
+/data/
+/build/
+/outputs/
+/figures/
+/runs/
+first_order/data/*
+!first_order/data/.gitkeep
+
+# large arrays
 *.pt
 *.safetensors
 *.npy
-
-__pycache__/
-*.egg-info/
-.venv/
 *.npz
+
+# environments and caches
+.venv/
+.venv-experiment/
+__pycache__/
+*.pyc
+*.egg-info/
+.ruff_cache/
 .DS_Store

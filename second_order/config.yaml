@@ -1,0 +1,68 @@
+# Every setting of the experiment (docs/design.md). Every run reads this file.
+
+seed: 20261111             # base seed for case sampling, generation, fits and bootstraps
+
+datasets:
+  ckd:                     # datasets/ckd_second_order_v3 (its README.md describes the battery)
+    dir: datasets/ckd_second_order_v3
+    batteries: [main, high_thresholds, role_swap]   # prompt files to generate
+    max_tokens: {probability: 4096, choice: 256}   # reasoning then JSON; a single letter
+  bespoke:                 # datasets/second_order_simple_prompts.csv
+    file: datasets/second_order_simple_prompts.csv
+    samples: 20            # samples per item, condition and run
+    replicates: {A: 2, B: 2, B_F: 2}   # runs of the own-belief conditions; the second gives rho
+    max_tokens: {probability: 4096, choice: 4096}  # every prompt asks for reasoning, then JSON
+
+experiment:
+  models: [qwen3_8b, qwen3_14b]
+  camerer_w: 0.51          # Camerer, Loewenstein and Weber (1989)
+
+main_cases: all            # CKD patients: all 150, or an integer (a seeded sample)
+
+generation:
+  temperature: 1.0
+  logprobs: 0              # optional vLLM first-token diagnostics for choice questions
+
+latent:
+  batteries: [main]        # CKD prompt files in the latent fit (main = the paper's 16 questions)
+  min_output_share: 0.8    # a row enters the fit with at least this share of its outputs parsed
+  anchor_cutoffs: false    # true: decisions with a stated cutoff are fixed to cross 1/2 at that cutoff
+
+models:
+  # Local open weights on a CUDA machine (vLLM), thinking off.
+  qwen3_8b:  {backend: vllm, path: Qwen/Qwen3-8B, datasets: [ckd, bespoke], dtype: bfloat16,
+              enable_thinking: false, max_model_len: 16384, batch_size: 1024}
+  qwen3_14b: {backend: vllm, path: Qwen/Qwen3-14B, datasets: [ckd, bespoke], dtype: bfloat16,
+              enable_thinking: false, max_model_len: 16384, batch_size: 1024}
+  # Transformers fallback, and a CPU-sized model for checking the chat template and parsing.
+  qwen3_8b_hf:   {backend: hf, path: Qwen/Qwen3-8B, datasets: [ckd, bespoke], dtype: bfloat16,
+                  enable_thinking: false, batch_size: 16}
+  qwen3_0_6b_hf: {backend: hf, path: Qwen/Qwen3-0.6B, datasets: [ckd, bespoke], dtype: float32,
+                  enable_thinking: false, batch_size: 4}
+  # Text-level simulator with known parameters (second_order/synthetic.py), for end-to-end checks.
+  synthetic: {backend: synthetic, datasets: [ckd, bespoke], batch_size: 100000,
+              truth: {lambda_partial: 0.5, lambda_false: 0.3, phi: 0.8, intercept: 0.2, call_noise: 0.35,
+                      comprehension_accuracy: 0.9}}
+
+# Before the main run, the runner's tune stage times these vLLM engine settings on a
+# sample of real calls, keeps the fastest (written into the run's config as the model's
+# `engine` and `batch_size`) and stops the run if the answers do not parse.
+tuning:
+  items: 1024                 # benchmark calls per configuration
+  min_parse_rate: 0.8
+  max_truncated_rate: 0.1
+  bespoke_share: 0.1
+  candidates:
+    - {max_num_seqs: 256, max_num_batched_tokens: 8192, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
+    - {max_num_seqs: 512, max_num_batched_tokens: 16384, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
+    - {max_num_seqs: 1024, max_num_batched_tokens: 32768, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
+
+# Residual-stream activations frozen after generation (second_order/freeze.py).
+activations:
+  outputs: {ckd: [probability/normal], bespoke: [probability]}
+  samples: 1
+  replicates: [0]
+
+analysis:
+  bootstrap_resamples: 2000
+  transcripts_per_condition: 20

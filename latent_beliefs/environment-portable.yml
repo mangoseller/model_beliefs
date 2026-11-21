@@ -1,0 +1,28 @@
+# Same package versions as environment.yml, without platform-specific builds,
+# for platforms other than macOS on Apple silicon.  Results match the paper
+# except that concordance indices that depend on floating-point ties can differ
+# in the third decimal place (see "Exactness" in latent_beliefs/README.md).
+# The CKD case sampling uses XGBoost risk scores, which may also differ in the
+# last digits, so rebuild prompts with environment.yml or use the bundled ones.
+name: latent-beliefs
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy=1.26.3
+  - pandas=2.1.4
+  - bottleneck=1.3.5
+  - numexpr=2.8.7
+  - scipy=1.11.4
+  - requests=2.32.3
+  - pip
+  - pip:
+      - torch==2.6.0
+      - matplotlib==3.7.5
+      - scikit-learn==1.7.1
+      # conda-forge has no xgboost 1.7.3 build; the PyPI wheels need OpenMP
+      # (on macOS: brew install libomp).
+      - xgboost==1.7.3
+      # LLM collection and data download only.
+      - boto3==1.43.42
+      - kagglehub==0.3.13

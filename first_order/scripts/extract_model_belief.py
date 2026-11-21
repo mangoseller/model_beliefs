@@ -61,7 +61,7 @@ def parse_args():
     return p.parse_args()
 
 
-# ---------------------------------------------------------------- data
+# Data
 
 class Obs:
     """All observed answers as flat tables (one entry per case x question x sample)."""
@@ -120,7 +120,7 @@ class Obs:
                 torch.tensor([q in use for q in self.o_name], dtype=torch.bool))
 
 
-# ---------------------------------------------------------------- model
+# Model
 
 class LatentBelief(torch.nn.Module):
     def __init__(self, obs: Obs, n_nodes=128, n_ctrl=7):
@@ -198,7 +198,7 @@ class LatentBelief(torch.nn.Module):
         return post @ torch.sigmoid(logit).T
 
 
-# ---------------------------------------------------------------- fitting
+# Fitting
 
 def split(n, min_cases):
     idx = np.random.default_rng(SEED).permutation(n)
@@ -231,7 +231,7 @@ def fit(model, train, val, epochs, patience, lr):
     return best, ep
 
 
-# ---------------------------------------------------------------- main
+# Command-line entry point
 
 def analyse(run_dirs, out_dir, args):
     rows = []
