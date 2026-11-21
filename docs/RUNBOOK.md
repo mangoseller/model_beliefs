@@ -153,6 +153,24 @@ Variants:
 - `synthetic` writes text from known λ, φ and noise; it is what
   `tests.test_pipeline` runs.
 
+## Figures
+
+`python -m second_order.figures` draws these from `outputs/curse/` into `figures/`
+(PDF and PNG):
+
+| Figure | Shows |
+|---|---|
+| `curse_schematic` | What λ, φ and τ measure (illustrative values) |
+| `curse_decomposition` | The same diagram with each run's estimates, one row per model, dataset, method and setting |
+| `curse_estimates` | λ, φ and τ with 95% intervals, against Camerer et al.'s w |
+| `curse_scatter`, `curse_linearity` | The two regressions behind λ, and their binned means (linearity) |
+| `curse_case_leakage` | Per-case leakage (l_C − l_M) / (l_D − l_M) |
+| `curse_comprehension` | λ on all answers and on comprehension-passing answers |
+| `curse_decision_curves` | The screening decision against the latent belief per condition (after the paper's Figure 3) |
+| `curse_thresholds` | Implied against instructed decision thresholds, own fit and John's (after Figure 5) |
+| `curse_bayes` | Bespoke answers against the Bayes answer of the believer's evidence |
+| `retention` | Complete-call retention by condition |
+
 ## Deprecated: the earlier RQ1–RQ3 design
 
 These modules live in `second_order/deprecated/` and still run. The current
