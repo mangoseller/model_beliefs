@@ -33,7 +33,8 @@ class FirstOrderIdentity(unittest.TestCase):
             with (C.RELEASE_PROMPTS / task["path"]).open() as handle:
                 for line in handle:
                     row = json.loads(line)
-                    built = P.build_prompt(row["source_prompt_id"], "A", task["output"])
+                    built = P.build_prompt(row["source_prompt_id"], "A", task["output"],
+                                           self_layout="first_order")
                     self.assertEqual(built, row["prompt"], row["prompt_id"])
 
     def test_full_render_equals_patient_profile(self):
@@ -49,7 +50,8 @@ class ConditionB(unittest.TestCase):
             for case_id in CASES:
                 case = P.cases().loc[case_id]
                 for output in P.OUTPUTS:
-                    prompt = P.build_prompt(case_id, "B", output, withheld=fields, missing="removed")
+                    prompt = P.build_prompt(case_id, "B", output, withheld=fields, missing="removed",
+                                            self_layout="first_order")
                     for f in fields:
                         self.assertNotIn(field_label(f).split(" (")[0], prompt)
                         self.assertNotIn(f"({FEATURE_KEYS[f]})", prompt)
@@ -63,7 +65,8 @@ class ConditionB(unittest.TestCase):
             fields = withheld_fields(name)
             for case_id in CASES:
                 case = P.cases().loc[case_id]
-                prompt = P.build_prompt(case_id, "B", "probability", withheld=fields, missing="not_recorded")
+                prompt = P.build_prompt(case_id, "B", "probability", withheld=fields, missing="not_recorded",
+                                        self_layout="first_order")
                 block = prompt.split(P.PROFILE_HEADER)[1].rstrip("\n").split("\n")
                 self.assertEqual(len(block), len(PROFILE_FEATURES))
                 for f in fields:
@@ -74,9 +77,54 @@ class ConditionB(unittest.TestCase):
         for cond in ("B", "B_S1", "B_H", "B_F"):
             for case_id in CASES:
                 case = P.cases().loc[case_id]
+                full, copy = render_profile(case), copy_profile(case, CONDITIONS[cond].pair)
                 for output in P.OUTPUTS:
-                    self.assertEqual(P.build_prompt(case_id, cond, output),
-                                     P.first_order_prompt(output, copy_profile(case, CONDITIONS[cond].pair)))
+                    self.assertEqual(P.build_prompt(case_id, cond, output, self_layout="first_order"),
+                                     P.first_order_prompt(output, copy))
+                    a = P.build_prompt(case_id, "A", output, self_layout="matched")
+                    self.assertEqual(P.build_prompt(case_id, cond, output, self_layout="matched"),
+                                     a.replace(P.PROFILE_HEADER + full, P.PROFILE_HEADER + copy))
+
+
+class MatchedSelfLayout(unittest.TestCase):
+    """Own-belief prompts end with the same suffix as the prompts about the agent."""
+
+    def test_every_condition_ends_with_the_same_format_block(self):
+        for case_id in CASES[:5]:
+            full = render_profile(P.cases().loc[case_id])
+            for output in P.OUTPUTS:
+                question, fmt = P.split_first_order(output, full)
+                for cond in CONDITIONS:
+                    prompt = P.build_prompt(case_id, cond, output, self_layout="matched")
+                    self.assertTrue(prompt.endswith("\n\n" + fmt + "\n"), (cond, output))
+                    self.assertTrue(prompt.startswith(P.PROFILE_HEADER), (cond, output))
+                a = P.build_prompt(case_id, "A", output, self_layout="matched")
+                self.assertEqual(a, f"{P.PROFILE_HEADER}{full}\n\n{question}\n\n{fmt}\n")
+
+    def test_a_is_d_without_the_agent_paragraph_and_with_the_own_question(self):
+        for case_id in CASES[:5]:
+            case = P.cases().loc[case_id]
+            full = render_profile(case)
+            for output in P.OUTPUTS:
+                question, _ = P.split_first_order(output, full)
+                d = P.build_prompt(case_id, "D_john", output)
+                a = P.build_prompt(case_id, "A", output, self_layout="matched")
+                para = P.agent_paragraph(case, "D_john")
+                self.assertEqual(a, d.replace(para + "\n\n", "").replace(
+                    P.agent_question(output, "john", full), question))
+
+    def test_repo_layout_matched_is_first_order(self):
+        for case_id in CASES[:5]:
+            for output in P.OUTPUTS:
+                self.assertEqual(P.build_prompt(case_id, "B", output, layout="repo", self_layout="matched"),
+                                 P.build_prompt(case_id, "B", output, self_layout="first_order"))
+
+    def test_prompt_for_resolves_the_layout_per_model(self):
+        case_id, output = CASES[0], "probability"
+        self.assertEqual(P.prompt_for("gemma3_4b", case_id, "A", output),
+                         P.build_prompt(case_id, "A", output, self_layout="first_order"))
+        self.assertEqual(P.prompt_for("qwen3_8b", case_id, "A", output),
+                         P.build_prompt(case_id, "A", output, self_layout="matched"))
 
 
 class FalseBelief(unittest.TestCase):
@@ -85,7 +133,8 @@ class FalseBelief(unittest.TestCase):
             case = P.cases().loc[case_id]
             true, flipped = profile_line(case, FLIP), profile_line(case, FLIP, flipped_value(case, FLIP))
             self.assertNotEqual(true, flipped)
-            block = P.build_prompt(case_id, "B_F", "probability").split(P.PROFILE_HEADER)[1].split("\n")
+            block = P.build_prompt(case_id, "B_F", "probability", self_layout="first_order").split(
+                P.PROFILE_HEADER)[1].split("\n")
             self.assertIn(flipped, block)
             self.assertNotIn(true, block)
             self.assertEqual(len([l for l in block if l]), len(PROFILE_FEATURES))
@@ -99,7 +148,20 @@ class FalseBelief(unittest.TestCase):
                 prompt = P.build_prompt(case_id, "C_F", output)
                 self.assertIn(P.PROFILE_HEADER + full + "\n", prompt)
                 self.assertEqual(prompt.count(flipped), 1)
-                self.assertIn("copy said:\n" + flipped + "\nHe trusts his copy", prompt)
+                self.assertIn("The colleague told him:\n" + flipped + "\nHe believes what he was told", prompt)
+                old = P.build_prompt(case_id, "C_F", output, false_framing="copy")
+                self.assertIn("copy said:\n" + flipped + "\nHe trusts his copy", old)
+
+    def test_false_belief_conditions_share_the_reported_framing(self):
+        """M_F, C_F and D_F all say the profile was read to John; M_F and D_F share one sentence."""
+        for case_id in CASES:
+            case = P.cases().loc[case_id]
+            for cond in ("C_F", "M_F", "D_F"):
+                self.assertIn("a colleague read it to him", P.agent_paragraph(case, cond))
+            self.assertEqual(P.agent_paragraph(case, "M_F"), P.agent_paragraph(case, "D_F"))
+            self.assertNotEqual(P.agent_paragraph(case, "D_F"), P.agent_paragraph(case, "D_john"))
+            self.assertEqual(pair_conditions("john", "F")["D"], "D_F")
+            self.assertEqual(pair_conditions("john", "F", shared_d=True)["D"], "D_john")
 
 
 class MatchedControl(unittest.TestCase):
@@ -197,13 +259,42 @@ class ConditionsCD(unittest.TestCase):
         banned = ("ignore", "differ", "may not", "might not", "unknown", "lack", "missing")
         for case_id in CASES[:5]:
             full = render_profile(P.cases().loc[case_id])
-            for cond in ("C_john", "D_john", "C_user", "D_user", "C_S1", "C_H", "M_S4", "M_H"):
+            for cond in ("C_john", "D_john", "C_user", "D_user", "C_S1", "C_H", "M_S4", "M_H", "M_F", "D_F"):
                 for output in P.OUTPUTS:
                     # Profile values (e.g. "Missing") are data, not instructions.
                     shown = P.model_profile(P.cases().loc[case_id], cond)
                     prompt = P.build_prompt(case_id, cond, output).replace(shown, "").lower()
                     for word in banned:
                         self.assertNotIn(word, prompt, (cond, output))
+
+
+class Comprehension(unittest.TestCase):
+    def test_questions_have_one_correct_option(self):
+        for case_id in CASES:
+            case = P.cases().loc[case_id]
+            q = P.comprehension(case_id, "C_john")
+            self.assertEqual(q.options[q.answer], "; ".join(field_label(f) for f in withheld_fields()))
+            self.assertEqual(len(set(q.options)), len(q.options))
+            q = P.comprehension(case_id, "C_F")
+            self.assertEqual(q.options[q.answer], field_label(FLIP))
+            self.assertIn("colleague read to him", q.question)
+            self.assertEqual(q, P.comprehension(case_id, "C_F"))  # deterministic order
+        with self.assertRaises(ValueError):
+            P.comprehension(CASES[0], "D_john")
+
+    def test_answers_parse_by_letter_and_text(self):
+        from second_order.comprehension import parse_choice
+
+        q = P.comprehension(CASES[0], "C_john")
+        for i, option in enumerate(q.options):
+            letter = chr(65 + i)
+            for text in (f"x\nChoice: {letter}", f"x\nChoice: {option}", f"**Choice:** {letter}. {option}",
+                         f"Choice: A\nthinking again\nChoice: ({letter})"):
+                self.assertEqual(parse_choice(text, q.options), i, text)
+        self.assertIsNone(parse_choice("no choice line", q.options))
+        self.assertIsNone(parse_choice("Choice: Z", q.options))
+        wrong = (q.answer + 1) % len(q.options)
+        self.assertIsNone(parse_choice(f"Choice: {chr(65 + q.answer)}. {q.options[wrong]}", q.options))
 
 
 HAND_WRITTEN = {

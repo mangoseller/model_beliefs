@@ -13,7 +13,9 @@ Roles (the letters the plan uses):
   a different copy.  The condition whose leakage is measured.
 * ``M``  matched control: the agent's belief when the model is shown only
   the agent's copy (nothing private to leak).  Zero-leakage anchor for C.
-* ``D``  the agent's belief when the agent also has the full profile.
+* ``D``  the agent's belief when the agent also has the full profile.  The
+  false-belief pair has its own D (``D_F``): the agent's evidence is framed as
+  reported to them, as in C_F and M_F, so M_F and D_F share one template.
 
 A *pair* names how the agent's copy differs from the full profile:
 
@@ -22,6 +24,8 @@ A *pair* names how the agent's copy differs from the full profile:
 
 Research questions served: RQ1a/b use pair S4; RQ1c uses H against F; RQ1d
 uses the user framing; RQ2's ladder uses S4 -> S1 -> H -> D; RQ3 uses S4 and F.
+The curse-of-knowledge experiment uses two *settings*: partial evidence (pair
+S4) and false belief (pair F); ``SETTINGS`` maps them.
 """
 
 from __future__ import annotations
@@ -43,6 +47,8 @@ from second_order import config as C
 NOT_RECORDED = "Not recorded"
 PAIRS = ("S4", "S1", "H", "F")
 IGNORANCE_PAIRS = ("S4", "S1", "H")
+SETTINGS = {"partial": "S4", "false": "F"}       # curse-of-knowledge setting -> pair
+SETTING_OF = {pair: setting for setting, pair in SETTINGS.items()}
 
 
 @dataclass(frozen=True)
@@ -75,6 +81,7 @@ def _rows() -> dict[str, Condition]:
         rows.append(Condition(f"C_{pair}", "C", "john", pair, "full", "copy"))
     rows.append(Condition("M_H", "M", "john", "H", "copy", "copy"))
     rows.append(Condition("M_F", "M", "john", "F", "copy", "copy"))
+    rows.append(Condition("D_F", "D", "john", "F", "full", "full"))
     return {c.key: c for c in rows}
 
 
@@ -82,16 +89,21 @@ CONDITIONS = _rows()
 CORE_CONDITIONS = ("A", "B", "C_john", "D_john", "M_S4")  # RQ1a/b, RQ2 coherence, RQ3 (S4)
 
 
-def pair_conditions(framing: str, pair: str) -> dict[str, str | None]:
-    """Condition keys playing roles A, B, C, M, D for one framing and pair (M may be None)."""
+def pair_conditions(framing: str, pair: str, *, shared_d: bool = False) -> dict[str, str | None]:
+    """Condition keys playing roles A, B, C, M, D for one framing and pair (M may be None).
+
+    D is the pair's own D where one exists (``D_F``), else the shared D;
+    ``shared_d`` forces the shared one (runs made before D_F existed).
+    """
     def find(role: str, fr: str, p: str | None) -> str | None:
         for c in CONDITIONS.values():
             if c.role == role and c.framing == fr and c.pair == p:
                 return c.key
         return None
 
+    d = None if shared_d else find("D", framing, pair)
     return {"A": "A", "B": find("B", "self", pair), "C": find("C", framing, pair),
-            "M": find("M", framing, pair), "D": find("D", framing, None)}
+            "M": find("M", framing, pair), "D": d or find("D", framing, None)}
 
 
 def framing_pairs() -> list[tuple[str, str]]:

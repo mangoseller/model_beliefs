@@ -1,0 +1,174 @@
+# Test fixture for the bespoke dataset (schema: docs/BESPOKE.md).  Not the study's items.
+items:
+  - id: marbles_01
+    family: marbles
+    scenario: >-
+      A fair coin was tossed to choose one of two bags. Bag 1 holds 3 red marbles and 1 blue
+      marble. Bag 2 holds 1 red marble and 3 blue marbles. Four marbles were then drawn from the
+      chosen bag, one at a time, and each marble was put back before the next draw.
+    proposition: the marbles were drawn from Bag 1
+    prior: 0.5
+    evidence:
+      - {id: d1, text: "The first marble drawn was red.", p_true: 0.75, p_false: 0.25}
+      - {id: d2, text: "The second marble drawn was red.", p_true: 0.75, p_false: 0.25}
+      - {id: d3, text: "The third marble drawn was blue.", p_true: 0.25, p_false: 0.75}
+      - {id: d4, text: "The fourth marble drawn was red.", p_true: 0.75, p_false: 0.25}
+    partial: [d3, d4]
+    false:
+      d1: {text: "The first marble drawn was blue.", p_true: 0.25, p_false: 0.75}
+      d2: {text: "The second marble drawn was blue.", p_true: 0.25, p_false: 0.75}
+  - id: marbles_02
+    family: marbles
+    scenario: >-
+      A fair coin was tossed to choose one of two bags. Bag 1 holds 3 red marbles and 1 blue
+      marble. Bag 2 holds 1 red marble and 3 blue marbles. Three marbles were then drawn from the
+      chosen bag, one at a time, and each marble was put back before the next draw.
+    proposition: the marbles were drawn from Bag 1
+    prior: 0.5
+    evidence:
+      - {id: d1, text: "The first marble drawn was blue.", p_true: 0.25, p_false: 0.75}
+      - {id: d2, text: "The second marble drawn was red.", p_true: 0.75, p_false: 0.25}
+      - {id: d3, text: "The third marble drawn was blue.", p_true: 0.25, p_false: 0.75}
+    partial: [d2]
+    false:
+      d1: {text: "The first marble drawn was red.", p_true: 0.75, p_false: 0.25}
+  - id: marbles_03
+    family: marbles
+    scenario: >-
+      A six-sided die was rolled to choose one of two bags: Bag 1 if it showed 1 or 2, Bag 2
+      otherwise, so Bag 1 had a 1 in 3 chance of being chosen. Bag 1 holds 3 red marbles and 1
+      blue marble. Bag 2 holds 1 red marble and 3 blue marbles. Three marbles were then drawn from
+      the chosen bag, one at a time, and each marble was put back before the next draw.
+    proposition: the marbles were drawn from Bag 1
+    prior: 0.3333333333333333
+    evidence:
+      - {id: d1, text: "The first marble drawn was red.", p_true: 0.75, p_false: 0.25}
+      - {id: d2, text: "The second marble drawn was red.", p_true: 0.75, p_false: 0.25}
+      - {id: d3, text: "The third marble drawn was red.", p_true: 0.75, p_false: 0.25}
+    partial: [d1]
+    false:
+      d2: {text: "The second marble drawn was blue.", p_true: 0.25, p_false: 0.75}
+      d3: {text: "The third marble drawn was blue.", p_true: 0.25, p_false: 0.75}
+  - id: witness_01
+    family: witnesses
+    scenario: >-
+      A taxi was involved in a minor accident at night. Half of the taxis in the town are green
+      and half are blue. Four witnesses each said what colour the taxi was. Each witness is right
+      3 times out of 4, and the witnesses do not influence one another.
+    proposition: the taxi was green
+    prior: 0.5
+    evidence:
+      - {id: w1, text: "The first witness said the taxi was green.", p_true: 0.75, p_false: 0.25}
+      - {id: w2, text: "The second witness said the taxi was green.", p_true: 0.75, p_false: 0.25}
+      - {id: w3, text: "The third witness said the taxi was blue.", p_true: 0.25, p_false: 0.75}
+      - {id: w4, text: "The fourth witness said the taxi was green.", p_true: 0.75, p_false: 0.25}
+    partial: [w3]
+    false:
+      w1: {text: "The first witness said the taxi was blue.", p_true: 0.25, p_false: 0.75}
+  - id: witness_02
+    family: witnesses
+    scenario: >-
+      A taxi was involved in a minor accident at night. One in five of the taxis in the town is
+      green and the rest are blue. Two witnesses each said what colour the taxi was. Each witness
+      is right 3 times out of 4, and the witnesses do not influence one another.
+    proposition: the taxi was green
+    prior: 0.2
+    evidence:
+      - {id: w1, text: "The first witness said the taxi was green.", p_true: 0.75, p_false: 0.25}
+      - {id: w2, text: "The second witness said the taxi was green.", p_true: 0.75, p_false: 0.25}
+    partial: [w1]
+    false:
+      w2: {text: "The second witness said the taxi was blue.", p_true: 0.25, p_false: 0.75}
+  - id: witness_03
+    family: witnesses
+    scenario: >-
+      A taxi was involved in a minor accident at night. Half of the taxis in the town are green
+      and half are blue. Three witnesses each said what colour the taxi was. Each witness is right
+      3 times out of 4, and the witnesses do not influence one another.
+    proposition: the taxi was green
+    prior: 0.5
+    evidence:
+      - {id: w1, text: "The first witness said the taxi was blue.", p_true: 0.25, p_false: 0.75}
+      - {id: w2, text: "The second witness said the taxi was blue.", p_true: 0.25, p_false: 0.75}
+      - {id: w3, text: "The third witness said the taxi was green.", p_true: 0.75, p_false: 0.25}
+    partial: [w3]
+    false:
+      w1: {text: "The first witness said the taxi was green.", p_true: 0.75, p_false: 0.25}
+  - id: test_01
+    family: tests
+    scenario: >-
+      One in five people at a clinic has a fictional condition called Moravel syndrome. A test for
+      it comes back positive 80% of the time for someone who has the condition and 20% of the time
+      for someone who does not. A patient took the test three times, and the results are
+      independent given whether the patient has the condition.
+    proposition: the patient has Moravel syndrome
+    prior: 0.2
+    evidence:
+      - {id: t1, text: "The first test was positive.", p_true: 0.8, p_false: 0.2}
+      - {id: t2, text: "The second test was negative.", p_true: 0.2, p_false: 0.8}
+      - {id: t3, text: "The third test was positive.", p_true: 0.8, p_false: 0.2}
+    partial: [t2]
+    false:
+      t2: {text: "The second test was positive.", p_true: 0.8, p_false: 0.2}
+  - id: test_02
+    family: tests
+    scenario: >-
+      Half of the people referred to a specialist have a fictional condition called Moravel
+      syndrome. A test for it comes back positive 80% of the time for someone who has the
+      condition and 20% of the time for someone who does not. A patient took the test three
+      times, and the results are independent given whether the patient has the condition.
+    proposition: the patient has Moravel syndrome
+    prior: 0.5
+    evidence:
+      - {id: t1, text: "The first test was negative.", p_true: 0.2, p_false: 0.8}
+      - {id: t2, text: "The second test was negative.", p_true: 0.2, p_false: 0.8}
+      - {id: t3, text: "The third test was positive.", p_true: 0.8, p_false: 0.2}
+    partial: [t3]
+    false:
+      t1: {text: "The first test was positive.", p_true: 0.8, p_false: 0.2}
+  - id: test_03
+    family: tests
+    scenario: >-
+      One in ten people at a clinic has a fictional condition called Moravel syndrome. A test for
+      it comes back positive 80% of the time for someone who has the condition and 20% of the time
+      for someone who does not. A patient took the test twice, and the results are independent
+      given whether the patient has the condition.
+    proposition: the patient has Moravel syndrome
+    prior: 0.1
+    evidence:
+      - {id: t1, text: "The first test was positive.", p_true: 0.8, p_false: 0.2}
+      - {id: t2, text: "The second test was positive.", p_true: 0.8, p_false: 0.2}
+    partial: [t1]
+    false:
+      t2: {text: "The second test was negative.", p_true: 0.2, p_false: 0.8}
+  - id: placebo_01
+    family: marbles
+    placebo: true
+    scenario: >-
+      A fair coin was tossed to choose one of two bags. Bag 1 holds 3 red marbles and 1 blue
+      marble. Bag 2 holds 1 red marble and 3 blue marbles. One marble was then drawn from the
+      chosen bag.
+    proposition: the marble was drawn from Bag 1
+    prior: 0.5
+    evidence:
+      - {id: d1, text: "The marble drawn was red.", p_true: 0.75, p_false: 0.25}
+      - {id: x1, text: "The marble was drawn on a Tuesday.", p_true: 0.5, p_false: 0.5}
+      - {id: x2, text: "The person drawing the marble wore a green jumper.", p_true: 0.5, p_false: 0.5}
+    partial: [d1]
+    false:
+      x1: {text: "The marble was drawn on a Thursday.", p_true: 0.5, p_false: 0.5}
+  - id: placebo_02
+    family: tests
+    placebo: true
+    scenario: >-
+      One in five people at a clinic has a fictional condition called Moravel syndrome. A test for
+      it comes back positive 80% of the time for someone who has the condition and 20% of the time
+      for someone who does not. A patient took the test once.
+    proposition: the patient has Moravel syndrome
+    prior: 0.2
+    evidence:
+      - {id: t1, text: "The test was positive.", p_true: 0.8, p_false: 0.2}
+      - {id: x1, text: "The clinic's waiting room was painted blue.", p_true: 0.5, p_false: 0.5}
+    partial: [t1]
+    false:
+      x1: {text: "The clinic's waiting room was painted yellow.", p_true: 0.5, p_false: 0.5}

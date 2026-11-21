@@ -172,24 +172,31 @@ command-line interface (`python -m second_order.<module>`); settings are in
 | `conditions.py` | The condition table (roles A, B, C, M, D; pairs S4, S1, H, F; framings) and profile rendering: withheld fields, the flipped field |
 | `prompts_second_order.py` | Prompts for every condition, built from the first-order prompt with minimal edits |
 | `example_prompts.py` | Renders `docs/example_prompts.md` |
-| `run_generation.py` | Cached, resumable generation (Bedrock, OpenAI, local MLX) with a cost-approval gate |
+| `run_generation.py` | Cached, resumable generation (Bedrock, OpenAI, local MLX, vLLM, transformers, synthetic) with a cost-approval gate; second runs, samples and two-turn comprehension items |
 | `pilot.py` | Phase 1 pilot: how far each withheld set and the flip move the model's own answer |
-| `responses.py` | Parses cached responses with the first-order parser; complete-case matrices; retention |
+| `responses.py` | Parses cached responses with the first-order parser (after removing `<think>` blocks); complete-case matrices; seeded splits for local models; retention; comprehension scoring |
 | `fit_pooled.py` | One pooled latent fit per family (own belief, John, user); posteriors for each output subset |
 | `measurement.py` | Sampling from a fitted measurement model; shrinkage calibration |
 | `phase3.py` | Driver: parse, fit, export latents and beliefs, retention, transcripts |
 | `beliefs.py` | The shared belief format every method writes and the analysis reads |
-| `leakage.py` | The matched-control λ, κ, tracking τ, contrasts, the ratio rule and the paired case bootstrap |
+| `leakage.py` | The matched-control λ (= β_C/β_D), ρ, φ and τ from a second run, the affine checks, the halves-based κ and τ, contrasts, the ratio rule and the paired case bootstrap |
 | `coherence.py` | Reports-to-decisions coherence per condition and its contrasts |
 | `analyze.py` | Tables by research question, method agreement, anomalies, `RESULTS.md` |
 | `figures.py` | Figures by research question, from `results/` only |
 | `activations.py` | Replays prompts and responses through an open-weight model and stores residual-stream activations |
 | `probes.py` | Report and truth probes with controls; probe readouts in the belief format |
 | `simulate.py` | Synthetic recovery of the estimators through the full fit |
+| `bespoke.py` | The bespoke dataset: item file (schema in `docs/BESPOKE.md`), exact Bayes answers, prompts for every condition, comprehension questions |
+| `comprehension.py` | Comprehension follow-ups: the question format and the strict parser |
+| `datasets.py` | CKD and bespoke behind one interface (outputs, cases, prompts, samples) |
+| `synthetic.py` | The `synthetic` backend: response text from known λ, φ and noise |
+| `curse.py` | Curse-of-knowledge tables (λ, ρ, φ, τ, checks, placebo, Bayes, comprehension) and `results/curse/RESULTS.md` |
 | `baseline_check.py` | Confirms the first-order baseline still reproduces |
 
 Outputs: `data/generation_cache/`, `data/responses/`, `data/latents/`,
-`data/beliefs/`, `data/activations/`, `results/`, `figures/` and `RESULTS.md`,
-all ignored by git. `scripts/estimator_bias_check.py` is a standalone
+`data/beliefs/`, `data/activations/`, `results/` (the curse-of-knowledge tables
+in `results/curse/`), `figures/` and `RESULTS.md`, all ignored by git. The
+bespoke item file is local too (`data/bespoke/items.yaml` by default);
+`tests/fixtures/bespoke_items.yaml` is a small example used by the tests. `scripts/estimator_bias_check.py` is a standalone
 comparison of the two leakage estimators; `tests/` holds the prompt, parser,
 estimator and cache tests.

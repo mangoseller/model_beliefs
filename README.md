@@ -39,6 +39,33 @@ Every condition is answered through the paper's 16 outputs (three probability
 reports and thirteen decisions), on its 500 chronic-kidney-disease cases and
 nine models.
 
+## The current study: the curse of knowledge in Qwen3 8B and 14B
+
+The current study measures the curse of knowledge in Qwen3 8B and Qwen3 14B:
+how much of the model's private evidence leaks into the belief it attributes
+to someone who lacks that evidence.
+
+- **λ (leakage)** is estimated as β_C / β_D, a ratio of two regression slopes
+  on the model's own gap l_A − l_B. It is compared with Camerer et al.'s
+  w ≈ 0.51 for people.
+- **ρ (reliability)** comes from a second run of A and B.
+- **φ (responsiveness)** is how strongly the attributed belief follows the
+  evidence.
+- **τ = φ(1 − λ)** is a theory-of-mind score.
+
+λ is estimated in a partial-evidence setting (John's copy lacks fields) and a
+false-belief setting (a colleague read John one line wrongly). Each setting
+is run on two datasets:
+
+- **CKD**: beliefs from the latent fit and from the stated probability.
+- **A bespoke dataset** of fictional items with known Bayes answers: stated
+  probability only, plus placebo items and comprehension follow-ups
+  (`docs/BESPOKE.md`).
+
+Commands are in the [runbook](docs/RUNBOOK.md#curse-of-knowledge-experiment-qwen3-8b-and-14b).
+Design and checks are in the
+[implementation notes](docs/IMPLEMENTATION_NOTES.md#the-curse-of-knowledge-experiment).
+
 ## Research questions
 
 | | Question | Measured by |
@@ -59,6 +86,7 @@ nine models.
 | Synthetic recovery of the estimator | Built; one scenario run so far |
 | Activation extraction and probes | Built for the first design; updates for RQ3 pending |
 | Steering and attention-blocking experiments (RQ3) | Not built |
+| Curse-of-knowledge experiment: D_F, matched own-belief layout, second runs, bespoke dataset, comprehension follow-ups, vLLM/transformers/synthetic backends, ρ/φ/τ estimators, `second_order.curse` report and figures | Built; recovered end to end on the synthetic backend (`tests.test_pipeline`) |
 | Main data collection | Not started |
 
 No experimental results are in this repository yet.
@@ -80,7 +108,8 @@ and condition A responses). Download it from Zenodo
 Checks that make no model calls:
 
 ```bash
-python -m unittest tests.test_prompts_second_order tests.test_leakage
+python -m unittest tests.test_prompts_second_order tests.test_leakage tests.test_bespoke tests.test_generation
+python -m unittest tests.test_pipeline          # end to end on the synthetic backend (a few minutes)
 python -m second_order.example_prompts          # writes docs/example_prompts.md
 python -m second_order.simulate --lambdas 0.3 --kappa 0.7 --rho -0.2
 ```
@@ -96,6 +125,14 @@ python -m second_order.analyze                         # results/*.csv and RESUL
 python -m second_order.figures                         # figures/rq*.pdf
 ```
 
+The curse-of-knowledge models run locally on a CUDA machine:
+
+```bash
+python -m second_order.run_generation --model qwen3_8b --approve   # CKD and bespoke, then comprehension turns
+python -m second_order.phase3 --model qwen3_8b
+python -m second_order.curse                                       # results/curse/RESULTS.md
+```
+
 [`docs/RUNBOOK.md`](docs/RUNBOOK.md) has the full command list, including the
 pilot, activations and probes.
 
@@ -108,7 +145,12 @@ second_order/                the experiment (see STRUCTURE.md)
   prompts_second_order.py      prompts for every condition
   run_generation.py            cached, resumable generation
   fit_pooled.py, measurement.py  latent fits and shrinkage calibration
-  leakage.py                   λ and its companions, with the case bootstrap
+  leakage.py                   λ (= β_C/β_D), ρ, φ, τ and their checks, with the case bootstrap
+  bespoke.py                   the bespoke dataset: item file, Bayes answers, prompts
+  comprehension.py             comprehension follow-up questions and their parser
+  datasets.py                  CKD and bespoke behind one interface
+  synthetic.py                 text-level simulator with known parameters
+  curse.py                     curse-of-knowledge tables and report
   coherence.py, analyze.py, figures.py   analysis by research question
   activations.py, probes.py    internal readouts for open-weight models
   simulate.py                  synthetic recovery of the estimators
@@ -127,6 +169,7 @@ latent_beliefs/              the replication package (unchanged)
   organised and the baseline it reproduces.
 - [`docs/example_prompts.md`](docs/example_prompts.md): rendered prompts for
   every condition.
+- [`docs/BESPOKE.md`](docs/BESPOKE.md): the bespoke item file format.
 - [`STRUCTURE.md`](STRUCTURE.md): a map of both packages.
 - [`docs/REPLICATION.md`](docs/REPLICATION.md): reproducing the original
   paper's figures and tables.

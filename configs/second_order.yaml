@@ -4,7 +4,6 @@
 
 domain: ckd
 seed: 20261111             # base seed for local sampling, fits and bootstraps
-replicate: 0               # 0 = main run; 1 = B' (deferred)
 
 # Phase 1 picks this set. The candidate sets are the plan's S1-S4.
 withheld_set: S4           # the core pair (provisional from the local pilot; the hosted pilot confirms)
@@ -20,6 +19,18 @@ withheld_sets:
 # "repo" = the first-order order (question, format, options, profile) with
 # the agent paragraph after the profile.
 layout: plan               # DECISION
+
+# Layout of the own-belief prompts (A and every B). "matched" = the layout and
+# ending of the prompts about the agent (profile first, then the question and the
+# answer format), so A and B end with the same suffix as C, M and D. "first_order"
+# = the released first-order prompt. Models whose A comes from the release always
+# use first_order, so their B prompts match their A prompts.
+self_layout: matched
+
+# Framing of the agent's evidence in C_F, M_F and D_F. "reported": a colleague read
+# the agent the profile (in C_F getting one line wrong), so M_F and D_F share one
+# template. "copy": the agent reviewed an earlier copy (the earlier build; no D_F).
+false_belief_framing: reported
 
 # False-belief pair F: this field is shown with the opposite Yes/No value.
 flip_field: hypertension_self_reported
@@ -41,6 +52,23 @@ schedule:
   extra: [B_S1, C_S1, C_user, D_user]
   extra_models: [gemma3_12b, deepseek_v32, openai_terra]
 
+# Curse-of-knowledge experiment (docs/IMPLEMENTATION_NOTES.md): the leakage rate
+# lambda in a partial-evidence and a false-belief setting, on CKD (latent and
+# direct beliefs) and the bespoke dataset (direct beliefs only).
+experiment:
+  models: [qwen3_8b, qwen3_14b]
+  settings: {partial: S4, false: F}       # setting -> pair of conditions.py
+  conditions: &curse [A, B, C_john, M_S4, D_john, B_F, C_F, M_F, D_F]
+  replicates: {A: 2, B: 2, B_F: 2}        # runs of the own-belief conditions; the second gives rho
+  comprehension:
+    conditions: [C_john, C_F]             # a follow-up turn after each of these answers
+    outputs: [probability]                # CKD: after the numeric probability only
+  camerer_w: 0.51                         # Camerer, Loewenstein and Weber (1989)
+
+bespoke:
+  items: data/bespoke/items.yaml          # local item file (schema: docs/BESPOKE.md); SO_BESPOKE_ITEMS overrides
+  samples: 20                             # samples per item, condition and run
+
 # Generation backends. "hosted" models already have condition A in the release
 # cache; local models regenerate condition A themselves.
 models:
@@ -57,6 +85,21 @@ models:
   # from the hosted model of the same size.
   gemma3_4b_mlx:  {backend: mlx, path: build/activation_pilot/model, cached_a: false, split_from: gemma3_4b, batch_size: 12}
   gemma3_12b_mlx: {backend: mlx, path: build/activation_pilot_12b/model, cached_a: false, split_from: gemma3_12b, batch_size: 8}
+  # Curse-of-knowledge models: local open weights on a CUDA machine (vLLM), thinking off.
+  qwen3_8b:  {backend: vllm, path: Qwen/Qwen3-8B, cached_a: false, split: own, datasets: [ckd, bespoke],
+              conditions: *curse, dtype: bfloat16, enable_thinking: false, max_model_len: 8192, batch_size: 2048}
+  qwen3_14b: {backend: vllm, path: Qwen/Qwen3-14B, cached_a: false, split: own, datasets: [ckd, bespoke],
+              conditions: *curse, dtype: bfloat16, enable_thinking: false, max_model_len: 8192, batch_size: 2048}
+  # Transformers fallback and a CPU-sized smoke model for the chat template and parsing path.
+  qwen3_8b_hf:   {backend: hf, path: Qwen/Qwen3-8B, cached_a: false, split: own, datasets: [ckd, bespoke],
+                  conditions: *curse, dtype: bfloat16, enable_thinking: false, batch_size: 16}
+  qwen3_0_6b_hf: {backend: hf, path: Qwen/Qwen3-0.6B, cached_a: false, split: own, datasets: [ckd, bespoke],
+                  conditions: *curse, dtype: float32, enable_thinking: false, batch_size: 4}
+  # Text-level simulator with known parameters (second_order/synthetic.py), for end-to-end checks.
+  synthetic: {backend: synthetic, cached_a: false, split: own, datasets: [ckd, bespoke], conditions: *curse,
+              batch_size: 100000,
+              truth: {lambda_partial: 0.5, lambda_false: 0.3, phi: 0.8, intercept: 0.2, call_noise: 0.35,
+                      comprehension_accuracy: 0.9}}
   # Activation-only checkpoints for a GPU instance (Phase 4 beyond this Mac);
   # weights must match the hosted model as closely as possible.
   gemma3_27b_hf:  {backend: hf, path: google/gemma-3-27b-it, cached_a: false, split_from: gemma3_27b, dtype: bfloat16}

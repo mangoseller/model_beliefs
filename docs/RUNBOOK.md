@@ -16,7 +16,8 @@ The pinned environment is unchanged; `second_order/` additionally needs
 ## Checks that run without model calls
 
 ```sh
-$PY -m unittest tests.test_prompts_second_order tests.test_leakage   # prompt, parser, estimator, cache tests
+$PY -m unittest tests.test_prompts_second_order tests.test_leakage tests.test_bespoke tests.test_generation
+$PY -m unittest tests.test_pipeline                                  # end to end on the synthetic backend (minutes)
 $PY -m second_order.baseline_check --out-dir build/second_order_baseline   # first-order numbers still reproduce
 $PY -m second_order.simulate --lambdas 0 0.3 0.7 1                   # synthetic recovery (--kappa, --rho, --hedge set the scenario)
 $PY scripts/estimator_bias_check.py                                  # idealised comparison of the two estimators
@@ -61,6 +62,65 @@ $PY -m second_order.run_generation --model gemma3_4b_mlx --smoke --approve   # l
 $PY -m second_order.phase3 --model gemma3_4b_mlx --smoke
 
 ```
+
+## Curse-of-knowledge experiment (Qwen3 8B and 14B)
+
+Settings are in `experiment`, `bespoke` and the `qwen3_*` model entries of the
+config. Each model runs nine conditions, `A B C_john M_S4 D_john B_F C_F M_F D_F`,
+on two datasets:
+
+- **CKD**: 500 cases × 16 outputs, plus a second run of A, B and B_F (for ρ).
+- **Bespoke**: the local item file × 20 samples.
+
+A comprehension follow-up comes after each C answer.
+
+On a CUDA machine:
+
+```sh
+pip install vllm                       # brings a matching torch; transformers for the hf fallback
+# Copy data/release/ (cases, prompts) and the bespoke item file (config `bespoke.items`).
+$PY -m second_order.bespoke                                       # check the item file: Bayes answers, warnings
+$PY -m second_order.run_generation --model qwen3_8b --dry-run     # call counts per dataset
+$PY -m second_order.run_generation --model qwen3_8b --approve     # both datasets, then the comprehension turns
+$PY -m second_order.run_generation --model qwen3_14b --approve
+```
+
+Approximate calls per model:
+
+| Part | Calls |
+|---|---|
+| CKD: 9 conditions × 500 cases × 16 outputs | 72,000 |
+| CKD: second runs of A, B, B_F | 24,000 |
+| CKD: comprehension | 1,000 |
+| Bespoke: 20 items × 20 samples × 12 runs | 4,800 |
+| Bespoke: comprehension | 800 |
+
+vLLM serves the model locally, with one seed per item, temperature 1, at most
+4,096 tokens and thinking off. Qwen3 14B in bf16 needs about 30 GB of GPU
+memory (`tensor_parallel_size` in the model entry spreads it over GPUs).
+`--dataset ckd` or `--dataset bespoke` runs one dataset; `--stage comprehension`
+runs only the follow-ups, once the C answers are cached. Generation resumes
+from the cache after an interruption.
+
+The rest needs no GPU (copy `data/generation_cache/` back if the GPU is elsewhere):
+
+```sh
+$PY -m second_order.phase3 --model qwen3_8b      # parse, latent fits (CKD), beliefs, retention, comprehension
+$PY -m second_order.phase3 --model qwen3_14b
+$PY -m second_order.curse                        # results/curse/*.csv and results/curse/RESULTS.md
+$PY -m second_order.figures                      # figures/curse_estimates, curse_scatter (+ the RQ figures)
+```
+
+Variants:
+
+- `qwen3_8b_hf` uses transformers instead of vLLM.
+- `qwen3_0_6b_hf` is a CPU-sized smoke test of the chat template and parsing,
+  e.g. `--model qwen3_0_6b_hf --dataset bespoke --cases 2`.
+- `synthetic` writes text from known λ, φ and noise; it is what
+  `tests.test_pipeline` runs.
+
+The `SO_CONFIG`, `SO_DATA_DIR`, `SO_RESULTS_DIR`, `SO_FIGURES_DIR` and
+`SO_BESPOKE_ITEMS` environment variables redirect a run (`second_order/config.py`).
 
 ## Phase 4: activations and probes
 

@@ -104,7 +104,7 @@ def run_one(lam: float, args, seed: int) -> pd.DataFrame:
     table.insert(1, "replicate_seed", seed)
     # Targets under the simulated model.  The original estimator's target is lambda only
     # when kappa = 1 and rho = 0; it is listed so its bias is visible beside the new one.
-    targets = {"lambda": lam, "kappa": args.kappa, "tau": args.kappa * (1 - lam), "lambda_0": 0.0,
+    targets = {"lambda": lam, "kappa_halves": args.kappa, "tau_halves": args.kappa * (1 - lam), "lambda_0": 0.0,
                "normalised_lambda_original": lam}
     table["target"] = [targets.get(s) if f in ("john", "user") else None
                        for s, f in zip(table.statistic, table.framing)]

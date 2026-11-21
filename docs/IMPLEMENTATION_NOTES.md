@@ -6,6 +6,83 @@ code is mapped in `docs/ORIENTATION.md`. `latent_beliefs/` is untouched, and
 `python -m second_order.baseline_check` confirms the first-order numbers
 still reproduce.
 
+## The curse-of-knowledge experiment
+
+The current study (Qwen3 8B and 14B) measures the leakage rate λ in two
+settings, partial evidence (pair `S4`) and false belief (pair `F`). It uses
+two datasets, CKD and the bespoke items (`docs/BESPOKE.md`), and two belief
+methods, the latent fit ("Bayesian marginalization") and the stated
+probability (direct elicitation).
+
+- **Conditions.** `A B C_john M_S4 D_john` (partial) and `B_F C_F M_F D_F`
+  (false belief); `experiment.conditions`.
+- **`D_F`** is the false-belief setting's own D. C_F, M_F and D_F all frame
+  the agent's evidence as reported by a colleague
+  (`false_belief_framing: reported`). M_F and D_F share one sentence, so M
+  and D still differ only in the evidence shown. Runs without D_F fall back
+  to the shared D.
+- **Same suffix.** Own-belief prompts use `self_layout: matched`: the layout
+  of the prompts about the agent, without the agent paragraph. A, B, C, M
+  and D therefore end with the same question and answer format. Models whose
+  A comes from the release keep the first-order layout.
+- **Second run.** A, B and B_F run twice (`experiment.replicates`). The two
+  independent gaps x and x′ give the reliability ρ. In the latent fit the
+  second run is extra rows of the "self" family.
+- **Samples.** Bespoke items get `bespoke.samples` samples per condition and
+  run. A belief is the mean sample logit; its `sd` is the standard error.
+- **Comprehension.** After each C answer (CKD: the numeric probability only),
+  a second turn asks which evidence the agent had. The turn replays the C
+  prompt and response verbatim. Answers are parsed strictly and scored.
+  `results/curse/` reports accuracy and estimates restricted to correct
+  answers.
+- **Generation** for the Qwen models is local:
+  - `vllm`: one seed per item, temperature 1, thinking off;
+  - `hf` fallback;
+  - `synthetic`: text written from known parameters.
+
+  Each Qwen model has its own seeded train/validation/test split
+  (`split: own`), because there is no first-order Qwen3 8B/14B data to
+  borrow one from.
+
+### Estimators
+
+With x = l_A − l_B:
+
+- β_D is the slope of (l_D − l_M) on x, and β_C the slope of (l_C − l_M) on x.
+- λ = β_C / β_D. This is identical to the matched-control λ = 1 − T_C/T_M
+  already in `leakage.py`, because β_D = T_M and β_C = T_M − T_C exactly.
+- ρ = Cov(x, x′) / Var(x).
+- φ = β_D / ρ and τ = (β_D − β_C) / ρ = φ(1 − λ).
+
+φ, τ and ρ use `value_calibrated`. For latents, the posterior means of the
+"self" and "john" fits shrink by different amounts, and that would scale φ;
+λ is a ratio of slopes from one fit and is unaffected. φ is reported per
+setting, pooled across settings (`phi_pooled`: within-setting slopes, so each
+setting keeps its intercept), and as the false − partial difference.
+
+The earlier halves-based companions are kept as `kappa_halves` and
+`tau_halves`.
+
+### Checks of the modelling assumptions
+
+| Assumption | Check |
+|---|---|
+| 1, affine | Slopes of l_D on l_A and of l_M on l_B, each instrumented by the second run. Both estimate φ without using the gap. Quadratic terms of both gap regressions. |
+| 2, partial linearity | λ for positive and negative gaps separately; λ by thirds of \|x\|. |
+| 3, independent noise | ρ comes from independent calls. On the bespoke set, placebo items should show zero gaps. |
+| All | `bespoke.checks` keeps Bayes answers inside [0.05, 0.95], where the 0.01/0.99 logit clip does not bind. |
+
+### Validation
+
+- Unit tests recover λ, ρ, φ and τ under measurement noise large enough to
+  attenuate β_D. They also check that φ reads calibrated values and that the
+  ratio rule blanks φ when the second run carries no signal.
+- `tests.test_pipeline` runs the whole pipeline on the synthetic backend:
+  generation, parsing (with planted parse failures and `<think>` tags),
+  latent fits, beliefs, estimators, report and figures. It checks that the
+  planted λ (both settings, both datasets, both methods), φ, τ, the
+  comprehension accuracy and a Bayesian own belief are recovered.
+
 ## Conditions
 
 All conditions live in one table, `second_order/conditions.py`. Each has a

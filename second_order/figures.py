@@ -4,6 +4,9 @@ RQ1: ``rq1_lambda_vs_capability`` (lambda for pair S4 against capability, with k
      ``rq1_scatter`` (the two regressions behind lambda), ``rq1c_pairs`` (lambda per pair).
 RQ2: ``rq2_coherence`` (coherence by condition), and the ladder rungs in ``rq1c_pairs``.
 RQ3: ``rq3_lambda_by_method`` (latent, direct, probes), ``rq3_probe_layers``.
+Curse of knowledge (from ``results/curse/``): ``curse_estimates`` (lambda, phi and
+tau per model, dataset, method and setting, with Camerer et al.'s w) and
+``curse_scatter`` (the two regressions behind lambda).
 Plus ``retention``.
 
     python -m second_order.figures
@@ -27,6 +30,7 @@ CONDITION_ORDER = ["A", "B", "D_john", "M_S4", "C_john", "D_user", "C_user"]
 CONDITION_COLOR = {"A": "#52514e", "B": "#8a8984", "D_john": "#7fb0eb", "M_S4": "#1baf7a", "C_john": "#2a78d6",
                    "D_user": "#f3a37f", "C_user": "#eb6834"}
 PAIR_COLOR = {"S4": "#2a78d6", "S1": "#7fb0eb", "H": "#1baf7a", "F": "#eb6834"}
+SETTING_COLOR = {"partial": PAIR_COLOR["S4"], "false": PAIR_COLOR["F"]}
 
 
 def style(ax, title=None):
@@ -103,7 +107,7 @@ def rq1_lambda_vs_capability(leak):
     for ax, method in zip(axes[0][:2], ("latent", "direct")):
         for model, g in L[L.method == method].groupby("model"):
             cap = g.capability_condition_A_c_index.iloc[0]
-            lam, kap = stat(g, "lambda"), stat(g, "kappa")
+            lam, kap = stat(g, "lambda"), stat(g, "kappa_halves")
             if lam.empty:
                 continue
             r = lam.iloc[0]
@@ -176,7 +180,7 @@ def rq1c_pairs(leak):
     models = list(L.model.unique())
     fig, axes = plt.subplots(1, 2, figsize=(max(7, 1.3 * len(models) + 3), 3.2), squeeze=False)
     for ax, statistic, title in ((axes[0][0], "lambda", "RQ1c: λ by pair"),
-                                 (axes[0][1], "tau", "RQ2 ladder: tracking τ = κ(1 − λ) by pair")):
+                                 (axes[0][1], "tau_halves", "RQ2 ladder: tracking τ = κ(1 − λ) by pair")):
         pairs = [p for p in ("S4", "S1", "H", "F") if len(L[(L.statistic == statistic) & (L.pair == p)])]
         for mi, model in enumerate(models):
             for pi, pair in enumerate(pairs):
@@ -263,7 +267,73 @@ def rq3_probe_layers(leak):
     save(fig, "rq3_probe_layers")
 
 
+def curse_estimates(est):
+    """lambda, phi and tau with 95% intervals, one row per model, dataset and method."""
+    L = est[(est.case_set == "all") & (est.setting != "false_minus_partial")]
+    groups = list(L.groupby(["model", "dataset", "method"], sort=False).size().index)
+    if not groups:
+        return
+    w = float(C.load()["experiment"]["camerer_w"])
+    fig, axes = plt.subplots(1, 3, figsize=(10, 0.45 * len(groups) + 1.6), sharey=True)
+    panels = (("lambda", "Leakage λ (dotted: Camerer et al. w)", (0, w, 1)), ("phi", "Responsiveness φ", (1,)),
+              ("tau", "Theory-of-mind score τ = φ(1 − λ)", (1,)))
+    for ax, (statistic, title, refs) in zip(axes, panels):
+        for ref in refs:
+            ax.axvline(ref, color=MUTED, lw=0.8, ls=":" if ref == w and statistic == "lambda" else "-")
+        for i, (model, dataset, method) in enumerate(groups):
+            for j, setting in enumerate(("partial", "false")):
+                r = L[(L.model == model) & (L.dataset == dataset) & (L.method == method) & (L.setting == setting)
+                      & (L.statistic == statistic)]
+                if r.empty or not np.isfinite(r.estimate.iloc[0]):
+                    continue
+                r = r.iloc[0]
+                ax.errorbar(r.estimate, i + (j - 0.5) * 0.3, xerr=[[r.estimate - r.ci_lower], [r.ci_upper - r.estimate]],
+                            fmt="o", color=SETTING_COLOR[setting], ms=5, elinewidth=1.2, capsize=0,
+                            label=setting if i == 0 else None)
+        style(ax, title)
+        ax.grid(axis="x", color=GRID, linewidth=0.8)
+        ax.grid(axis="y", visible=False)
+    axes[0].set_yticks(range(len(groups)), [f"{display(m)} · {d} · {k}" for m, d, k in groups], fontsize=7)
+    axes[0].invert_yaxis()
+    axes[0].legend(fontsize=7, frameon=False, loc="lower right")
+    save(fig, "curse_estimates")
+
+
+def curse_scatter(scatter, est):
+    """Per model, dataset and method: l_C - l_M and l_D - l_M against x = l_A - l_B, by setting."""
+    if scatter.empty:
+        return
+    groups = list(scatter.groupby(["model", "dataset", "method"], sort=False).size().index)
+    fig, axes = plt.subplots(len(groups), 2, figsize=(7.5, 2.8 * len(groups)), squeeze=False)
+    for i, (model, dataset, method) in enumerate(groups):
+        for j, setting in enumerate(("partial", "false")):
+            ax = axes[i][j]
+            d = scatter[(scatter.model == model) & (scatter.dataset == dataset) & (scatter.method == method)
+                        & (scatter.setting == setting)]
+            if len(d) < 3:
+                ax.set_visible(False)
+                continue
+            x = d.x_A_minus_B.to_numpy()
+            grid = np.linspace(x.min(), x.max(), 20)
+            for column, color, label in (("y_D_minus_M", MUTED, "D − M (slope β_D)"),
+                                         ("y_C_minus_M", SETTING_COLOR[setting], "C − M (slope β_C)")):
+                ax.scatter(x, d[column], s=6, color=color, alpha=0.5, lw=0)
+                slope, intercept = np.polyfit(x, d[column], 1)
+                ax.plot(grid, intercept + slope * grid, color=color, lw=1.5, label=f"{label} = {slope:.2f}")
+            lam = est[(est.model == model) & (est.dataset == dataset) & (est.method == method)
+                      & (est.setting == setting) & (est.statistic == "lambda") & (est.case_set == "all")]
+            tag = f", λ = {lam.estimate.iloc[0]:.2f}" if len(lam) and np.isfinite(lam.estimate.iloc[0]) else ""
+            style(ax, f"{display(model)} · {dataset} · {method} · {setting}{tag}")
+            ax.set_xlabel("l_A − l_B (logits)", fontsize=8, color=INK2)
+            ax.legend(fontsize=6.5, frameon=False, loc="upper left")
+    save(fig, "curse_scatter")
+
+
 def main() -> None:
+    est = read("curse/estimates.csv")
+    if not est.empty:
+        curse_estimates(est)
+        curse_scatter(read("curse/scatter.csv"), est)
     leak, coh = read("leakage.csv"), read("coherence.csv")
     if not coh.empty:
         rq2_coherence(coh)
