@@ -30,11 +30,15 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import fcntl
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass
+from functools import lru_cache
+from itertools import groupby
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -79,12 +83,43 @@ def item_key(model: str, dataset: str, case_id: str, condition: str, output: str
     return hashlib.sha256(json.dumps(fields).encode()).hexdigest()
 
 
+@lru_cache(maxsize=16)
+def resolve_revision(path: str, requested: str | None) -> str:
+    """Resolve a mutable Hub ref once for both generation and provenance."""
+    if requested and re.fullmatch(r"[a-fA-F0-9]{40}", requested):
+        return requested
+    local = Path(path)
+    if local.is_dir():
+        if local.parent.name == "snapshots" and re.fullmatch(r"[a-fA-F0-9]{40}", local.name):
+            return local.name
+        digest = hashlib.sha256()
+        for file in sorted(local.iterdir()):
+            if file.is_file() and file.suffix in {".safetensors", ".bin", ".json", ".model", ".txt", ".jinja", ".py"}:
+                digest.update(file.name.encode())
+                with file.open("rb") as handle:
+                    digest.update(hashlib.file_digest(handle, "sha256").digest())
+        return digest.hexdigest()
+    from huggingface_hub import HfApi
+    return HfApi().model_info(path, revision=requested).sha
+
+
+def model_revision(model: str) -> str | None:
+    cfg = C.model_config(model)
+    if cfg["backend"] in ("hf", "vllm"):
+        return resolve_revision(cfg["path"], cfg.get("revision"))
+    return cfg.get("revision")
+
+
 def settings_signature(model: str, dataset: str) -> str:
     """Hash of what besides the prompt shapes a response: backend, weights, sampling, chat template."""
     mcfg = C.model_config(model)
-    payload = {"backend": mcfg["backend"], "weights": mcfg.get("path"), "revision": mcfg.get("revision"),
-               "sampling": {o: sampling(model, dataset, o) for o in ("probability", "choice")},
+    payload = {"version": 2, "seed": int(C.load()["seed"]), "dtype": mcfg.get("dtype", "auto"),
+               "backend": mcfg["backend"], "weights": mcfg.get("path"), "revision": model_revision(model),
+               "sampling": {o: sampling(model, dataset, o) for o in ("probability", "choice", FOLLOWUP)},
                "template": template_kwargs(model), "truth": mcfg.get("truth")}
+    if mcfg["backend"] == "hf":
+        payload["batch_size"] = mcfg.get("batch_size", 32)
+        payload["dtype"] = mcfg.get("dtype", "bfloat16")
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -97,12 +132,39 @@ class Cache:
     def __init__(self, model: str, root: Path | None = None):
         self.path = (root or C.CACHE) / f"{model}.jsonl"
         self.records: dict[str, dict[str, Any]] = {}
+        self.offset = 0
+        self.identity = None
+        self.refresh()
+
+    def _read_new(self, handle):
+        stat = os.fstat(handle.fileno())
+        identity = (stat.st_dev, stat.st_ino)
+        if self.identity != identity or stat.st_size < self.offset:
+            self.records.clear()
+            self.offset = 0
+        self.identity = identity
+        handle.seek(self.offset)
+        while line := handle.readline():
+            try:
+                record = json.loads(line)
+                key = record["key"]
+            except (ValueError, TypeError, KeyError, UnicodeError) as exc:
+                if not line.endswith(b"\n"):
+                    print(f"Recovering incomplete final cache record in {self.path} at byte {self.offset}", file=sys.stderr)
+                    handle.truncate(self.offset)
+                    handle.seek(self.offset)
+                    break
+                raise ValueError(f"corrupt cache {self.path} at byte {self.offset}") from exc
+            if not line.endswith(b"\n"):
+                handle.write(b"\n")
+            self.records[key] = record
+            self.offset = handle.tell()
+
+    def refresh(self):
         if self.path.exists():
-            with self.path.open(encoding="utf-8") as handle:
-                for line in handle:
-                    if line.strip():
-                        record = json.loads(line)
-                        self.records[record["key"]] = record
+            with self.path.open("r+b") as handle:
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                self._read_new(handle)
 
     def __contains__(self, key: str) -> bool:
         return key in self.records
@@ -112,12 +174,26 @@ class Cache:
 
     def append(self, records: Iterable[dict[str, Any]]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
+        with self.path.open("a+b") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            self._read_new(handle)
             for record in records:
-                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                previous = self.get(record["key"])
+                if previous:
+                    if any(previous.get(field) != record.get(field) for field in ("prompt_sha", "settings_sha")):
+                        raise ValueError(f"conflicting cached result for {record['key']}")
+                    if previous.get("ok"):
+                        continue
+                handle.write((json.dumps(record, ensure_ascii=False) + "\n").encode())
                 self.records[record["key"]] = record
             handle.flush()
             os.fsync(handle.fileno())
+            self.offset = handle.tell()
+
+
+@lru_cache(maxsize=4)
+def cache_index(model: str, root: Path) -> Cache:
+    return Cache(model, root)
 
 
 def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
@@ -127,18 +203,19 @@ def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
     out = []
     for item in items:
         if item.model not in by_model:  # read each cache file once
-            by_model[item.model] = Cache(item.model)
+            by_model[item.model] = cache_index(item.model, C.CACHE)
+            by_model[item.model].refresh()
         cache = by_model[item.model]
         record = cache.get(item.key)
         if record is not None and record["prompt_sha"] != item.prompt_sha:
             raise ValueError(f"cached prompt differs for {item}: template changed?")
-        if record is not None and "settings_sha" in record:
+        if record is not None:
             sig = (item.model, item.dataset)
             if sig not in signatures:
                 signatures[sig] = settings_signature(*sig)
-            if record["settings_sha"] != signatures[sig]:
+            if record.get("settings_sha") != signatures[sig]:
                 raise ValueError(f"cached response for {item.key} was generated with other settings "
-                                 f"(sampling, chat template or weights) than {item.model} has now")
+                                 f"than this run (including unsigned legacy records). Use a new run directory.")
         out.append(record)
     return out
 
@@ -152,7 +229,7 @@ def sampling(model: str, dataset: str, output: str) -> dict[str, Any]:
     return {"temperature": float(mcfg.get("temperature", gen["temperature"])),
             "top_p": float(mcfg.get("top_p", 1.0)), "top_k": int(mcfg.get("top_k", -1)),
             "max_tokens": int(mcfg.get("max_tokens", max_tokens(dataset, output))),
-            "logprobs": int(gen.get("logprobs") or 0)}
+            "logprobs": 0 if output.startswith("probability") or output == FOLLOWUP else int(gen.get("logprobs") or 0)}
 
 
 def template_kwargs(model: str) -> dict[str, Any]:
@@ -173,7 +250,7 @@ def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, An
         # enable_prefix_caching, ...) come from the model's `engine` entry, which the runner's
         # tune stage fills in; they change speed, not what is sampled.
         engine = {"gpu_memory_utilization": 0.9, "enable_prefix_caching": True, **(mcfg.get("engine") or {})}
-        _LOCAL[model] = LLM(model=mcfg["path"], revision=mcfg.get("revision"), dtype=mcfg.get("dtype", "auto"),
+        _LOCAL[model] = LLM(model=mcfg["path"], revision=model_revision(model), dtype=mcfg.get("dtype", "auto"),
                             max_model_len=mcfg.get("max_model_len"), seed=int(seed),
                             tensor_parallel_size=int(mcfg.get("tensor_parallel_size", 1)), **engine)
     llm = _LOCAL[model]
@@ -192,11 +269,12 @@ def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, An
     outputs = llm.generate(prompts, params, use_tqdm=False)
     elapsed = time.time() - started
     records = []
-    for item, out in zip(items, outputs):
+    for item, out in zip(items, outputs, strict=True):
         completion = out.outputs[0]
         first = completion.logprobs[0] if completion.logprobs else {}
         records.append({"text": completion.text, "ok": True, "error": None,
                         "stop_reason": completion.finish_reason,
+                        "prompt_token_ids": list(out.prompt_token_ids), "token_ids": list(completion.token_ids),
                         "usage": {"input_tokens": len(out.prompt_token_ids),
                                   "output_tokens": len(completion.token_ids)},
                         "first_token_logprobs": {lp.decoded_token: lp.logprob for lp in first.values()},
@@ -210,37 +288,41 @@ def generate_hf(model: str, items: list[Item], seed: int) -> list[dict[str, Any]
 
     mcfg = C.model_config(model)
     if model not in _LOCAL:
-        tok = AutoTokenizer.from_pretrained(mcfg["path"], revision=mcfg.get("revision"), padding_side="left")
-        lm = AutoModelForCausalLM.from_pretrained(mcfg["path"], revision=mcfg.get("revision"),
+        tok = AutoTokenizer.from_pretrained(mcfg["path"], revision=model_revision(model), padding_side="left")
+        lm = AutoModelForCausalLM.from_pretrained(mcfg["path"], revision=model_revision(model),
                                                   torch_dtype=getattr(torch, mcfg.get("dtype", "bfloat16")),
                                                   device_map=mcfg.get("device_map", "auto"))
         lm.eval()
         _LOCAL[model] = (lm, tok)
     lm, tok = _LOCAL[model]
     s = sampling(model, items[0].dataset, items[0].output)
-    s["max_tokens"] = max(sampling(model, i.dataset, i.output)["max_tokens"] for i in items)  # one limit per batch
+    if any(sampling(model, i.dataset, i.output) != s for i in items):
+        raise ValueError("HF batch contains different effective sampling settings")
     texts = [tok.apply_chat_template(i.chat(), add_generation_prompt=True, tokenize=False, **template_kwargs(model))
              for i in items]
-    enc = tok(texts, return_tensors="pt", padding=True, add_special_tokens=False).to(lm.device)
+    enc = tok(texts, return_tensors="pt", padding=True, add_special_tokens=False, return_token_type_ids=False).to(lm.device)
     # One seed per batch (batched sampling cannot take per-item seeds), so a resumed run with
     # different batches is not bit-reproducible; vllm seeds every item.
     batch_seed = item_seed(seed, items[0])
     torch.manual_seed(batch_seed)
     started = time.time()
     with torch.no_grad():
-        out = lm.generate(**enc, do_sample=True, temperature=s["temperature"], top_p=s["top_p"],
-                          top_k=s["top_k"] if s["top_k"] > 0 else None, max_new_tokens=s["max_tokens"],
+        controls = (dict(do_sample=True, temperature=s["temperature"], top_p=s["top_p"], top_k=max(0, s["top_k"]))
+                    if s["temperature"] > 0 else dict(do_sample=False))
+        out = lm.generate(**enc, **controls, max_new_tokens=s["max_tokens"],
                           pad_token_id=tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id)
     elapsed = time.time() - started
     eos = getattr(lm.generation_config, "eos_token_id", None)
-    stops = {tok.eos_token_id, tok.pad_token_id} | set([eos] if isinstance(eos, int) else (eos or []))
+    stops = set([eos] if isinstance(eos, int) else (eos or [tok.eos_token_id]))
     records = []
-    for row, mask in zip(out[:, enc["input_ids"].shape[1]:], enc["attention_mask"]):
+    for row, mask, prompt in zip(out[:, enc["input_ids"].shape[1]:], enc["attention_mask"], enc["input_ids"], strict=True):
         ids = row.tolist()
         n_out = next((k for k, t in enumerate(ids) if t in stops), len(ids))
+        emitted = ids[:min(n_out + 1, len(ids))]
         records.append({"text": tok.decode(ids[:n_out], skip_special_tokens=True), "ok": True, "error": None,
+                        "prompt_token_ids": prompt[mask.bool()].tolist(), "token_ids": emitted,
                         "stop_reason": "length" if n_out >= s["max_tokens"] else "end",
-                        "usage": {"input_tokens": int(mask.sum()), "output_tokens": n_out},
+                        "usage": {"input_tokens": int(mask.sum()), "output_tokens": len(emitted)},
                         "seed": batch_seed, "batch_seconds": elapsed})
     return records
 
@@ -257,13 +339,15 @@ BACKENDS = {"vllm": generate_vllm, "hf": generate_hf, "synthetic": generate_synt
 # ---------------------------------------------------------------- driver
 def pending(items: list[Item]) -> list[Item]:
     records = lookup(items)
-    return [item for item, record in zip(items, records) if record is None]
+    return [item for item, record in zip(items, records) if record is None or not record.get("ok")]
 
 
-def run(items: list[Item], *, label: str = "") -> None:
+def run(items: list[Item], *, label: str = "") -> dict:
     """Generate every uncached item (all items must be for one model and one dataset)."""
+    summary = {"scheduled": len(items), "successful": len(items), "failed": 0, "failed_call_fraction": 0.0,
+               "policy": "failed calls remain pending and are retried on resume"}
     if not items:
-        return
+        return summary
     pairs = {(i.model, i.dataset) for i in items}
     if len(pairs) != 1:
         raise ValueError("run() takes items for one model and one dataset")
@@ -272,12 +356,12 @@ def run(items: list[Item], *, label: str = "") -> None:
     print(f"[{label or model}] {len(items)} items, {len(items) - len(todo)} cached, {len(todo)} to call",
           flush=True)
     if not todo:
-        return
+        return summary
     backend = C.model_config(model)["backend"]
     generate = BACKENDS[backend]
     batch = int(C.model_config(model).get("batch_size", 32))
     seed = int(C.load()["seed"])
-    cache = Cache(model)
+    cache = cache_index(model, C.CACHE)
     signature = settings_signature(model, dataset)
     started = time.time()
     tokens_out = errors = 0
@@ -287,9 +371,16 @@ def run(items: list[Item], *, label: str = "") -> None:
     bar = tqdm(total=len(todo), desc=label or model, unit="call", smoothing=0.1, dynamic_ncols=True,
                mininterval=float(os.environ.get("SO_PROGRESS_INTERVAL", 1 if sys.stderr.isatty() else 30)),
                file=sys.stderr)
-    for start in range(0, len(todo), batch):
-        chunk = todo[start:start + batch]
+    if backend == "hf":
+        def group_key(item):
+            return tuple(sampling(model, dataset, item.output).items())
+        groups = [list(g) for _, g in groupby(sorted(todo, key=group_key), key=group_key)]
+    else:
+        groups = [todo]
+    for chunk in (group[start:start + batch] for group in groups for start in range(0, len(group), batch)):
         results = generate(model, chunk, seed)
+        if len(results) != len(chunk):
+            raise ValueError(f"backend returned {len(results)} records for {len(chunk)} requests")
         cache.append({"key": i.key, "model": i.model, "dataset": i.dataset, "case_id": i.case_id,
                       "condition": i.condition, "output": i.output, "replicate": i.replicate,
                       "sample": i.sample, "prompt_sha": i.prompt_sha, "settings_sha": signature,
@@ -301,8 +392,10 @@ def run(items: list[Item], *, label: str = "") -> None:
                             f"now {chunk[-1].dataset}/{chunk[-1].output}", refresh=False)
         bar.update(len(chunk))
     bar.close()
+    summary.update(successful=len(items) - errors, failed=errors, failed_call_fraction=errors / len(items))
     print(f"[{label or model}] {len(todo)} calls in {(time.time() - started) / 60:.1f} min; "
-          f"{tokens_out:,} output tokens; {errors} errors", flush=True)
+          f"{tokens_out:,} output tokens; {errors}/{len(todo)} failed ({errors / len(todo):.1%}); failed calls are pending on resume", flush=True)
+    return summary
 
 
 def experiment_items(model: str, dataset: str, case_ids: list[str], conditions: list[str] | None = None,
@@ -325,6 +418,14 @@ def experiment_items(model: str, dataset: str, case_ids: list[str], conditions: 
     return items
 
 
+def followup_item(parent: Item, answer: str) -> Item:
+    from second_order import datasets as DS
+    question = DS.row(parent.dataset, parent.case_id, parent.condition, parent.output)["comprehension_q"]
+    chat = (("user", parent.prompt), ("assistant", answer or ""), ("user", question))
+    return Item(parent.model, parent.case_id, parent.condition, FOLLOWUP, parent.replicate, question,
+                parent.sample, parent.dataset, chat)
+
+
 def comprehension_items(model: str, dataset: str, case_ids: list[str]) -> tuple[list[Item], int]:
     """Bespoke follow-ups for every cached C answer; also the number still missing a parent."""
     from second_order import datasets as DS
@@ -337,12 +438,9 @@ def comprehension_items(model: str, dataset: str, case_ids: list[str]) -> tuple[
     items, missing = [], 0
     for parent, record in zip(parents, lookup(parents)):
         if record is None or not record.get("ok"):
-            missing += record is None
+            missing += 1
             continue
-        question = DS.row(dataset, parent.case_id, parent.condition, parent.output)["comprehension_q"]
-        messages = (("user", parent.prompt), ("assistant", record["text"] or ""), ("user", question))
-        items.append(Item(model, parent.case_id, parent.condition, FOLLOWUP, parent.replicate, question,
-                          parent.sample, dataset, messages))
+        items.append(followup_item(parent, record["text"]))
     return items, missing
 
 
@@ -374,6 +472,12 @@ def dataset_cases(dataset: str, cases: str | None = None) -> list[str]:
     return DS.case_ids(dataset)
 
 
+def write_completion(model, dataset, stage, counts):
+    folder = C.RESULTS / "generation" / model
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{dataset}_{stage}.json").write_text(json.dumps(counts, indent=2))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", required=True)
@@ -385,13 +489,17 @@ def main() -> None:
         case_ids = dataset_cases(dataset, args.cases)
         label = f"{args.model}/{dataset}"
         if args.stage in ("main", "all"):
-            run(experiment_items(args.model, dataset, case_ids), label=label)
+            counts = run(experiment_items(args.model, dataset, case_ids), label=label)
+            write_completion(args.model, dataset, "main", counts)
         if args.stage in ("comprehension", "all") and dataset == "bespoke":
             items, missing = comprehension_items(args.model, dataset, case_ids)
             if missing:
                 print(f"[{label}/comprehension] {missing} C answers not generated yet; their follow-ups wait",
                       flush=True)
-            run(items, label=f"{label}/comprehension")
+            counts = run(items, label=f"{label}/comprehension")
+            counts.update(scheduled=len(items) + missing, missing_parent=missing)
+            counts["failed_fraction_of_schedule"] = counts["failed"] / counts["scheduled"] if counts["scheduled"] else 0
+            write_completion(args.model, dataset, "comprehension", counts)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ Writes ``outputs/curse/``:
 
 * ``estimates.csv``: ``leakage.leakage_table`` per model, dataset (``ckd``: latent and
   direct beliefs; ``bespoke``: direct) and case set.  Reference ``two_record`` (CKD: C
-  against M2 and D2, the headline) and ``single_record`` (C against M and D, as in the
+  against M and D, the headline) and ``single_record`` (C against M_single and D_single, as in the
   Methods).  Case sets: ``all``; ``comprehension_pass`` (CKD: patients whose C checks were
   correct in both option orders; bespoke: C samples whose follow-up was correct); and,
   for CKD, ``order_person_first`` and ``order_own_first`` (the record order the patient
@@ -16,8 +16,8 @@ Writes ``outputs/curse/``:
   direction.
 * ``checks.csv``: CKD comprehension checks by setting, relation and record order, and
   the share of patients right in both option orders.
-* ``role_swap.csv``: per patient and setting, the signed gaps C - M2 (original) and
-  C_swap - D2 (ownership headers swapped), their references, and the paired role probes.
+* ``role_swap.csv``: per patient and setting, the signed gaps C - M (original) and
+  C_swap - D (ownership headers swapped), their references, and the paired role probes.
 * ``placebo.csv``, ``report_control.csv``, ``bayes.csv``, ``bespoke_points.csv``: bespoke
   placebo gaps; C_ctrl_F - D_F (the friend read PERSON the true record); answers against
   the Bayes answer of the believer's evidence; per-item points for the figures.
@@ -48,10 +48,10 @@ from second_order.responses import accuracy_summary, responses_path
 
 OUT = C.RESULTS / "curse"
 METHODS = ("latent", "direct")
-HEADLINE = ["lambda", "lambda_fieller", "tau", "rho", "beta_C", "beta_D", "phi_setting",
+HEADLINE = ["lambda", "lambda_fieller", "tau", "rho", "beta_C", "beta_D", "phi",
             "manipulation_median_abs_gap"]
 SHARED = ["phi", "rho_pooled", "beta_D_pooled", "diff_lambda", "diff_tau", "diff_rho", "diff_phi_setting"]
-AFFINE = ["phi_D_on_A", "intercept_D_on_A", "phi_M_on_B", "intercept_M_on_B", "curvature_D", "curvature_C",
+AFFINE = ["intercept_C", "intercept_D", "phi_setting", "phi_D_on_A", "intercept_D_on_A", "phi_M_on_B", "intercept_M_on_B", "curvature_D", "curvature_C",
           "lambda_x_positive", "lambda_x_negative", "lambda_third_low", "lambda_third_mid", "lambda_third_high",
           "mean_position", "anchor_mean_M_minus_B"]
 GROUP = ["model", "dataset", "method", "reference", "setting"]
@@ -64,7 +64,7 @@ def models_default() -> list[str]:
 
 
 def read_csv(path) -> pd.DataFrame:
-    return pd.read_csv(path) if path.exists() else pd.DataFrame()
+    return pd.read_csv(path) if path.exists() and path.stat().st_size > 1 else pd.DataFrame()
 
 
 # ---------------------------------------------------------------- case sets
@@ -78,14 +78,14 @@ def comprehension_pass(model: str, dataset: str, b: pd.DataFrame) -> pd.DataFram
         checks = read_csv(C.RESULTS / "checks" / f"{model}.csv")
         if checks.empty:
             return None
-        checks = checks[checks.output.str.startswith("check/")].dropna(subset=["correct"])
-        both = checks.groupby(["case_id", "condition"]).correct.agg(["min", "size"])
-        passed = set(both[(both["min"] == 1) & (both["size"] == 2)].index)
-        checked = set(checks.condition)
+        checks = checks[checks.output.str.startswith("check/")]
+        orders = checks.pivot(index=["case_id", "condition"], columns="output", values="correct")
+        passed = set(orders.reindex(columns=["check/normal", "check/flip"]).eq(1).all(axis=1).loc[lambda x: x].index)
+        checked = {"C", "C_F"}
         keep = ~b.condition.isin(checked) | pd.Series(list(zip(b.case_id, b.condition)), index=b.index).isin(passed)
         return b[keep]
     comp = read_csv(C.RESULTS / "comprehension" / f"{model}.csv")
-    if comp.empty or comp.correct.notna().sum() == 0:
+    if comp.empty:
         return None
     good, checked, rows = comp[comp.correct == 1], comp.condition.unique(), []
     for condition in checked:
@@ -116,6 +116,8 @@ def case_sets(model: str, dataset: str, b: pd.DataFrame) -> dict[str, pd.DataFra
 # ---------------------------------------------------------------- estimates
 def beliefs_for(model: str, dataset: str, method: str) -> pd.DataFrame:
     b = BL.read(model, method, dataset)
+    if dataset == "ckd" and "M2" in set(b.condition):
+        raise ValueError("These CKD beliefs use the archived protocol. Generate the amended prompts in a new run.")
     return b[~b.case_id.isin(DS.placebo_ids())] if dataset == "bespoke" else b
 
 
@@ -125,18 +127,13 @@ def estimates(model: str, resamples: int, seed: int) -> tuple[pd.DataFrame, pd.D
         for method in [m for m in METHODS if m in BL.methods_for(model, dataset)]:
             b = beliefs_for(model, dataset, method)
             for name, part in case_sets(model, dataset, b).items():
-                t = L.leakage_table(part, dataset, resamples=resamples, seed=seed)
-                if not t.empty:
-                    tables.append(t.assign(model=model, dataset=dataset, method=method, case_set=name))
-            W = b[b.replicate == 0].pivot_table(index="case_id", columns="condition", values="value", aggfunc="first")
-            for setting in SETTINGS:
-                for reference in references(dataset):
-                    k = L.roles(dataset, setting, reference)
-                    if all(k[r] in W for r in "ABCMD"):
-                        scatter.append(pd.DataFrame({
-                            "model": model, "dataset": dataset, "method": method, "setting": setting,
-                            "reference": reference, "case_id": W.index, "x_A_minus_B": W[k["A"]] - W[k["B"]],
-                            "y_C_minus_M": W[k["C"]] - W[k["M"]], "y_D_minus_M": W[k["D"]] - W[k["M"]]}).dropna())
+                t, pts = L.estimate_with_points(part, dataset, resamples=resamples, seed=seed)
+                tables.append(t.assign(model=model, dataset=dataset, method=method, case_set=name))
+                if name == "all":
+                    scatter.append(pts.assign(model=model, dataset=dataset, method=method, cohort="headline"))
+            if dataset == "ckd":
+                _, pts = L.estimate_with_points(b, dataset, resamples=resamples, seed=seed, match_references=True, points_only=True)
+                scatter.append(pts.assign(model=model, dataset=dataset, method=method, cohort="paired_layouts"))
     return concat(tables), concat(scatter)
 
 
@@ -151,16 +148,19 @@ def direction_contrast(model: str, resamples: int, seed: int) -> pd.DataFrame:
             k = L.roles("ckd", "false", reference)
             cols = [k[r] for r in "ABCMD"]
             if any(c not in W for c in cols):
-                continue
+                W = W.reindex(columns=W.columns.union(cols))
             part = W.loc[W.index.isin(eligible.index), cols].dropna()
-            strata = eligible.loc[part.index, ["label", "false_direction"]].astype(str).agg("|".join, axis=1)
+            strata = eligible.loc[part.index, ["label", "false_direction"]].astype(str)
+            strata = strata.label + "|" + strata.false_direction
             direction = eligible.loc[part.index, "false_direction"].to_numpy()
 
             def stat(arrays: dict, direction: np.ndarray) -> dict[str, float]:
                 out = {}
                 for name in ("sicker", "healthier"):
                     sel = {c: v[direction == name] for c, v in arrays.items()}
-                    out[f"lambda_{name}"] = L.setting_statistics(sel, k)["lambda"] if len(sel[k["A"]]) > 2 else np.nan
+                    stats = L.setting_statistics(sel, k) if len(sel[k["A"]]) > 2 else {}
+                    for key in ("lambda", "beta_D"):
+                        out[f"{key}_{name}"] = stats.get(key, np.nan)
                 out["diff_lambda_sicker_minus_healthier"] = out["lambda_sicker"] - out["lambda_healthier"]
                 return out
 
@@ -170,13 +170,29 @@ def direction_contrast(model: str, resamples: int, seed: int) -> pd.DataFrame:
             groups = [np.flatnonzero(strata.to_numpy() == s) for s in sorted(strata.unique())]
             draws = []
             for _ in range(int(resamples)):
-                idx = np.concatenate([rng.choice(g, size=len(g)) for g in groups])
+                idx = np.concatenate([rng.choice(g, size=len(g)) for g in groups]) if groups else np.array([], dtype=int)
                 draws.append(stat({c: v[idx] for c, v in arrays.items()}, direction[idx]))
             for key, value in point.items():
                 d = np.array([x[key] for x in draws], dtype=float)
                 d = d[np.isfinite(d)]
                 lo, hi = np.percentile(d, [2.5, 97.5]) if len(d) else (np.nan, np.nan)
+                reasons = []
+                for group in ("sicker", "healthier"):
+                    if key.startswith("beta_D") or group not in key:
+                        continue
+                    n = (direction == group).sum()
+                    dens = np.array([x[f"beta_D_{group}"] for x in draws])
+                    dens = dens[np.isfinite(dens)]
+                    if n == 0:
+                        reasons.append(f"empty subgroup ({group})")
+                    elif n < 3 or not len(dens):
+                        reasons.append(f"insufficient cases or variation ({group})")
+                    elif np.percentile(dens, 2.5) <= 0 <= np.percentile(dens, 97.5):
+                        reasons.append(f"beta_D_{group} interval includes 0")
+                if reasons:
+                    value = lo = hi = np.nan
                 rows.append({"model": model, "method": method, "reference": reference, "statistic": key,
+                             "blank_reason": ", ".join(reasons), "n_healthier": int((direction == "healthier").sum()),
                              "estimate": value, "ci_lower": lo, "ci_upper": hi, "n_cases": len(part),
                              "n_sicker": int((direction == "sicker").sum()), "resamples": int(resamples)})
     return pd.DataFrame(rows)
@@ -191,30 +207,35 @@ def check_tables(model: str) -> tuple[pd.DataFrame, pd.DataFrame]:
     scored["question"] = scored.output.str.split("/").str[0]
     checks = scored[scored.question == "check"]
     acc = accuracy_summary(checks, ["model", "setting", "check_relation", "block_order"])
-    both = checks.dropna(subset=["correct"]).groupby(["model", "setting", "case_id"]).correct.agg(["min", "size"])
-    both = both[both["size"] == 2].groupby(level=[0, 1])["min"].mean().rename("both_orders_right").reset_index()
-    acc = acc.merge(both, on=["model", "setting"], how="left") if not acc.empty else acc
-
-    probes = scored[scored.question == "role_check"].dropna(subset=["correct"])
+    keys = ["model", "setting", "check_relation", "block_order"]
+    if not checks.empty:
+        pairs = checks.pivot(index=keys + ["case_id"], columns="order", values="correct").reindex(columns=["normal", "flip"])
+        paired = pairs.notna().all(axis=1)
+        right = pairs.eq(1).all(axis=1)
+        summary = pd.DataFrame({"patients": 1, "had_both": paired, "both_correct": right}).groupby(level=keys).sum()
+        summary["both_orders_right"] = summary.both_correct / summary.had_both.replace(0, np.nan)
+        acc = acc.merge(summary.reset_index(), on=keys)
+    probes = scored[scored.question == "role_check"]
     probes = probes.assign(swapped=probes.condition.str.startswith("probe_swap"))
-    pairs = probes.pivot_table(index=["model", "setting", "case_id", "output"], columns="swapped", values="correct")
+    pairs = probes.pivot(index=["model", "setting", "case_id", "output"], columns="swapped", values="correct")
     rows = []
     if {True, False} <= set(pairs.columns):
         for (m, setting), g in pairs.groupby(level=[0, 1]):
-            rows.append({"model": m, "setting": setting, "kind": "probe_pairs", "n": len(g),
+            answered = g.dropna(subset=[True, False])
+            rows.append({"model": m, "setting": setting, "kind": "probe_pairs", "n": len(g), "had_both": len(answered),
                          "accuracy_original": g[False].mean(), "accuracy_swapped": g[True].mean(),
-                         "both_right": (g[False].eq(1) & g[True].eq(1)).mean()})
+                         "both_right": (answered[False].eq(1) & answered[True].eq(1)).mean()})
     if "direct" in BL.methods_for(model, "ckd"):
         b = BL.read(model, "direct", "ckd")
         W = b[b.replicate == 0].pivot_table(index="case_id", columns="condition", values="value", aggfunc="first")
         for setting in SETTINGS:
             f = "_F" if setting == "false" else ""
-            need = [f"C{f}", f"M2{f}", "D2", f"C_swap{f}"]
+            need = [f"C{f}", f"M{f}", f"D{f}", f"C_swap{f}"]
             if any(c not in W for c in need):
                 continue
             w = W[need].dropna()
-            gaps = {"C_minus_M2": w[f"C{f}"] - w[f"M2{f}"], "C_swap_minus_D2": w[f"C_swap{f}"] - w["D2"],
-                    "D2_minus_M2": w["D2"] - w[f"M2{f}"], "C_swap_minus_C": w[f"C_swap{f}"] - w[f"C{f}"]}
+            gaps = {"C_minus_M": w[f"C{f}"] - w[f"M{f}"], "C_swap_minus_D": w[f"C_swap{f}"] - w[f"D{f}"],
+                    "D_minus_M": w[f"D{f}"] - w[f"M{f}"], "C_swap_minus_C": w[f"C_swap{f}"] - w[f"C{f}"]}
             for name, gap in gaps.items():
                 rows.append({"model": model, "setting": setting, "kind": f"gap_{name}", "n": len(gap),
                              "mean": gap.mean(), "se": gap.std(ddof=1) / np.sqrt(len(gap)),
@@ -228,7 +249,9 @@ def threshold_table(model: str) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     p = pd.read_parquet(path)
-    p = p[p.parameter.isin(["nominal_threshold", "implied_threshold"])]
+    if p.empty:
+        return pd.DataFrame()
+    p = p[p.parameter.isin(["nominal_threshold", "implied_threshold", "printed_threshold", "payoff_threshold"])]
     w = p.pivot_table(index=["fit_group", "output_name"], columns="parameter", values="value",
                       aggfunc="first").reset_index()
     w["family"] = w.fit_group.map(lambda g: CONDITIONS[g.split("+")[0]].about)
@@ -245,28 +268,33 @@ def decision_curves(model: str, *, bandwidth: float = 0.10, points: int = 40, re
     if not lat_path.exists() or not mat_path.exists():
         return pd.DataFrame()
     lat = pd.read_parquet(lat_path)
-    lat = lat[lat.replicate == 0][["case_id", "condition", "z_mean"]]
+    lat = lat[(lat.replicate == 0) & (lat.split == "test")][["case_id", "condition", "z_without_decision"]].rename(columns={"z_without_decision": "z_mean"})
     mat = pd.read_parquet(mat_path)
+    scheduled = sorted(mat.loc[mat.replicate == 0, "condition"].unique())
     mat = mat[mat.usable & (mat.replicate == 0)]
     mat = mat.assign(decide=mat[["decision/normal", "decision/flip"]].mean(axis=1))[["case_id", "condition", "decide"]]
     both = lat.merge(mat, on=["case_id", "condition"])
-    if both.empty:
-        return pd.DataFrame()
-    grid = np.linspace(*np.quantile(both.z_mean, [0.05, 0.95]), points)
+    observed = both.dropna(subset=["z_mean", "decide"])
+    grid = np.linspace(*np.quantile(observed.z_mean, [0.05, 0.95]), points) if len(observed) else np.array([])
     rng = np.random.default_rng(seed)
 
     def smooth(z: np.ndarray, y: np.ndarray) -> np.ndarray:
-        k = np.exp(-0.5 * ((grid[:, None] - z[None, :]) / bandwidth) ** 2)
+        log_k = -0.5 * ((grid[:, None] - z[None, :]) / bandwidth) ** 2
+        k = np.exp(log_k - log_k.max(axis=1, keepdims=True))
         return (k @ y) / k.sum(axis=1)
 
     rows = []
-    for condition, g in both.groupby("condition"):
+    for condition in scheduled:
+        g = both[both.condition == condition].dropna(subset=["z_mean", "decide"])
+        if len(g) < 3:
+            rows.append(pd.DataFrame([dict(model=model, condition=condition, n_cases=len(g), status="insufficient cases", z=np.nan, p_decide=np.nan, ci_lower=np.nan, ci_upper=np.nan)]))
+            continue
         z, y = g.z_mean.to_numpy(float), g.decide.to_numpy(float)
         draws = np.array([smooth(z[i], y[i]) for i in (rng.integers(0, len(z), len(z)) for _ in range(resamples))])
         lo, hi = np.nanpercentile(draws, [2.5, 97.5], axis=0)
         rows.append(pd.DataFrame({"model": model, "condition": condition, "z": grid, "p_decide": smooth(z, y),
-                                  "ci_lower": lo, "ci_upper": hi, "n_cases": len(z)}))
-    return pd.concat(rows, ignore_index=True)
+                                  "ci_lower": lo, "ci_upper": hi, "n_cases": len(z), "status": "ok"}))
+    return concat(rows)
 
 
 # ---------------------------------------------------------------- bespoke
@@ -282,7 +310,7 @@ def bespoke_points(model: str) -> pd.DataFrame:
     b["placebo"] = [bool(m["placebo"]) for m in meta]
     b["role"] = b.condition.map(lambda c: CONDITIONS[c].role)
     b["setting"] = b.condition.map(lambda c: CONDITIONS[c].setting or "both")
-    return b[["model", "case_id", "family", "placebo", "condition", "role", "setting", "value", "sd", "n_samples",
+    return b[["model", "case_id", "family", "placebo", "condition", "role", "setting", "value", "sd", "n_samples", "mean_probability", "logit_of_mean_probability",
               "bayes_logit"]]
 
 
@@ -377,7 +405,9 @@ def anomalies(est, placebo, control, comp, checks, retention) -> list[str]:
         sig = np.isfinite(r.estimate) and (r.ci_lower > 0 or r.ci_upper < 0)
         if r.statistic == "lambda_fieller" and r.interval != "bounded":
             out.append(f"Weak denominator: {label}: the lambda confidence set is {fmt(r)}.")
-        if r.statistic in ("rho", "rho_pooled") and np.isfinite(r.estimate) and r.ci_lower <= 0:
+        if r.statistic in ("rho", "rho_pooled") and np.isfinite(r.estimate) and r.estimate < 0:
+            out.append(f"Negative reliability for {label} ({r.statistic} = {r.estimate:.3f}).")
+        elif r.statistic in ("rho", "rho_pooled") and r.ci_lower <= 0 <= r.ci_upper:
             out.append(f"{r.statistic} interval includes 0: {label}: {fmt(r)}; the ratios over it are blank.")
         if r.statistic in ("curvature_D", "curvature_C") and sig:
             out.append(f"Affine check: {r.statistic} interval excludes 0: {label}: {fmt(r)}.")
@@ -407,7 +437,7 @@ def write_results_md(models, tables: dict[str, pd.DataFrame]) -> None:
     parts = [f"# Curse of knowledge: results\n\nGenerated {dt.date.today().isoformat()} by "
              "`python -m second_order.curse`; figures by `python -m second_order.figures`.  Numbers only; no "
              "interpretation.  Estimates with 95% paired bootstrap percentile intervals over patients (CKD) or "
-             "items (bespoke); a blank ratio means its denominator's interval includes 0.  Bespoke placebo items "
+             "items (bespoke); unavailable ratios carry a reason in estimates.csv.  Bespoke placebo items "
              "are excluded from the estimates.\n\n"
              f"Models: {', '.join(display(m) for m in models)}.  Reference: Camerer, Loewenstein and Weber (1989) "
              f"find w ≈ {w} for people (a weight on dollar values, not on log-odds).\n\n"]
@@ -418,9 +448,9 @@ def write_results_md(models, tables: dict[str, pd.DataFrame]) -> None:
         per, both = main[main.setting.isin(SETTINGS)], main[main.setting == "both"]
         parts.append("## Leakage and theory of mind, per setting\n\nlambda = beta_C / beta_D, the slopes of "
                      "l_C - l_M and l_D - l_M on x = l_A - l_B (0: no leakage, 1: PERSON is given the model's own "
-                     "belief).  Reference `two_record` (CKD) uses C's matched layout, M2 and D2; `single_record` "
-                     "uses M and D, as in the Methods.  lambda_fieller is the 95% Fieller confidence set.  rho = "
-                     "Cov(x, x') / Var(x) from the second run; tau = (beta_D - beta_C) / rho; both use calibrated "
+                     "belief).  Reference `two_record` (CKD) uses C's matched layout, M and D. The `single_record` comparison "
+                     "uses M_single and D_single.  lambda_fieller is the 95% Fieller confidence set.  rho = "
+                     "Cov(x, x') / Var(x) from the second run. Each tau uses pooled phi × (1 − lambda). Reliability uses calibrated "
                      "values (latent posterior means de-shrunk per fit).  phi_setting = beta_D / rho in that "
                      "setting alone.\n\n" + headline_md(per, HEADLINE) + "\n")
         parts.append("## Responsiveness phi, shared by the settings\n\nphi = pooled beta_D / pooled rho "
@@ -439,14 +469,17 @@ def write_results_md(models, tables: dict[str, pd.DataFrame]) -> None:
                      "the level ratio mean_position.\n\n"
                      + headline_md(per, [s for s in AFFINE if s in set(est.statistic)]) + "\n")
     sections = [
+        ("layouts", "Effect of the CKD chart layout",
+         "The difference is two-chart minus one-chart leakage. Both estimates use the same patients.",
+         ["model", "method", "setting", "statistic", "estimate", "ci_lower", "ci_upper", "n_cases", "blank_reason"]),
         ("direction", "CKD false records: sicker against healthier edits",
          "The 64 patients eligible for the randomized comparison; bootstrap within label x direction.",
-         ["model", "method", "reference", "statistic", "estimate", "ci_lower", "ci_upper", "n_cases", "n_sicker"]),
+         ["model", "method", "reference", "statistic", "estimate", "ci_lower", "ci_upper", "n_cases", "n_sicker", "n_healthier", "blank_reason"]),
         ("checks", "CKD comprehension checks", "Accuracy by setting, relation and record order; both_orders_right "
-         "is the share of patients right in both option orders.", None),
+         "is the fraction correct on both among patients with both answers. The table also counts scheduled patients.", None),
         ("role_swap", "CKD role swaps", "Probe pairs: both_right is the share of pairs answered right in both "
          "ownership orientations (0 for a strategy that ignores ownership).  Gaps (direct beliefs, logits): "
-         "C - M2 is the original leakage gap, C_swap - D2 the swapped one, D2 - M2 their reference.", None),
+         "C - M is the original leakage gap, C_swap - D the swapped one, D - M their reference.", None),
         ("placebo", "Bespoke placebo items", "All three gaps should be near 0.",
          ["model", "case_id", "gap", "estimate", "ci_lower", "ci_upper", "n_samples"]),
         ("report_control", "Bespoke report-assignment control", "C_ctrl - D: the friend read PERSON the true "
@@ -483,7 +516,7 @@ def main() -> None:
     seed = int(C.load()["seed"])
     models = args.models or models_default()
     OUT.mkdir(parents=True, exist_ok=True)
-    names = ["estimates", "scatter", "direction", "checks", "role_swap", "placebo", "report_control", "bayes",
+    names = ["estimates", "scatter", "layouts", "direction", "checks", "role_swap", "placebo", "report_control", "bayes",
              "bespoke_points", "comprehension", "retention", "thresholds", "decision_curves"]
     collected: dict[str, list[pd.DataFrame]] = {n: [] for n in names}
     for model in models:
@@ -491,7 +524,9 @@ def main() -> None:
         est, scat = estimates(model, args.resamples, seed)
         points = bespoke_points(model)
         acc, swap = check_tables(model) if "ckd" in C.datasets_for(model) else (pd.DataFrame(), pd.DataFrame())
-        found = {"estimates": est, "scatter": scat, "checks": acc, "role_swap": swap, "bespoke_points": points,
+        paired = scat[scat.cohort == "paired_layouts"] if not scat.empty else scat
+        layouts = L.layout_difference(paired, resamples=args.resamples, seed=seed) if not paired.empty else paired
+        found = {"layouts": layouts, "estimates": est, "scatter": scat, "checks": acc, "role_swap": swap, "bespoke_points": points,
                  "direction": direction_contrast(model, args.resamples, seed) if "ckd" in C.datasets_for(model)
                  else pd.DataFrame(),
                  "placebo": placebo_table(model, points), "report_control": report_control_table(model, points),

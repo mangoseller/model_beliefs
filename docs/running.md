@@ -21,7 +21,7 @@ the Claude Code and Codex CLIs. It then runs `second_order/runner.py`, whose sta
 | `fetch_models` | Downloads each model and pins its snapshot hash in the run's config |
 | `checks` | Unit tests, the CKD dataset's own validator, GPU and disk |
 | `paper` | `latent_beliefs/reproduce.sh analysis`, compared with the paper's CKD numbers |
-| `tune` | Times a few vLLM engine settings on real calls and keeps the fastest. Stops the run if answers don't parse or are truncated |
+| `tune` | Keeps the fastest vLLM configuration that passes parse and truncation checks for every dataset and answer type |
 | `generate` | Every condition, run, sample and follow-up, with a progress bar. Each model's fits start in the background as soon as its generation ends |
 | `activations` | Residual-stream activations (every layer) for the probability answers |
 | `fits` | Waits for the background latent fits |
@@ -49,8 +49,8 @@ redirect a run (`second_order/config.py`). `--cases N` runs a seeded sample of N
 
 | Part | Calls |
 |---|---|
-| CKD main battery: 150 patients × 438 prompts | 65,700 |
-| CKD high-threshold supplement | 37,800 |
+| CKD main battery: 150 patients × 531 prompts | 79,650 |
+| CKD high-threshold supplement | 45,900 |
 | CKD role swaps | 1,500 |
 | Bespoke: 248 runs of the 190 prompts × 20 samples | 4,960 |
 | Bespoke: comprehension follow-ups | 1,120 |
@@ -62,10 +62,8 @@ is at temperature 1, with thinking off and no system prompt.
 ## The generation cache
 
 Responses are cached in `data/generation_cache/<model>.jsonl`. Each item is keyed by
-`sha256([model, dataset, case, condition, output, replicate(, sample)])`. Reruns skip
-cached items. A cached record is refused if its prompt, or its generation settings
-(sampling, chat template, weights), differ from the current ones. vLLM responses also
-keep the top log-probabilities of their first token.
+`sha256([model, dataset, case, condition, output, replicate(, sample)])`. Reruns reuse successful calls and retry failed calls. A cached record is refused if its prompt, or its generation settings
+(base seed, sampling, dtype, chat template or weight revision), differ from the current run. Local backends save prompt and emitted token IDs. The optional vLLM choice diagnostic keeps first-token log probabilities when enabled.
 
 | Backend | Use |
 |---|---|

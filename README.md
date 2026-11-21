@@ -5,6 +5,16 @@ This repository measures that *curse of knowledge* in Qwen3 8B and 14B, building
 Wilder, *Beliefs and Behavior in Language Models*
 ([arXiv:2609.07943](https://arxiv.org/abs/2609.07943)).
 
+## Run the core experiment
+
+Use `bash run_experiment.sh --core` for the main CKD battery, bespoke trials, estimation and figures.
+The full run remains `bash run_experiment.sh`. Override individual components with
+`--[no-]paper`, `--[no-]extra-batteries` and `--[no-]activations`. The launcher installs
+the coding agents by default in both modes. Pass `--no-install-agents` to skip installation.
+With dependencies already installed, `python -m second_order.runner --core` runs the core pipeline directly.
+Use a new run directory for this protocol revision. Interrupted runs of this revision reuse
+successful calls and retry failed calls.
+
 ## The experiment
 
 The model reads a patient's record. PERSON (a named person; the name varies by patient) has a
@@ -14,14 +24,14 @@ record of the same patient that is missing some fields.
 | --- | --- | --- |
 | Its own view, from the full record | A | 30% |
 | Its own view, from PERSON's record | B | 12% |
-| What PERSON thinks; both records shown, both PERSON's | M2 | 13% |
+| What PERSON thinks; both records shown, both PERSON's | M | 13% |
 | What PERSON thinks; it has the full record, PERSON the partial one | C | 25% |
-| What PERSON thinks; both records shown, both full | D2 | 28% |
+| What PERSON thinks; both records shown, both full | D | 28% |
 
 **Leakage** $\lambda$ is where C falls between its two references in log-odds $\ell$: $0$ means
 the model kept its private evidence out of PERSON's belief, $1$ means it all leaked in. Here
-$\lambda = (\ell_C - \ell_{M2})/(\ell_{D2} - \ell_{M2}) \approx 0.84$; people score about $0.51$
-(Camerer, Loewenstein and Weber, 1989). The single-record references M and D (only PERSON's record
+$\lambda = (\ell_C - \ell_M)/(\ell_D - \ell_M) \approx 0.84$; people score about $0.51$
+(Camerer, Loewenstein and Weber, 1989). The single-record references M_single and D_single (only PERSON's record
 shown) give the Methods' version of the same estimate.
 
 ![What λ, φ and τ measure](docs/curse_schematic.png)
@@ -50,7 +60,7 @@ questions, and 20 fictional puzzles with known Bayes answers. The design is in
 On a Linux machine with a GPU:
 
 ```bash
-git clone https://github.com/mangoseller/model_beliefs && cd model_beliefs
+git clone --branch claude/bold-archimedes-8vdm0o https://github.com/mangoseller/model_beliefs && cd model_beliefs
 bash run_experiment.sh --smoke                    # quick check on 20 cases
 nohup bash run_experiment.sh > run.out 2>&1 &     # the full run
 ```

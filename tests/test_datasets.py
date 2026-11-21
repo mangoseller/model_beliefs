@@ -36,7 +36,7 @@ class Integrity(unittest.TestCase):
 
     def test_row_counts(self):
         counts = CKD.groupby("battery").size().to_dict()
-        self.assertEqual(counts, {"main": 65700, "high_thresholds": 37800, "role_swap": 1500})
+        self.assertEqual(counts, {"main": 79650, "high_thresholds": 45900, "role_swap": 1500})
         self.assertEqual(len(BESPOKE), 190)
         self.assertEqual(len(DS.patients()), 150)
         self.assertEqual(len(DS.case_ids("bespoke")), 20)
@@ -77,25 +77,30 @@ class CkdDesign(unittest.TestCase):
             full = blocks(ckd_prompt(case_id, "A"))["own"]
             for setting in ("partial", "false"):
                 k = setting_conditions("ckd", setting)
+                for role in ("A", "B", "C", "M", "D"):
+                    self.assertEqual("Your chart gives the verified patient information." in ckd_prompt(case_id, k[role]),
+                                     setting == "false")
                 b = blocks(ckd_prompt(case_id, k["B"]))
                 person = b["own"]  # PERSON's evidence: E_p or E_f
                 self.assertEqual(set(b), {"own"})
                 self.assertNotEqual(person, full)
                 if setting == "partial":
                     self.assertLess(person, full)
-                self.assertEqual(blocks(ckd_prompt(case_id, k["M"])), {"person": person})
-                self.assertEqual(blocks(ckd_prompt(case_id, k["D"])), {"person": full})
-                self.assertEqual(blocks(ckd_prompt(case_id, k["M2"])), {"own": person, "person": person})
-                self.assertEqual(blocks(ckd_prompt(case_id, k["D2"])), {"own": full, "person": full})
+                self.assertEqual(blocks(ckd_prompt(case_id, k["M_single"])), {"person": person})
+                self.assertEqual(blocks(ckd_prompt(case_id, k["D_single"])), {"person": full})
+                self.assertEqual(blocks(ckd_prompt(case_id, k["M"])), {"own": person, "person": person})
+                self.assertEqual(blocks(ckd_prompt(case_id, k["D"])), {"own": full, "person": full})
                 self.assertEqual(blocks(ckd_prompt(case_id, k["C"])), {"own": full, "person": person})
                 swap = blocks(ckd_prompt(case_id, "C_swap" + ("_F" if setting == "false" else "")))
                 self.assertEqual(swap, {"own": person, "person": full})
 
-    def test_m_and_d_differ_only_in_the_record(self):
-        for case_id in self.cases:
-            m, d = ckd_prompt(case_id, "M"), ckd_prompt(case_id, "D")
-            strip = lambda p: re.sub(r"(?m)^.+ \(\w+\) is .+\.$\n?", "", p)  # noqa: E731
-            self.assertEqual(strip(m), strip(d))
+    def test_matched_layout_differs_only_in_evidence(self):
+        for suffix in ("", "_F"):
+            prompts = CKD[CKD.condition.isin([r + suffix for r in "CMD"]) & (CKD.question_id != "check")].copy()
+            prompts["layout"] = prompts.prompt.str.replace(r"(?m)^.+ \(\w+\) is .+\.$\n?", "", regex=True)
+            groups = prompts.groupby(["case_id", "output"])
+            self.assertTrue(groups.size().eq(3).all())
+            self.assertTrue(groups.layout.nunique().eq(1).all())
 
     def test_a_and_b_have_two_replicates_and_attributions_one(self):
         reps = CKD[CKD.battery == "main"].groupby("condition").replicate.max().to_dict()
@@ -166,11 +171,15 @@ class Parsing(unittest.TestCase):
 
     def test_probabilities_are_read_from_the_json_only(self):
         for text, value in (('reasoning\n{"probability": 0.42}', 0.42), ('```json\n{"probability": 0.0}\n```', 0.0),
-                            ('{"probability": 0.9} then {"probability": 0.3}', 0.3), ('"probability": "65%"', 0.65)):
+                            ('{"probability": 0.9} then {"probability": 0.3}', 0.3), ('"probability": "65%"', None)):
             self.assertEqual(DS.parse_probability(text)[0], value, text)
         for text in ("We need the probability that the marbles were drawn from Bag A, after Draw 2.\nFinal: 0.9",
                      "The probability for a 46-year-old is low.", '{"answer": 0.4}', "", None):
             self.assertIsNone(DS.parse_probability(text)[0], text)
+        for invalid in ('{"probability": 1.2}', '{"probability": true}', '{"probability": NaN}',
+                        '{"probability": 0.4} then {"probability":', '{"probability": 0.2, "x": 1}'):
+            self.assertEqual(DS.parse_probability(invalid), (None, "invalid"))
+        self.assertEqual(DS.fallback_probability('"probability": "65%"'), .65)
         case_id = DS.case_ids("ckd")[0]
         prompt = ckd_prompt(case_id, "C")
         self.assertEqual(DS.parse("ckd", "probability/normal", prompt, 'Age matters.\n{"probability": 0.12}')[0], 0.12)

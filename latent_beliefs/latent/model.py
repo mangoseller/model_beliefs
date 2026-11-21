@@ -107,6 +107,11 @@ def _restore_inverse_softplus(value: float) -> float:
     return math.log(math.expm1(value))
 
 
+class OutputParameters(nn.ParameterDict):
+    def _key_to_attr(self, key: str) -> str:
+        return super()._key_to_attr(key).replace("%", "%25").replace(".", "%2E")
+
+
 class ProbabilisticLatentModel(nn.Module):
     """Mixed-output latent-trait model with a fitted latent prior."""
 
@@ -175,13 +180,13 @@ class ProbabilisticLatentModel(nn.Module):
         )
 
         # Registration order fixes the parameter order seen by gradient clipping.
-        self.binary_intercepts = nn.ParameterDict()
-        self.binary_raw_slopes = nn.ParameterDict()
-        self.ordinal_raw_slopes = nn.ParameterDict()
-        self.ordinal_first_cutpoints = nn.ParameterDict()
-        self.ordinal_raw_gaps = nn.ParameterDict()
-        self.spline_first_values = nn.ParameterDict()
-        self.spline_raw_gaps = nn.ParameterDict()
+        self.binary_intercepts = OutputParameters()
+        self.binary_raw_slopes = OutputParameters()
+        self.ordinal_raw_slopes = OutputParameters()
+        self.ordinal_first_cutpoints = OutputParameters()
+        self.ordinal_raw_gaps = OutputParameters()
+        self.spline_first_values = OutputParameters()
+        self.spline_raw_gaps = OutputParameters()
 
         slope_start = inverse_softplus(1.0 - self.min_slope)
         gap_start = inverse_softplus(1.0 - self.min_gap)
@@ -266,13 +271,16 @@ class ProbabilisticLatentModel(nn.Module):
     def binary_slope(self, name: str) -> torch.Tensor:
         return self.min_slope + F.softplus(self.binary_raw_slopes[name])
 
+    def binary_intercept(self, spec: OutputSpec) -> torch.Tensor:
+        return self.binary_intercepts[spec.name]
+
     def binary_logits(self, spec: OutputSpec) -> torch.Tensor:
         """logit P(y=1 | z_q) on the quadrature grid."""
 
         if self.response_curve == "monotone_spline":
             return self.monotone_spline(spec.name)
         slope = self.binary_slope(spec.name)
-        return self.binary_intercepts[spec.name] + slope * self.logit_z_grid
+        return self.binary_intercept(spec) + slope * self.logit_z_grid
 
     def binary_implied_threshold(self, spec: OutputSpec) -> torch.Tensor:
         """Return z where the fitted Bernoulli probability equals one half."""
@@ -290,7 +298,7 @@ class ProbabilisticLatentModel(nn.Module):
                 self.spline_knot_logits[upper] - self.spline_knot_logits[lower]
             )
             return torch.sigmoid(logit_crossing)
-        return torch.sigmoid(-self.binary_intercepts[spec.name] / self.binary_slope(spec.name))
+        return torch.sigmoid(-self.binary_intercept(spec) / self.binary_slope(spec.name))
 
     def ordinal_slope(self, name: str) -> torch.Tensor:
         return self.min_slope + F.softplus(self.ordinal_raw_slopes[name])
@@ -476,7 +484,7 @@ class ProbabilisticLatentModel(nn.Module):
                         {
                             **base,
                             "parameter": "intercept",
-                            "value": float(self.binary_intercepts[spec.name]),
+                            "value": float(self.binary_intercept(spec)),
                         }
                     )
             elif spec.kind == "ordinal":

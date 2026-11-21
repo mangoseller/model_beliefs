@@ -2,7 +2,7 @@
 
 A pooled fit shares item parameters and one latent prior across the conditions whose
 instructions are identical (``conditions.fit_family``): the model's own belief (A and
-every B, both replicates) and PERSON's belief (every M, D, M2, D2 and C).  The leakage
+every B, both replicates) and PERSON's belief (M, D, their one-chart controls and C).  The leakage
 estimator relies on C and its references sharing that one prior.
 
 The outputs are the CKD questions of ``latent.batteries`` (``responses.latent_specs``):
@@ -42,11 +42,11 @@ PROBABILITY_EPSILON = 1e-4
 class AnchoredLatentModel(ProbabilisticLatentModel):
     """The paper's model with each stated-cutoff decision crossing 1/2 at its cutoff."""
 
-    def binary_logits(self, spec):
+    def binary_intercept(self, spec):
         if spec.nominal_threshold is None:
-            return super().binary_logits(spec)
-        c = torch.as_tensor(float(spec.nominal_threshold), dtype=self.dtype)
-        return self.binary_slope(spec.name) * (self.logit_z_grid - torch.log(c / (1 - c)))
+            return super().binary_intercept(spec)
+        c = self.z_grid.new_tensor(spec.nominal_threshold)
+        return -self.binary_slope(spec.name) * torch.logit(c)
 
 
 def new_model() -> ProbabilisticLatentModel:
@@ -88,20 +88,40 @@ def fit_group(wide: pd.DataFrame, conditions: Sequence[str], seed: int,
     return model, info
 
 
-def posteriors(model: ProbabilisticLatentModel, frame: pd.DataFrame) -> pd.DataFrame:
-    """Posterior mean and sd of logit z, and the posterior mean of z, from every output."""
-    obs = torch.as_tensor(likelihood_values(frame, model.specs), dtype=model.dtype)
-    with torch.no_grad():
-        w = torch.exp(model.posterior_log_weights(obs))
-        grid = model.logit_z_grid
-        mean = w @ grid
-        var = (w * (grid[None, :] - mean[:, None]).square()).sum(dim=1)
-        return pd.DataFrame({"ell": mean.numpy(), "sd": var.clamp_min(0).sqrt().numpy(),
-                             "z_mean": (w @ model.z_grid).numpy()}, index=frame.index)
+@torch.no_grad()
+def posteriors(model: ProbabilisticLatentModel, frame: pd.DataFrame, batch_size: int = 256, *,
+               predict_decision: bool = True) -> pd.DataFrame:
+    """Compute posterior summaries and leave both screening decisions out of the predictive check."""
+    parts = []
+    predictors = [i for i, spec in enumerate(model.specs) if not spec.name.startswith("decision/")]
+    for start in range(0, len(frame), batch_size):
+        batch = frame.iloc[start:start + batch_size]
+        obs = torch.as_tensor(likelihood_values(batch, model.specs), dtype=model.dtype)
+        logp = model.log_likelihood_by_output(obs)
+        prior = model.prior_log_weights()
+        w = (logp.sum(1) + prior).softmax(1)
+        mean = w @ model.logit_z_grid
+        var = (w * (model.logit_z_grid - mean[:, None]).square()).sum(1)
+        values = {"ell": mean.numpy(), "sd": var.sqrt().numpy(), "z_mean": (w @ model.z_grid).numpy()}
+        if predict_decision:
+            withheld = (logp[:, predictors].sum(1) + prior).softmax(1) @ model.z_grid
+            values["z_without_decision"] = withheld.numpy()
+        parts.append(pd.DataFrame(values, index=batch.index))
+    return pd.concat(parts)
 
 
 def parameter_frame(model: ProbabilisticLatentModel) -> pd.DataFrame:
-    return pd.DataFrame(model.parameter_rows())
+    rows = model.parameter_rows()
+    for row in list(rows):
+        if row["parameter"] != "nominal_threshold":
+            continue
+        question = row["output_name"].partition("/")[0]
+        family, _, k = question.partition("_")
+        if family in {"threshold", "bet", "cost"}:
+            rows.append(dict(row, parameter="payoff_threshold", value=1 / (1 + float(k))))
+        if family == "threshold":
+            rows.append(dict(row, parameter="printed_threshold"))
+    return pd.DataFrame(rows)
 
 
 def fit_all(model_key: str, wide: pd.DataFrame, *, base_seed: int,
@@ -110,8 +130,13 @@ def fit_all(model_key: str, wide: pd.DataFrame, *, base_seed: int,
     latents, summaries, params = [], [], []
     for group in groups(wide.condition.unique()):
         seed = stable_seed(base_seed, model_key, "pooled", *group)
-        model, info = fit_group(wide, group, seed, config)
         rows = wide[wide.condition.isin(group) & wide.usable]
+        if not {"train", "val"} <= set(rows.split):
+            summaries.append({"model": model_key, "conditions": "+".join(group), "seed": seed,
+                              "status": "insufficient training or validation cases", "n_train_rows": (rows.split == "train").sum(),
+                              "n_val_rows": (rows.split == "val").sum()})
+            continue
+        model, info = fit_group(wide, group, seed, config)
         post = posteriors(model, rows)
         from second_order.measurement import calibration
 
@@ -123,14 +148,18 @@ def fit_all(model_key: str, wide: pd.DataFrame, *, base_seed: int,
         part["numeric_probability"] = rows["probability/normal"].to_numpy()
         part["fit_group"] = "+".join(group)
         latents.append(part)
-        summaries.append({"model": model_key, **info})
+        summaries.append({"model": model_key, "status": "fitted", **info})
         p = parameter_frame(model)
         p["fit_group"] = "+".join(group)
         params.append(p)
         print(f"  fit {model_key}/{'+'.join(group)}: epochs={info['epochs_ran']} "
               f"val_nll={info['best_validation_mean_nll']:.4f}", flush=True)
-    return (pd.concat(latents, ignore_index=True), pd.DataFrame(summaries),
-            pd.concat(params, ignore_index=True))
+    keys = ["model", "case_id", "condition", "replicate", "split"]
+    empty_latents = wide[keys].iloc[:0].copy()
+    for col in ("cal", "ell", "sd", "z_mean", "z_without_decision", "numeric_probability"):
+        empty_latents[col] = pd.Series(dtype=float)
+    return (pd.concat(latents, ignore_index=True) if latents else empty_latents, pd.DataFrame(summaries),
+            pd.concat(params, ignore_index=True) if params else pd.DataFrame(columns=["fit_group", "output_name", "parameter", "value"]))
 
 
 def anchor_check(latents: pd.DataFrame) -> pd.DataFrame:

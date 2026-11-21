@@ -172,6 +172,11 @@ def write_config(run: Run) -> dict:
         return yaml.safe_load(run.config_path.read_text())
     cfg = yaml.safe_load((ROOT / "second_order" / "config.yaml").read_text())
     args = run.args
+    profile = {key: (getattr(args, key, None) if getattr(args, key, None) is not None else not getattr(args, "core", False))
+               for key in ("paper", "activations", "extra_batteries")}
+    cfg["run_profile"] = profile
+    if not profile["extra_batteries"]:
+        cfg["datasets"]["ckd"]["batteries"] = ["main"]
     cfg["experiment"]["models"] = list(args.models)
     cfg["main_cases"] = args.cases if args.cases is not None else (20 if args.smoke else cfg["main_cases"])
     if args.samples is not None or args.smoke:
@@ -185,7 +190,7 @@ def write_config(run: Run) -> dict:
 
 
 # ---------------------------------------------------------------- stages
-def stage_fetch_data(run: Run, cfg: dict) -> None:
+def fetch_paper_data(run: Run) -> None:
     release = ROOT / "data" / "release"
     if not (release / "MANIFEST.sha256").exists():
         import requests
@@ -215,6 +220,9 @@ def stage_fetch_data(run: Run, cfg: dict) -> None:
     run.sh([sys.executable, "-m", "latent_beliefs.release", "verify"], "fetch_data")
     run.manifest["release_manifest_sha256"] = sha256(release / "MANIFEST.sha256")
 
+def stage_fetch_data(run: Run, cfg: dict) -> None:
+    if cfg.get("run_profile", {}).get("paper", True) and "paper" not in run.args.skip:
+        fetch_paper_data(run)
     from second_order import config as C
     from second_order import datasets as DS
 
@@ -242,7 +250,7 @@ def validate_ckd(run: Run) -> None:
     code = subprocess.run([sys.executable, "-I", "validate.py"], cwd=work, capture_output=True, text=True)
     (run.dir / "logs" / "ckd_validate.log").write_text(code.stdout + code.stderr)
     shutil.rmtree(work, ignore_errors=True)
-    run.manifest["datasets"]["ckd_validator"] = "passed" if code.returncode == 0 else f"failed ({code.returncode})"
+    run.manifest.setdefault("datasets", {})["ckd_validator"] = "passed" if code.returncode == 0 else f"failed ({code.returncode})"
     if code.returncode:
         raise RuntimeError("the CKD dataset validator failed; see logs/ckd_validate.log")
 
@@ -252,13 +260,13 @@ def local_models(run: Run, cfg: dict) -> list[str]:
 
 
 def stage_fetch_models(run: Run, cfg: dict) -> None:
-    from huggingface_hub import HfApi, snapshot_download
-
     pins = run.manifest.setdefault("model_snapshots", {})
     for model in local_models(run, cfg):
+        from huggingface_hub import snapshot_download
+        from second_order.run_generation import resolve_revision
         entry = cfg["models"][model]
         repo = entry["path"]
-        revision = entry.get("revision") or HfApi().model_info(repo).sha
+        revision = resolve_revision(repo, entry.get("revision"))
         run.log(f"downloading {repo} at {revision}")
         path = snapshot_download(repo, revision=revision, allow_patterns=MODEL_FILES)
         files = sorted(p.name for p in Path(path).iterdir())
@@ -387,7 +395,15 @@ def stage_generate(run: Run, cfg: dict) -> None:
                       log=f"generate_{model}", check=False, echo=True)
         run.manifest.setdefault("generation", {})[model] = {"exit_code": code,
                                                              "minutes": round((time.time() - started) / 60, 1)}
+        folder = run.dir / "outputs" / "generation" / model
+        run.manifest["generation"][model]["completion"] = {
+            path.stem: json.loads(path.read_text()) for path in sorted(folder.glob("*.json"))}
+        counts = run.manifest["generation"][model]["completion"]
+        complete = bool(counts) and all(c["successful"] == c["scheduled"] for c in counts.values())
+        run.manifest["generation"][model]["complete"] = complete and code == 0
         run.save()
+        if not complete:
+            run.log(f"{model}: incomplete schedule; failed or missing calls remain eligible on resume")
         if code:
             failures.append(f"generation for {model} exited with {code}")
             continue
@@ -534,6 +550,10 @@ ONCE = ("paper", "tune")
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__)
+    parser.add_argument("--core", action="store_true", help="run the main experiment without paper replication, extra CKD batteries or activation capture")
+    for option in ("paper", "activations", "extra-batteries"):
+        parser.add_argument("--" + option, action=argparse.BooleanOptionalAction, default=None,
+                            help="override this component for a new run")
     parser.add_argument("--models", nargs="+", default=list(DEFAULT_MODELS))
     parser.add_argument("--run-id", default=None, help="resume this run (runs/<run_id>)")
     parser.add_argument("--stages", nargs="+", choices=STAGES, default=None, help="default: all")
@@ -553,6 +573,7 @@ def main() -> None:
     failed = False
     run_started = time.time()
     selected = [s for s in STAGES if s in (args.stages or STAGES) and s not in args.skip]
+    selected = [s for s in selected if cfg.get("run_profile", {}).get(s, True)]
     if run.resumed and args.stages is None:
         done = [s for s in ONCE if run.manifest["stages"].get(s, {}).get("status") == "ok"]
         if done:

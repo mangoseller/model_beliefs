@@ -35,6 +35,7 @@ def methods_beliefs(lam: dict, phi: float = PHI, alpha: float = ALPHA, n: int = 
     truth = {("A", 0): a, ("A", 1): a}
     for setting, gap in gaps.items():
         k = setting_conditions(dataset, setting)
+        truth[(k["A"], 0)] = truth[(k["A"], 1)] = a
         b = a - gap
         truth[(k["B"], 0)] = truth[(k["B"], 1)] = b
         for m, d in references(dataset).values():
@@ -90,10 +91,8 @@ class MethodsEstimators(unittest.TestCase):
     def test_tau_is_the_methods_estimator_and_equals_phi_times_one_minus_lambda(self):
         for setting, lam in self.lam.items():
             tau = self.get(setting, "tau")
-            self.assertAlmostEqual(tau, (self.get(setting, "beta_D_calibrated") - self.get(setting, "beta_C_calibrated"))
-                                   / self.get(setting, "rho"), places=10)
             self.assertAlmostEqual(tau, PHI * (1 - lam), delta=0.05)
-            self.assertAlmostEqual(tau, self.get(setting, "phi_setting") * (1 - self.get(setting, "lambda")),
+            self.assertAlmostEqual(tau, self.get("both", "phi") * (1 - self.get(setting, "lambda")),
                                    places=8)
 
     def test_phi_is_shared_by_the_settings(self):
@@ -103,7 +102,7 @@ class MethodsEstimators(unittest.TestCase):
         self.assertAlmostEqual(self.get("both", "diff_phi_setting"), 0.0, delta=0.08)
         self.assertAlmostEqual(self.get("both", "diff_lambda"),
                                self.get("false", "lambda") - self.get("partial", "lambda"), places=10)
-        self.assertNotIn(("partial", "phi"), self.t.index)  # the headline phi is the shared one
+        self.assertEqual(self.get("partial", "phi"), self.get("both", "phi"))  # the headline phi is the shared one
 
     def test_affine_checks(self):
         for setting in self.lam:
@@ -173,6 +172,20 @@ class MethodsEstimators(unittest.TestCase):
         self.assertLess(tight["ci_lower"], 0.5)
         self.assertGreater(tight["ci_upper"], 0.5)
 
+    def test_layout_points_match_patient_ids_and_return_the_fitted_line(self):
+        frame = methods_beliefs(self.lam, n=30, dataset="ckd")
+        frame = frame[~((frame.case_id == "c1") & (frame.condition == "M_single"))]
+        est, points = L.estimate_with_points(frame, "ckd", resamples=10, seed=3, match_references=True)
+        selected = points[points.setting == "partial"]
+        ids = selected.groupby("reference").case_id.agg(set)
+        self.assertEqual(ids["single_record"], ids["two_record"])
+        self.assertNotIn("c1", ids["two_record"])
+        for ref, pts in selected.groupby("reference"):
+            row = est[(est.setting == "partial") & (est.reference == ref)].set_index("statistic")
+            self.assertEqual(len(pts), row.loc["beta_C", "n_cases"])
+            np.testing.assert_allclose(pts.beta_C, row.loc["beta_C", "estimate"])
+            np.testing.assert_allclose(pts.y_C_minus_M, pts.intercept_C + pts.beta_C * pts.x_A_minus_B + pts.residual_C)
+
     def test_ckd_reports_both_references(self):
         frame = methods_beliefs(self.lam, noise=0.0, n=300, dataset="ckd")
         full = L.leakage_table(frame, "ckd", resamples=5, seed=1)
@@ -196,9 +209,9 @@ class MethodsEstimators(unittest.TestCase):
 
 class FitGroups(unittest.TestCase):
     def test_pooled_groups_follow_the_condition_table(self):
-        own, person = groups(["A", "B", "B_F", "D", "D2", "M", "M2", "C", "M_F", "M2_F", "C_F"])
+        own, person = groups(["A", "B", "B_F", "D", "D_single", "M", "M_single", "C", "M_F", "M_single_F", "C_F"])
         self.assertEqual(set(own), {"A", "B", "B_F"})
-        self.assertEqual(set(person), {"D", "D2", "M", "M2", "C", "M_F", "M2_F", "C_F"})
+        self.assertEqual(set(person), {"D", "D_single", "M", "M_single", "C", "M_F", "M_single_F", "C_F"})
         self.assertEqual(groups(["A", "B", "C", "D"]), [("A", "B"), ("D", "C")])
         self.assertTrue(all(CONDITIONS[c].about == "person" for c in person))
 

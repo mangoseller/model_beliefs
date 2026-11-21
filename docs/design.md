@@ -6,30 +6,30 @@ described in [`data.md`](data.md).
 
 ## Conditions
 
-Every prompt is sent exactly as the dataset gives it, in a fresh context. Each row's
-setting and case map to one condition key (`second_order/conditions.py`; false-setting
-keys end in `_F`).
+### CKD protocol amendment 1 (2026-11-21)
 
-| Condition | The model's own evidence | PERSON's evidence | Belief asked for |
+The loader applies this amendment to the archived v3 release. Each call uses a fresh context.
+In a false-belief trial the model's chart says “Your chart gives the verified patient information.”
+PERSON accepts their own chart. The cue appears wherever the model has a chart, including the
+controls. Partial trials keep the original wording.
+
+| CKD condition (partial / false) | Model's chart | PERSON's chart | Whose belief? |
 |---|---|---|---|
-| A | E | | its own |
-| B, B_F | E_p, E_f | | its own |
-| M, M_F | | E_p, E_f | PERSON's |
-| D (CKD: shared; bespoke false: D_F) | | E | PERSON's |
-| M2, M2_F (CKD) | E_p, E_f | E_p, E_f | PERSON's |
-| D2 (CKD, shared) | E | E | PERSON's |
-| C, C_F | E | E_p, E_f | PERSON's |
+| A / A_F | Full | — | Model |
+| B / B_F | Partial / altered | — | Model |
+| M / M_F | Partial / altered | Same as model | PERSON |
+| D / D_F | Full | Full | PERSON |
+| C / C_F | Full | Partial / altered | PERSON |
+| M_single / M_single_F | — | Partial / altered | PERSON |
+| D_single | — | Full | PERSON |
 
 - **Partial setting:** PERSON's evidence E_p lacks some of E. In CKD, three fields are
   withheld; in the bespoke items, PERSON saw only some observations.
 - **False setting:** E_f alters part of E. In CKD, two fields are changed; in the bespoke
   items, a friend reported some observations wrongly.
-- **References for C.**
-  - In CKD, C shows two records, PERSON's and the model's own. Its matched no-leakage
-    references, M2 and D2, have the same layout: two records, both PERSON's evidence (M2)
-    or both full (D2). They give the headline estimate.
-  - M and D show PERSON's record alone, as in the Methods; they give the single-record
-    estimate, reported beside it.
+- **References for C.** Primary CKD estimates use M and D (release names M2 and D2).
+  These prompts preserve both ownership headers and their order. The second analysis uses
+  the original one-chart controls. Layout comparison plots use the same patients in both panels.
   - The bespoke items have only the single-record references.
 - **PERSON** is a different named person per CKD patient (20 names) and per bespoke item.
 - **Second run.** CKD A and B come in two independently shuffled replicates. Bespoke A, B
@@ -51,14 +51,14 @@ keys end in `_F`).
   Both datasets ask for it the same way: reasoning first, then the JSON object
   `{"probability": <number>}` with a number between 0 and 1, read from that object only.
   Bespoke items get `samples` calls per item, condition and run; the belief is the mean
-  sample logit, with its standard error as `sd`.
+  sample logit, with its standard error as `sd`. Belief files also include the mean probability and its clipped logit.
 - **Latent ("Bayesian marginalization", CKD only):** the Smolin & Wilder latent model,
   with the first-order fit's settings, fitted to the probability question and the 15
   multiple-choice questions.
   - Each question in each option order is its own output, with its own item parameters,
     so position bias is absorbed.
   - One pooled fit covers the model's own beliefs (A, B, B_F, both replicates) and
-    another covers PERSON's (every M, D, M2, D2 and C), so C and its references share
+    another covers PERSON's (M, D, their one-chart controls and C), so C and its references share
     item parameters and a prior.
   - A row enters the fit when at least `latent.min_output_share` of its outputs parsed;
     the model masks the rest.
@@ -79,8 +79,14 @@ $\beta_C$ and $\beta_D$ are the OLS slopes of $\ell_C - \ell_M$ and $\ell_D - \e
 |---|---|---|
 | Leakage | $\lambda = \beta_C / \beta_D$ | per setting and reference |
 | Reliability | $\rho = \mathrm{Cov}(x, x') / \mathrm{Var}(x)$ | per setting |
-| Theory-of-mind score | $\tau = (\beta_D - \beta_C) / \rho$ | per setting and reference |
+| Theory-of-mind score | $\tau_s = \varphi_{\mathrm{pooled}}(1-\lambda_s)$ | per setting and reference |
 | Responsiveness | $\varphi = \beta_D / \rho$ | shared by the two settings |
+
+The primary table uses patients complete across both settings when at least five qualify.
+If fewer qualify, it gives the available setting-specific fits and omits the pooled estimate.
+Each two-panel CKD layout figure uses the intersection for both layouts. The exported
+`scatter.csv` identifies the cohort, patient and fitted coefficients for every point.
+`layouts.csv` gives the paired difference and its bootstrap interval.
 
 - **Shared φ.** The shared $\varphi$ is the pooled within-setting $\beta_D$ over the pooled
   $\rho$, so each setting keeps its own intercept. Each setting's own $\beta_D/\rho$ is

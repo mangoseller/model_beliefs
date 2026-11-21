@@ -2,14 +2,14 @@
 
 Inputs are rows of the shared belief format (``beliefs.py``).  For each setting
 (partial, false) and each no-leakage reference of C (``conditions.references``: CKD's
-two-record M2 and D2, the headline, and the single-record M and D of the Methods), with
+two-record M and D, the headline, and their single-record controls), with
 per case x = l_A - l_B and x' the same gap from the second run (``replicate`` 1):
 
     beta_C = slope of (l_C - l_M) on x      beta_D = slope of (l_D - l_M) on x
     (M and D standing for the reference's two conditions)
     lambda = beta_C / beta_D                (Wald estimator; 0 = no leakage, 1 = full leakage)
     rho    = Cov(x, x') / Var(x)            (reliability of x)
-    tau    = (beta_D - beta_C) / rho        (theory-of-mind score, = phi (1 - lambda))
+    tau    = phi_pooled * (1 - lambda)      (theory-of-mind score)
 
 phi, the responsiveness, is shared by the two settings (Methods): ``phi`` =
 pooled beta_D / pooled rho, from within-setting slopes and covariances (so the
@@ -52,7 +52,7 @@ from second_order.conditions import SETTINGS, references, setting_conditions
 # Ratio statistic -> the denominator whose interval must exclude 0.
 DENOMINATOR = {
     "mean_position": "mean_D_minus_M",
-    "tau": "rho", "phi_setting": "rho", "phi_lambda": "rho",
+    "phi_setting": "rho",
     "phi_D_on_A": "cov_A_A1", "phi_M_on_B": "cov_B_B1", "phi": "rho_pooled",
     "lambda_x_positive": "beta_D_positive", "lambda_x_negative": "beta_D_negative",
     "lambda_third_low": "beta_D_low", "lambda_third_mid": "beta_D_mid", "lambda_third_high": "beta_D_high",
@@ -79,8 +79,8 @@ def wide(beliefs: pd.DataFrame) -> pd.DataFrame:
 def ols(y: np.ndarray, *xs: np.ndarray) -> np.ndarray:
     """Intercept first, then one weight per regressor."""
     design = np.column_stack([np.ones_like(y), *xs])
-    coef, *_ = np.linalg.lstsq(design, y, rcond=None)
-    return coef
+    coef, _, rank, _ = np.linalg.lstsq(design, y, rcond=None)
+    return coef if rank == design.shape[1] else np.full(design.shape[1], np.nan)
 
 
 def slope(y: np.ndarray, x: np.ndarray) -> float:
@@ -125,7 +125,8 @@ def setting_statistics(W: dict[str, np.ndarray], k: dict[str, str]) -> dict[str,
                              "gap_sd": float(np.std(x, ddof=1))}
 
     # ---- leakage (values as measured)
-    out["beta_C"], out["beta_D"] = slope(c - m, x), slope(d - m, x)
+    out["intercept_C"], out["beta_C"] = ols(c - m, x)
+    out["intercept_D"], out["beta_D"] = ols(d - m, x)
     out["lambda"] = _ratio(out["beta_C"], out["beta_D"])
     out["curvature_D"], out["curvature_C"] = ols(d - m, x, x**2)[2], ols(c - m, x, x**2)[2]
     partial_linearity(out, x, c, m, d)
@@ -140,9 +141,7 @@ def setting_statistics(W: dict[str, np.ndarray], k: dict[str, str]) -> dict[str,
     out["var_delta"] = _cov(xc, x1c)
     out["rho"] = _ratio(out["var_delta"], out["var_x"])
     out["beta_C_calibrated"], out["beta_D_calibrated"] = slope(cc - cm, xc), slope(cd - cm, xc)
-    out["tau"] = _ratio(out["beta_D_calibrated"] - out["beta_C_calibrated"], out["rho"])
     out["phi_setting"] = _ratio(out["beta_D_calibrated"], out["rho"])
-    out["phi_lambda"] = _ratio(out["beta_C_calibrated"], out["rho"])  # where C sits, in units of delta
 
     # ---- affine form: levels, instrumented by the second run; anchoring
     out["cov_A_A1"], out["cov_B_B1"] = _cov(ca, ca1), _cov(cb, cb1)
@@ -157,12 +156,14 @@ def setting_statistics(W: dict[str, np.ndarray], k: dict[str, str]) -> dict[str,
 def partial_linearity(out: dict[str, float], x, c, m, d) -> None:
     """lambda by the sign of x and within thirds of |x|, and the level ratio."""
     for name, sel in (("positive", x > 0), ("negative", x < 0)):
+        out[f"lambda_x_{name}"] = np.nan
         if sel.sum() >= MIN_SIGN_CASES and (~sel).sum() >= MIN_SIGN_CASES:
             out[f"beta_D_{name}"] = slope((d - m)[sel], x[sel])
             out[f"lambda_x_{name}"] = _ratio(slope((c - m)[sel], x[sel]), out[f"beta_D_{name}"])
     bins = np.digitize(np.abs(x), np.quantile(np.abs(x), [1 / 3, 2 / 3]))
     for i, name in enumerate(("low", "mid", "high")):
         sel = bins == i
+        out[f"lambda_third_{name}"] = np.nan
         if sel.sum() >= MIN_THIRD_CASES:
             out[f"beta_D_{name}"] = slope((d - m)[sel], x[sel])
             out[f"lambda_third_{name}"] = _ratio(slope((c - m)[sel], x[sel]), out[f"beta_D_{name}"])
@@ -174,7 +175,11 @@ def shared_statistics(W: dict[str, np.ndarray], ks: dict[str, dict[str, str]]) -
     """The shared phi and the differences between the settings, on cases complete for both."""
     per = {s: setting_statistics(W, k) for s, k in ks.items()}
     out = {f"diff_{stat}": per["false"][stat] - per["partial"][stat]
-           for stat in ("lambda", "tau", "rho", "phi_setting") if stat in per["false"]}
+           for stat in ("lambda", "rho", "phi_setting") if all(stat in v for v in per.values())}
+    for setting, stats in per.items():
+        for key in ("beta_D", "rho"):
+            if key in stats:
+                out[f"{key}_{setting}"] = stats[key]
     if not all(has_second_run(W, k) for k in ks.values()):
         return out
     sxy = sxx = cxx1 = 0.0
@@ -188,6 +193,10 @@ def shared_statistics(W: dict[str, np.ndarray], ks: dict[str, dict[str, str]]) -
         cxx1 += _cov(x, x1) * n1
     out["beta_D_pooled"], out["rho_pooled"] = _ratio(sxy, sxx), _ratio(cxx1, sxx)
     out["phi"] = _ratio(out["beta_D_pooled"], out["rho_pooled"])
+    for setting, stats in per.items():
+        out[f"tau_{setting}"] = out["phi"] * (1 - stats["lambda"])
+        out[f"phi_lambda_{setting}"] = out["phi"] * stats["lambda"]
+    out["diff_tau"] = out["tau_false"] - out["tau_partial"]
     return out
 
 
@@ -211,7 +220,7 @@ def bootstrap(frame: pd.DataFrame, fn: Callable[[dict[str, np.ndarray]], dict[st
         lo, med, hi = np.percentile(d, [2.5, 50, 97.5]) if len(d) else (np.nan, np.nan, np.nan)
         rows.append({"statistic": key, "estimate": float(value), "boot_median": float(med),
                      "ci_lower": float(lo), "ci_upper": float(hi), "n_cases": n,
-                     "resamples": int(resamples)})
+                     "resamples": int(resamples), "usable_draws": len(d)})
     if "beta_C" in point and "beta_D" in point:
         rows.append(fieller(point["beta_C"], point["beta_D"], np.asarray(draws["beta_C"]),
                             np.asarray(draws["beta_D"])) | {"n_cases": n, "resamples": int(resamples)})
@@ -249,40 +258,110 @@ def apply_ratio_rule(table: pd.DataFrame) -> pd.DataFrame:
     table["blank_reason"] = ""
     by_stat = table.set_index("statistic")
     for i, row in table.iterrows():
-        den = DENOMINATOR.get(row.statistic)
-        if den is None or den not in by_stat.index:
-            continue
-        d = by_stat.loc[den]
-        if not (d.ci_lower > 0 or d.ci_upper < 0):
+        stat = row.statistic
+        deps = [DENOMINATOR[stat]] if stat in DENOMINATOR else []
+        if stat in ("diff_lambda", "diff_tau"):
+            deps = ["beta_D_partial", "beta_D_false"]
+        if stat == "diff_phi_setting":
+            deps = ["rho_partial", "rho_false"]
+        if stat == "diff_lambda_layout":
+            deps = ["beta_D_single_record", "beta_D_two_record"]
+        if stat == "diff_tau":
+            deps.append("rho_pooled")
+        for setting in SETTINGS:
+            if stat in (f"tau_{setting}", f"phi_lambda_{setting}"):
+                deps = ["rho_pooled", f"beta_D_{setting}"]
+        reasons = []
+        for den in deps:
+            if den not in by_stat.index:
+                reasons.append(f"insufficient cases for {den}")
+                continue
+            d = by_stat.loc[den]
+            if den.startswith("rho") and d.estimate < 0:
+                reasons.append(f"negative reliability ({den})")
+            elif not np.isfinite([d.ci_lower, d.ci_upper]).all():
+                reasons.append(f"insufficient variation or cases for {den}")
+            elif d.ci_lower <= 0 <= d.ci_upper:
+                reasons.append(f"{den} interval includes 0")
+        if not np.isfinite(row.estimate) and not reasons and stat != "lambda_fieller":
+            reasons.append("insufficient cases or variation")
+        if reasons:
             table.loc[i, ["estimate", "boot_median", "ci_lower", "ci_upper"]] = np.nan
-            table.loc[i, "blank_reason"] = f"{den} interval includes 0"
+            table.loc[i, "blank_reason"] = ", ".join(reasons)
     return table
 
 
 def leakage_table(beliefs: pd.DataFrame, dataset: str, *, resamples: int, seed: int,
                   min_cases: int = 5) -> pd.DataFrame:
-    """Long table: one row per (setting, reference, statistic); setting ``both`` holds the shared phi.
+    """Estimate on paired patients across settings when available."""
+    table, _ = estimate_with_points(beliefs, dataset, resamples=resamples, seed=seed, min_cases=min_cases)
+    return table
 
-    Each setting uses the cases complete for it; ``both`` uses the cases complete for the two.
-    """
+
+def layout_difference(points, *, resamples, seed):
+    """Two-chart minus one-chart leakage on the same patients, resampling patient IDs together."""
+    out = []
+    for (model, method, setting), group in points.groupby(["model", "method", "setting"]):
+        values = ["x_A_minus_B", "y_D_minus_M", "y_C_minus_M"]
+        pairs = group.pivot(index="case_id", columns="reference", values=values).dropna()
+        pairs.columns = [".".join(key) for key in pairs.columns]
+        def differences(data):
+            stats = {}
+            for ref in ("single_record", "two_record"):
+                x = data["x_A_minus_B." + ref]
+                den = slope(data["y_D_minus_M." + ref], x)
+                stats["beta_D_" + ref] = den
+                stats["lambda_" + ref] = _ratio(slope(data["y_C_minus_M." + ref], x), den)
+            stats["diff_lambda_layout"] = stats["lambda_two_record"] - stats["lambda_single_record"]
+            return stats
+        t = bootstrap(pairs, differences, resamples=resamples, seed=seed)
+        out.append(t.assign(model=model, dataset="ckd", method=method, setting=setting))
+    return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
+
+
+def estimate_with_points(beliefs, dataset, *, resamples, seed, min_cases=5, match_references=False, points_only=False):
     W = wide(beliefs)
-    tables = []
+    tables, points = [], []
+    refs = references(dataset)
+    all_roles = {ref: {s: roles(dataset, s, ref) for s in SETTINGS} for ref in refs}
+    def complete(names):
+        if not set(names).issubset(W.columns):
+            return W.iloc[:0]
+        return W.dropna(subset=names)
 
-    def run(cols: list[str], fn, setting: str, reference: str) -> None:
-        if any(c not in W.columns for c in cols):
-            return
-        part = W.dropna(subset=cols)
-        if len(part) < min_cases:
-            return
-        t = bootstrap(part, fn, resamples=resamples, seed=seed)
-        t.insert(0, "setting", setting)
-        t.insert(1, "reference", reference)
-        tables.append(t)
-
-    for reference in references(dataset):
-        ks = {s: roles(dataset, s, reference) for s in SETTINGS}
+    for reference, ks in all_roles.items():
+        competitors = all_roles.values() if match_references else [ks]
+        cols = {s: sorted({col for other in competitors for col in needed_columns(other[s], W.columns)})
+                for s in SETTINGS}
+        shared = complete(sorted(set(cols["partial"] + cols["false"])))
         for setting, k in ks.items():
-            run(needed_columns(k, W.columns), lambda a, k=k: setting_statistics(a, k), setting, reference)
-        run(sorted({c for k in ks.values() for c in needed_columns(k, W.columns)}),
-            lambda a, ks=ks: shared_statistics(a, ks), "both", reference)
-    return pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
+            part = shared if len(shared) >= min_cases else complete(cols[setting])
+            if len(part) < min_cases:
+                reason = "empty subgroup" if part.empty else "insufficient cases"
+                tables.append(pd.DataFrame([dict(setting=setting, reference=reference, statistic="lambda",
+                    estimate=np.nan, boot_median=np.nan, ci_lower=np.nan, ci_upper=np.nan,
+                    n_cases=len(part), blank_reason=reason)]))
+                continue
+            if points_only:
+                point = setting_statistics({c: part[c].to_numpy() for c in part}, k)
+            else:
+                t = bootstrap(part, lambda a: setting_statistics(a, k), resamples=resamples, seed=seed)
+                tables.append(t.assign(setting=setting, reference=reference))
+                point = t.set_index("statistic").estimate
+            g = pd.DataFrame({"case_id": part.index, "x_A_minus_B": part[k["A"]] - part[k["B"]]})
+            for role in ("C", "D"):
+                y = part[k[role]] - part[k["M"]]
+                g[f"y_{role}_minus_M"] = y
+                g[f"intercept_{role}"] = point[f"intercept_{role}"]
+                g[f"beta_{role}"] = point[f"beta_{role}"]
+                g[f"residual_{role}"] = y - g[f"intercept_{role}"] - g[f"beta_{role}"] * g.x_A_minus_B
+            points.append(g.assign(setting=setting, reference=reference))
+        if len(shared) >= min_cases and not points_only:
+            t = bootstrap(shared, lambda a: shared_statistics(a, ks), resamples=resamples, seed=seed)
+            tables.append(t.assign(setting="both", reference=reference))
+            for setting in SETTINGS:
+                for stat in ("tau", "phi_lambda", "phi"):
+                    key = "phi" if stat == "phi" else f"{stat}_{setting}"
+                    tables.append(t[t.statistic == key].assign(statistic=stat, setting=setting, reference=reference))
+    return (pd.concat(tables, ignore_index=True) if tables else pd.DataFrame(),
+            pd.concat(points, ignore_index=True) if points else pd.DataFrame())

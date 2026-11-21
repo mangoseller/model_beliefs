@@ -38,11 +38,11 @@ ESTIMATOR = """# Estimators, as implemented
 All beliefs are on the log-odds scale. Stated probabilities (read from the JSON object
 both datasets ask for) are clipped to [0.01, 0.99] before the logit. Latent beliefs are
 posterior means of logit z from the pooled Smolin & Wilder fit of the believer's family
-(own belief: A and every B; PERSON: every M, D, M2, D2 and C), with each CKD question in
+(own belief: A and every B; PERSON: every M, D, their single-chart controls and C), with each CKD question in
 each option order an output with its own item parameters. Per case (CKD patient or
 bespoke item), in each setting (partial; false: the _F conditions) and for each
-no-leakage reference of C (CKD two_record: M2 and D2, the headline; single_record: M and
-D, as in the Methods):
+no-leakage reference of C (CKD two_record: M and D, the headline; single_record: M_single and
+D_single):
 
     x   = l_A  - l_B                    the model's own gap (replicate 0)
     x'  = l_A' - l_B'                   the same gap from the independent second replicate
@@ -51,7 +51,7 @@ D, as in the Methods):
 
     lambda = beta_C / beta_D            leakage (the Wald estimator), per setting
     rho    = Cov(x, x') / Var(x)        reliability of the gap, per setting
-    tau    = (beta_D - beta_C) / rho    theory-of-mind score, = phi (1 - lambda), per setting
+    tau    = phi * (1 - lambda)         theory-of-mind score per setting, using the shared phi
     phi    = beta_D / rho               responsiveness, shared by the two settings: pooled
                                         within-setting beta_D over pooled rho
 
@@ -63,7 +63,7 @@ Uncertainty: paired bootstrap over patients (CKD) or items (bespoke), carrying a
 case's conditions and replicates together; 95% percentile intervals, item parameters
 held fixed. lambda also has a 95% Fieller confidence set from the bootstrap covariance of
 beta_C and beta_D, unbounded when beta_D is weak. Ratio rule: any other ratio is blanked
-when its denominator's interval includes 0 (tau: rho; phi: pooled rho).
+when its denominator's interval includes 0 (tau: pooled rho and the setting’s beta_D; phi: pooled rho).
 
 Also reported (CKD): lambda by assigned record order; false-record lambda for the
 randomized sicker and healthier edits (64 patients, bootstrap within label x direction);
@@ -114,7 +114,7 @@ def constants() -> dict:
         }),
         "generation": {m: {"backend": C.model_config(m)["backend"], "weights": C.model_config(m).get("path"),
                            "revision": C.model_config(m).get("revision"),
-                           "sampling": {d: {o: sampling(m, d, o) for o in ("probability", "choice")}
+                           "sampling": {d: {o: sampling(m, d, o) for o in ("probability", "choice", FOLLOWUP)}
                                         for d in C.datasets_for(m)},
                            "chat_template": template_kwargs(m),
                            "settings_signature": {d: settings_signature(m, d) for d in C.datasets_for(m)},
@@ -152,6 +152,8 @@ def usage(run_dir: Path) -> dict:
                 for key in ("input_tokens", "output_tokens"):
                     u[key] += (r.get("usage") or {}).get(key) or 0
                 times.append(r.get("time", 0))
+        for group in out[path.stem].values():
+            group["failed_attempt_fraction"] = group["errors"] / group["calls"]
         if times:
             out[path.stem]["all"]["first_to_last_response_hours"] = round((max(times) - min(times)) / 3600, 2)
     return json.loads(json.dumps(out))
@@ -159,7 +161,7 @@ def usage(run_dir: Path) -> dict:
 
 def example_prompts() -> str:
     """One CKD patient and one bespoke item in every condition, exactly as sent."""
-    ckd = DS.rows("ckd", list(DS.CKD_FILES))
+    ckd = DS.rows("ckd")
     case_id = sorted(ckd.case_id.unique())[0]
     lines = [f"# CKD patient {case_id} in every condition\n\nThe probability question (and each check, probe "
              "and role swap); the other questions share each condition's records.\n"]
@@ -231,8 +233,8 @@ def write_report(run_dir: Path) -> None:
     except (KeyError, TypeError) as exc:
         parts.append(f"## Settings\n\nUnavailable ({exc!r}); see `config.yaml` and `record/constants.json`.\n\n")
     parts.append("## Estimators\n\nIn full in `record/estimator.md`. With x = l_A − l_B (log-odds): λ = β_C / β_D "
-                 "(slopes of l_C − l_M and l_D − l_M on x; CKD's headline uses C's matched references M2 and D2), "
-                 "ρ = Cov(x, x′) / Var(x) from the second replicate, τ = (β_D − β_C) / ρ per setting, and "
+                 "(slopes of l_C − l_M and l_D − l_M on x; CKD's headline uses C's matched references M and D), "
+                 "ρ = Cov(x, x′) / Var(x) from the second replicate, τ = φ(1 − λ) per setting, and "
                  "φ = β_D / ρ shared by the two settings; bootstrap over patients or items, Fieller set for λ.\n\n")
     write_results(parts, run_dir, manifest, use)
 
@@ -288,7 +290,7 @@ def write_results(parts: list[str], run_dir: Path, manifest: dict, use: dict) ->
                 rows.append({"model": m, "trial": k, "engine": json.dumps(trial.get("engine")),
                              "output tok/s": trial.get("output_tokens_per_second"),
                              "chosen": "yes" if trial.get("engine") == t.get("engine") else "",
-                             "error": (trial.get("error") or "")[:80]})
+                             "error": (trial.get("error") or ", ".join(trial.get("quality_failures", [])))[:160]})
         smoke = pd.DataFrame([{"model": m, **{k: v for k, v in (t.get("smoke") or {}).items() if k != "by_output"},
                                "batch_size": t.get("batch_size")} for m, t in tuning.items()])
         parts.append("## Inference tuning and smoke test\n\nEach vLLM engine configuration generated the same "
@@ -306,9 +308,9 @@ def write_results(parts: list[str], run_dir: Path, manifest: dict, use: dict) ->
                      + md_table(pd.DataFrame([{"model": m, **v} for m, v in acts.items()]),
                                 ["model", "exit_code", "gb", "minutes"], 2) + "\n")
     if use and "unavailable" not in use:
-        rows = [{"model": m, "part": part, **{k: int(v) for k, v in u.items() if k != "first_to_last_response_hours"}}
+        rows = [{"model": m, "part": part, **{k: v for k, v in u.items() if k != "first_to_last_response_hours"}}
                 for m, calls in use.items() for part, u in calls.items() if part != "all"]
-        parts.append("## Usage\n\n" + md_table(pd.DataFrame(rows), ["model", "part", "calls", "errors", "truncated",
+        parts.append("## Usage\n\n" + md_table(pd.DataFrame(rows), ["model", "part", "calls", "errors", "failed_attempt_fraction", "truncated",
                                                                     "input_tokens", "output_tokens"]) + "\n")
     parts.append("## Files\n\n"
                  "- `config.yaml`: the exact config used; `manifest.json`: stages, provenance, hardware\n"

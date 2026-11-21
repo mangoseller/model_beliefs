@@ -25,6 +25,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import math
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -32,7 +33,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from latent_beliefs.ckd.parse import normalize_probability
 from second_order import config as C
 from second_order.conditions import condition_key
 
@@ -84,7 +84,17 @@ def _ckd_battery(battery: str) -> pd.DataFrame:
         "output": raw.question_id + "/" + raw.order, "question_id": raw.question_id, "order": raw.order,
         "replicate": raw.replicate.astype(int) - 1, "prompt": raw.prompt, "placebo": False,
     })
-    return pd.concat([out, raw[CKD_META]], axis=1)
+    frame = pd.concat([out, raw[CKD_META]], axis=1)
+    # The source release shares A and matched D between settings. False trials
+    # need their own copies so all Qwen-owned charts have the same truth cue.
+    verified = frame[frame.condition.isin(["A", "D"])].copy()
+    verified["condition"] += "_F"
+    frame = pd.concat([frame, verified], ignore_index=True)
+    false = frame.condition.str.endswith("_F")
+    frame.loc[false, "prompt"] = frame.loc[false, "prompt"].str.replace(
+        "Your record for this patient:", "Your record for this patient: Your chart gives the verified patient information.",
+        regex=False)
+    return frame
 
 
 @lru_cache(maxsize=1)
@@ -103,14 +113,24 @@ def rows(dataset: str, batteries=None) -> pd.DataFrame:
     """Every prompt of a dataset (CKD: of the configured batteries), one row each."""
     if dataset == "bespoke":
         return _bespoke()
-    batteries = batteries or C.load()["datasets"]["ckd"]["batteries"]
+    requested = C.load()["datasets"]["ckd"]["batteries"] if batteries is None else batteries
+    return _ckd_rows(tuple(requested))
+
+
+@lru_cache(maxsize=4)
+def _ckd_rows(batteries: tuple[str, ...]) -> pd.DataFrame:
     return pd.concat([_ckd_battery(b) for b in batteries], ignore_index=True)
 
 
-@lru_cache(maxsize=None)
 def lookup(dataset: str) -> dict[tuple, dict]:
+    batteries = tuple(C.load()["datasets"]["ckd"]["batteries"]) if dataset == "ckd" else ()
+    return _lookup(dataset, batteries)
+
+
+@lru_cache(maxsize=None)
+def _lookup(dataset: str, batteries: tuple[str, ...]) -> dict[tuple, dict]:
     """(case_id, condition, output, replicate) -> row metadata (bespoke: replicate 0)."""
-    frame = rows(dataset, list(CKD_FILES) if dataset == "ckd" else None)
+    frame = rows(dataset, batteries)
     keys = zip(frame.case_id, frame.condition, frame.output, frame.replicate)
     return dict(zip(keys, frame.to_dict(orient="records")))
 
@@ -185,28 +205,38 @@ def parse_letter(text: str, opts: dict[str, str]) -> str | None:
 
 
 def parse_probability(text: str | None) -> tuple[float | None, str | None]:
-    """The answer from the last JSON object with a ``probability`` key (or a quoted key).
-
-    The first-order parser also accepts any number after the word "probability"; the
-    prompts here contain numbers ("Bag A", "Draw 2", a patient's age), so that fallback
-    is not used.
-    """
+    """Accept only the terminal JSON answer. Fenced JSON is also supported."""
     if not text:
-        return None, None
-    for candidate in reversed(re.findall(r"\{[^{}]*\}", text, flags=re.DOTALL)):
-        try:
-            parsed = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(parsed, dict) and "probability" in parsed:
-            p = normalize_probability(parsed["probability"])
-            if p is not None:
-                return p, "json"
-    for number, percent in reversed(QUOTED_KEY.findall(text)):
-        p = normalize_probability(number + percent)
-        if p is not None:
-            return p, "quoted_key"
-    return None, None
+        return None, "invalid"
+    answer = text.strip()
+    if answer.endswith("```"):
+        fence = re.search(r"```(?:json)?\s*([^`]*)```$", answer, re.I)
+        if not fence:
+            return None, "invalid"
+        answer = fence.group(1).strip()
+    match = re.search(r'\{[^{}]*\}\Z', answer)
+    if not match:
+        return None, "invalid"
+    try:
+        pairs = json.loads(match.group(), object_pairs_hook=list)
+    except (ValueError, OverflowError):
+        return None, "invalid"
+    if len(pairs) == 1 and pairs[0][0] == "probability":
+        value = pairs[0][1]
+        if type(value) in (int, float) and 0 <= value <= 1 and math.isfinite(value):
+            return float(value), "json"
+    return None, "invalid"
+
+
+def fallback_probability(text: str | None) -> float | None:
+    """Optional alternative score for a terminal quoted key or percentage."""
+    m = re.search(r'"probability"\s*:\s*"?([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*(%?)"?\s*\}?\s*$', text or "")
+    if not m:
+        return None
+    value = float(m[1])
+    if m[2]:
+        value /= 100
+    return value if 0 <= value <= 1 else None
 
 
 def _norm(text: str) -> str:

@@ -20,11 +20,11 @@ record E. E_p withholds three fields; E_f alters two. Every column is read as a 
 (`datasets.open_csv`).
 
 - **Prompt files:** all three are generated (`datasets.ckd.batteries`).
-  - **Main** (65,700 prompts, 438 per patient):
+  - **Main** (65,700 archived prompts, 79,650 scheduled after the CKD amendment, 531 per patient):
     - every condition asks one probability question and 15 multiple-choice questions,
       each multiple-choice question in two option orders;
     - C and C_F add a yes/no check in both orders.
-  - **High-threshold supplement** (37,800): 50%, 66.7% and 80% cutoffs.
+  - **High-threshold supplement** (37,800 archived, 45,900 scheduled): 50%, 66.7% and 80% cutoffs.
   - **Role swap** (1,500): C_swap and the paired probes.
 - **Columns used:**
   - `item_id` (the case id), `setting` and `case` (the condition), `question_id` and
@@ -35,7 +35,7 @@ record E. E_p withholds three fields; E_f alters two. Every column is read as a 
 - **Answers:**
   - **Probability:** reasoning, then the JSON object `{"probability": <number>}` with a
     number between 0 and 1, the same format as the bespoke items. Only the JSON object is
-    read (`datasets.parse_probability`); anything else is a parse failure.
+    scored. The raw text, stop reason, parse method and any alternate fallback value remain in the response tables.
   - **Multiple choice:** a single letter, optionally with its option text, or the option
     text alone. It is decoded through the row's own options: 1 or 0 for screen/accept
     or not, 1 to 5 up the Likert and quintile scales.

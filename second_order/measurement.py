@@ -50,6 +50,6 @@ def calibration(model, *, n: int = 20000, seed: int = 0) -> tuple[float, float]:
 
     rng = np.random.default_rng(seed)
     lz = sample_prior(model, n, rng)
-    post = posteriors(model, pd.DataFrame(sample_outputs(model, lz, rng)))
+    post = posteriors(model, pd.DataFrame(sample_outputs(model, lz, rng)), predict_decision=False)
     slope, intercept = np.polyfit(lz, post["ell"].to_numpy(), 1)
     return float(slope), float(intercept)

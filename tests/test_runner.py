@@ -5,6 +5,10 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
+import torch
 
 from second_order import datasets as DS
 from second_order import freeze as F
@@ -15,7 +19,8 @@ from second_order.runner import last_line
 
 def trial(tok_s: float, parse: float = 0.95, truncated: float = 0.0, seqs: int = 256, ok: bool = True) -> dict:
     return {"engine": {"max_num_seqs": seqs}, "ok": ok, "output_tokens_per_second": tok_s,
-            "smoke": {"parse_rate": parse, "truncated_rate": truncated, "mean_output_tokens": 300}}
+            "smoke": {"parse_rate": parse, "truncated_rate": truncated, "mean_output_tokens": 300,
+                      "groups": {"ckd/choice": {"parse_rate": parse, "truncated_rate": truncated}}}}
 
 
 class Tuning(unittest.TestCase):
@@ -26,6 +31,9 @@ class Tuning(unittest.TestCase):
         self.assertEqual(out["batch_size"], 2048)
         self.assertEqual(out["speedup_over_first"], 1.8)
         self.assertNotIn("error", out)
+        fast = trial(2000, seqs=1024)
+        fast["smoke"]["groups"]["bespoke/followup"] = {"parse_rate": 0.1, "truncated_rate": 0.0}
+        self.assertEqual(T.choose("m", 100, [fast, trial(900)], s)["output_tokens_per_second"], 900)
 
     def test_smoke_checks_stop_the_run(self):
         s = T.settings()
@@ -54,7 +62,82 @@ class Tuning(unittest.TestCase):
         self.assertEqual((bad["parse_rate"], bad["truncated_rate"]), (0.0, 1.0))
 
 
+class AnchoredExport(unittest.TestCase):
+    def test_withheld_decision_cannot_change_its_predictor(self):
+        import pandas as pd
+        from latent_beliefs.latent.model import OutputSpec, ProbabilisticLatentModel
+        from second_order.fit_pooled import posteriors
+
+        specs = [OutputSpec("probability/normal", "probability"), OutputSpec("decision/normal", "binary"),
+                 OutputSpec("decision/flip", "binary")]
+        model = ProbabilisticLatentModel(specs, quadrature_points=32)
+        obs = pd.DataFrame({"probability/normal": [.35] * 3, "decision/normal": [0, 1, np.nan],
+                            "decision/flip": [0, 1, np.nan]})
+        post = posteriors(model, obs, batch_size=1)
+        np.testing.assert_allclose(post.z_without_decision, post.z_without_decision.iloc[0])
+        self.assertGreater(post.z_mean.iloc[1], post.z_mean.iloc[0])
+        np.testing.assert_allclose(post, posteriors(model, obs, batch_size=10))
+
+    def test_roundtrip_reproduces_curves_and_distinguishes_cutoffs(self):
+        from latent_beliefs.latent.model import OutputSpec, restore_model
+        from second_order.fit_pooled import AnchoredLatentModel, parameter_frame
+        from second_order.responses import cutoff
+
+        specs = [OutputSpec("probability/normal", "probability"),
+                 OutputSpec("threshold_0.5/normal", "binary", cutoff("threshold_0.5")),
+                 OutputSpec("bet_0.5/normal", "binary", cutoff("bet_0.5"))]
+        model = AnchoredLatentModel(specs, quadrature_points=32)
+        with torch.no_grad():
+            model.binary_raw_slopes[specs[1].name].fill_(2.7)
+        params = parameter_frame(model)
+        restored = restore_model(specs, params, quadrature_points=32, probability_epsilon=model.probability_epsilon)
+        table = params.set_index(["output_name", "parameter"]).value
+        self.assertEqual(table[specs[1].name, "printed_threshold"], .667)
+        self.assertAlmostEqual(table[specs[1].name, "payoff_threshold"], 2/3)
+        for spec in specs[1:]:
+            torch.testing.assert_close(restored.binary_logits(spec), model.binary_logits(spec))
+            self.assertAlmostEqual(table[spec.name, "implied_threshold"], spec.nominal_threshold)
+
+
 class Freeze(unittest.TestCase):
+    def test_reuse_checks_order_response_positions_revision_and_array(self):
+        class Replay:
+            layers = hidden = 1
+            kwargs = {}
+            def tokens_and_positions(self, item, record):
+                return [1, *record["token_ids"]], [-1, 0, 0], 1
+            def run(self, ids, index):
+                return np.full((3, 1, 1), ids[-1], dtype=np.uint16)
+
+        items = [Item("m", c, "C", "probability", 0, "prompt", dataset="bespoke") for c in ["a", "b"]]
+        records = [{"text": "answer", "token_ids": [i], "prompt_token_ids": [1], "ok": True,
+                    "settings_sha": "same"} for i in (2, 3)]
+        replay = Replay()
+        config = {"backend": "synthetic", "path": "weights", "revision": "first"}
+        with tempfile.TemporaryDirectory() as folder, patch.object(F.C, "ACTIVATIONS", Path(folder)), \
+             patch.object(F.C, "model_config", return_value=config), patch.object(F, "freeze_items", return_value=items), \
+             patch.object(F, "lookup", return_value=records), patch.object(replay, "run", wraps=replay.run) as run:
+            def freeze():
+                return F.freeze("m", "bespoke", [], None, replay)
+            output = freeze()
+            freeze()
+            self.assertEqual(run.call_count, 2)
+            items.reverse()
+            records.reverse()
+            freeze()
+            records[0]["text"] = "revised"
+            freeze()
+            config["revision"] = "second"
+            freeze()
+            with (output / "acts.npy").open("r+b") as f:
+                f.seek(-1, 2)
+                f.write(b"\xff")
+            freeze()
+            self.assertEqual(run.call_count, 10)
+            _, index, meta = F.load(output)
+            self.assertEqual(list(index.item_key), [i.key for i in items])
+            self.assertEqual(meta["revision"], "second")
+
     def test_positions(self):
         offsets = [(0, 3), (3, 5), (5, 5), (5, 9)]
         self.assertEqual(F.token_at(offsets, 4), 1)

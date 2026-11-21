@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Run the whole curse-of-knowledge experiment on a fresh GPU instance (e.g. vast.ai) and package it.
 #
-#   git clone https://github.com/mangoseller/model_beliefs && cd model_beliefs
+#   git clone --branch claude/bold-archimedes-8vdm0o https://github.com/mangoseller/model_beliefs && cd model_beliefs
 #   nohup bash run_experiment.sh > run.out 2>&1 &      # everything; then download runs/<run_id>.tar.gz
+#   bash run_experiment.sh --core --no-install-agents  # main experiment only, skip coding-agent installation
 #   bash run_experiment.sh --smoke                     # 20 CKD cases, 3 samples: a quick full check first
 #   bash run_experiment.sh --run-id <run_id>           # resume an interrupted run (nothing is regenerated)
 #   bash run_experiment.sh --help                      # every option (second_order/runner.py)
@@ -41,6 +42,16 @@ install_agent_clis() {
   grep -qxF "$PATH_LINE" "$HOME/.bashrc" 2>/dev/null || echo "$PATH_LINE" >> "$HOME/.bashrc"
   echo "installed: claude $(claude --version | head -1); codex $(codex --version | head -1)"
 }
+
+runner_args=()
+for arg in "$@"; do
+    case "$arg" in
+        --install-agents) INSTALL_AGENTS=1 ;;
+        --no-install-agents) INSTALL_AGENTS=0 ;;
+        *) runner_args+=("$arg") ;;
+    esac
+done
+set -- "${runner_args[@]}"
 
 if [ "${INSTALL_AGENTS:-1}" = 1 ]; then
   install_agent_clis || echo "WARNING: installing Claude Code / Codex failed; continuing without them" >&2

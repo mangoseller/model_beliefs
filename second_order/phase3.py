@@ -66,12 +66,14 @@ def run_ckd(model: str, long: pd.DataFrame, seed: int) -> None:
           f"({int(wide.complete.sum())} complete)", flush=True)
 
 
-def run_bespoke(model: str, long: pd.DataFrame, case_ids: list[str]) -> None:
+def run_bespoke(model: str, long: pd.DataFrame, case_ids: list[str]) -> pd.DataFrame:
     BL.write(model, "direct", BL.direct_rows(long), "bespoke")
     comp = comprehension(model, "bespoke", case_ids)
     if not comp.empty:
         (C.RESULTS / "comprehension").mkdir(parents=True, exist_ok=True)
         comp.drop(columns="text").to_csv(C.RESULTS / "comprehension" / f"{model}.csv", index=False)
+
+    return comp
 
 
 def run(model: str, datasets: list[str] | None = None, cases: str | None = None) -> None:
@@ -84,7 +86,7 @@ def run(model: str, datasets: list[str] | None = None, cases: str | None = None)
         if dataset == "ckd":
             run_ckd(model, long, seed)
         else:
-            run_bespoke(model, long, ids)
+            rets.append(retention(run_bespoke(model, long, ids)))
         rets.append(retention(long))
         write_transcripts(model, dataset, long, seed, int(C.load()["analysis"]["transcripts_per_condition"]))
     ret = pd.concat(rets, ignore_index=True)

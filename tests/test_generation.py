@@ -7,6 +7,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -30,6 +31,42 @@ class TempCache(unittest.TestCase):
         G.C.CACHE = self.saved
         self.tmp.cleanup()
 
+
+class CacheIntegrity(TempCache):
+    def test_incomplete_tail_is_recovered_and_interior_corruption_flagged(self):
+        cache = G.Cache("m")
+        cache.append([{"key": "a", "ok": True}])
+        with cache.path.open("ab") as f:
+            f.write(b'{"key":')
+        cache.refresh()
+        cache.append([{"key": "b", "ok": True}])
+        self.assertEqual(set(G.Cache("m").records), {"a", "b"})
+        with cache.path.open("ab") as f:
+            f.write(b'broken\n{"key":"c"}\n')
+        with self.assertRaisesRegex(ValueError, "corrupt cache.*byte"):
+            cache.refresh()
+
+    def test_failures_are_reported_retried_and_short_results_are_rejected(self):
+        item = G.Item("synthetic", "case", "C", "probability", 0, "prompt", dataset="bespoke")
+        with patch.dict(G.BACKENDS, synthetic=lambda *args: []):
+            with self.assertRaisesRegex(ValueError, "0 records for 1 requests"):
+                G.run([item])
+        with patch.dict(G.BACKENDS, synthetic=lambda *args: [{"ok": False, "text": ""}]):
+            self.assertEqual(G.run([item])["failed_call_fraction"], 1.0)
+            self.assertEqual(G.pending([item]), [item])
+        with patch.dict(G.BACKENDS, synthetic=lambda *args: [{"ok": True, "text": "answer"}]):
+            self.assertEqual(G.run([item])["successful"], 1)
+            self.assertFalse(G.pending([item]))
+
+    def test_one_parsed_of_one_hundred(self):
+        import pandas as pd
+        from second_order.responses import retention
+        frame = pd.DataFrame(dict(model="m", condition="C", dataset="ckd", output="probability/normal",
+                                  status=["parsed", "call_error"] + ["not_generated"] * 98))
+        summary = retention(frame).iloc[0]
+        self.assertEqual(summary.retention, .01)
+        self.assertEqual(summary.failed_call_fraction, .5)
+        self.assertEqual(summary.missing_fraction, .98)
 
 class Keys(unittest.TestCase):
     def test_keys(self):
@@ -84,6 +121,7 @@ class Comprehension(TempCache):
                    if i.replicate == 0]
         self.assertEqual(missing, len(parents))
         G.Cache("synthetic").append([{"key": p.key, "prompt_sha": p.prompt_sha, "text": f"answer {p.case_id}",
+                                      "settings_sha": G.settings_signature("synthetic", "bespoke"),
                                       "ok": True} for p in parents])
         items, missing = G.comprehension_items("synthetic", "bespoke", BESPOKE_CASES)
         self.assertEqual((missing, len(items)), (0, len(parents)))

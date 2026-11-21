@@ -21,7 +21,7 @@ import pandas as pd
 from second_order import config as C
 
 COLUMNS = ["model", "dataset", "case_id", "split", "condition", "replicate", "method",
-           "value", "sd", "value_calibrated", "n_samples"]
+           "value", "sd", "value_calibrated", "n_samples", "mean_probability", "logit_of_mean_probability"]
 DEFAULTS = {"dataset": "ckd", "replicate": 0, "n_samples": 1}
 
 
@@ -35,7 +35,7 @@ def _finish(frame: pd.DataFrame) -> pd.DataFrame:
         frame["value_calibrated"] = frame["value"]
     for column in COLUMNS:
         if column not in frame:
-            frame[column] = DEFAULTS.get(column, np.nan if column == "sd" else "")
+            frame[column] = DEFAULTS.get(column, np.nan)
     frame["replicate"] = frame["replicate"].fillna(0).astype(int)
     return frame[COLUMNS]
 
@@ -48,6 +48,8 @@ def latent_rows(latents: pd.DataFrame) -> pd.DataFrame:
     part = latents[KEYS].copy()
     part["method"] = "latent"
     part["value"], part["sd"] = latents["ell"].to_numpy(), latents["sd"].to_numpy()
+    part["mean_probability"] = latents["z_mean"]
+    part["logit_of_mean_probability"] = np.log(part.mean_probability) - np.log1p(-part.mean_probability)
     part["value_calibrated"] = latents["cal"].to_numpy()
     return _finish(part)
 
@@ -56,9 +58,10 @@ def direct_rows(long: pd.DataFrame) -> pd.DataFrame:
     """Direct beliefs: the mean logit of the parsed probability answers per case, condition and run."""
     parsed = long[(long.status == "parsed") & long.output.isin(PROBABILITY_OUTPUTS)].copy()
     parsed["logit"] = clip_logit(parsed["value"].to_numpy())
-    g = parsed.groupby(["model", "dataset", "case_id", "condition", "replicate"]).logit
-    part = pd.DataFrame({"value": g.mean(), "n_samples": g.size(),
-                         "sd": g.std(ddof=1) / np.sqrt(g.size())}).reset_index()
+    g = parsed.groupby(["model", "dataset", "case_id", "condition", "replicate"])
+    part = pd.DataFrame({"value": g.logit.mean(), "n_samples": g.size(), "mean_probability": g.value.mean(),
+                         "sd": g.logit.std(ddof=1) / np.sqrt(g.size())}).reset_index()
+    part["logit_of_mean_probability"] = clip_logit(part.mean_probability)
     part["split"], part["method"] = "none", "direct"
     return _finish(part)
 
