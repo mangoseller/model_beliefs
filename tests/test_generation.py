@@ -15,7 +15,7 @@ from second_order import config as C
 from second_order import datasets as DS
 from second_order import run_generation as G
 from second_order import synthetic as S
-from second_order.responses import visible_text
+from second_order.responses import comprehension, visible_text
 
 CKD_CASES = DS.case_ids("ckd")[:3]
 BESPOKE_CASES = DS.case_ids("bespoke")[:2]
@@ -131,6 +131,29 @@ class Comprehension(TempCache):
             self.assertEqual(item.messages[2][1], DS.row("bespoke", parent.case_id, parent.condition,
                                                          "probability")["comprehension_q"])
         self.assertEqual(G.comprehension_items("synthetic", "ckd", CKD_CASES), ([], 0))  # CKD checks are rows
+
+    def test_followup_results_keep_blocked_and_missing_children_in_trial_order(self):
+        args = ("synthetic", "bespoke", BESPOKE_CASES[:1])
+        plan = G.followup_plan(*args)
+        parents = [parent for parent, _ in plan]
+        cache = G.Cache("synthetic")
+        signature = G.settings_signature(*args[:2])
+
+        def record(item, text, ok):
+            return {"key": item.key, "prompt_sha": item.prompt_sha, "settings_sha": signature, "text": text, "ok": ok}
+
+        cache.append([record(parent, "parent text", i != 1) for i, parent in enumerate(parents[:4])])
+        success = G.followup_item(parents[2], "parent text")
+        failure = G.followup_item(parents[3], "parent text")
+        answer = DS.row("bespoke", success.case_id, success.condition, "probability")["comprehension_a"]
+        cache.append([record(success, answer, True), record(failure, "", False)])
+        frame = comprehension(*args, write=False)
+        self.assertEqual(list(zip(frame.case_id, frame.condition, frame.replicate, frame["sample"])),
+                         [(p.case_id, p.condition, p.replicate, p.sample) for p in parents])
+        self.assertEqual(frame.status.to_list(), ["not_generated", "not_generated", "parsed", "call_error"]
+                         + ["not_generated"] * (len(parents) - 4))
+        self.assertEqual(frame.iloc[2].correct, 1.0)
+        self.assertEqual(frame.iloc[2].text, answer)
 
     def test_changed_prompt_or_settings_are_refused(self):
         item = G.experiment_items("synthetic", "ckd", CKD_CASES[:1], ["B"], ("probability/normal",))[0]

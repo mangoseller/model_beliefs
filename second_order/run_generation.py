@@ -426,22 +426,26 @@ def followup_item(parent: Item, answer: str) -> Item:
                 parent.sample, parent.dataset, chat)
 
 
-def comprehension_items(model: str, dataset: str, case_ids: list[str]) -> tuple[list[Item], int]:
-    """Bespoke follow-ups for every cached C answer; also the number still missing a parent."""
-    from second_order import datasets as DS
+def followup_plan(model: str, dataset: str, case_ids: list[str]) -> list[tuple[Item, Item | None]]:
+    """One entry per scheduled parent, in trial order. A missing or failed parent has no child yet."""
     from second_order.bespoke import COMPREHENSION_CONDITIONS
 
     if dataset != "bespoke":
-        return [], 0
+        return []
     parents = [i for i in experiment_items(model, dataset, case_ids, list(COMPREHENSION_CONDITIONS))
                if i.replicate == 0]
-    items, missing = [], 0
-    for parent, record in zip(parents, lookup(parents)):
-        if record is None or not record.get("ok"):
-            missing += 1
-            continue
-        items.append(followup_item(parent, record["text"]))
-    return items, missing
+    plan = []
+    for parent, record in zip(parents, lookup(parents), strict=True):
+        child = followup_item(parent, record["text"]) if record and record.get("ok") else None
+        plan.append((parent, child))
+    return plan
+
+
+def comprehension_items(model: str, dataset: str, case_ids: list[str]) -> tuple[list[Item], int]:
+    """Bespoke follow-ups ready to generate and the number still waiting for a parent."""
+    plan = followup_plan(model, dataset, case_ids)
+    ready = [child for _, child in plan if child is not None]
+    return ready, len(plan) - len(ready)
 
 
 def select_cases(n: int | str) -> list[str]:

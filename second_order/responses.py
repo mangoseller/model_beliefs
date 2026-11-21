@@ -29,7 +29,7 @@ from second_order import config as C
 from second_order import datasets as DS
 from second_order.bespoke import score_comprehension
 from second_order.conditions import CONDITIONS
-from second_order.run_generation import FOLLOWUP, Item, comprehension_items, experiment_items, lookup
+from second_order.run_generation import FOLLOWUP, Item, experiment_items, followup_plan, lookup
 
 UNIT = ["case_id", "replicate", "sample"]  # one model call per output
 CHECKS = ("check", "role_check")
@@ -216,20 +216,15 @@ def checks(long: pd.DataFrame) -> pd.DataFrame:
 
 def comprehension(model: str, dataset: str, case_ids: list[str], write: bool = True) -> pd.DataFrame:
     """Bespoke follow-ups: one row each, scored against the row's keyed answer."""
-    items, _ = comprehension_items(model, dataset, case_ids)
-    from second_order.bespoke import COMPREHENSION_CONDITIONS
-
-    scheduled = experiment_items(model, dataset, case_ids, list(COMPREHENSION_CONDITIONS))
-    records = {(i.case_id, i.condition, i.sample): (i, r) for i, r in zip(items, lookup(items), strict=True)}
+    plan = followup_plan(model, dataset, case_ids)
+    records = iter(lookup([child for _, child in plan if child is not None]))
     rows = []
-    for item in scheduled:
-        if item.replicate != 0:
-            continue
-        child, record = records.get((item.case_id, item.condition, item.sample), (item, None))
-        meta = DS.row(dataset, item.case_id, item.condition, "probability")
-        score = score_answer(child, record, meta)
-        rows.append({"model": model, "dataset": dataset, "case_id": item.case_id, "condition": item.condition,
-                     "output": FOLLOWUP, "replicate": item.replicate, "sample": item.sample, "status": score.status,
+    for parent, child in plan:
+        record = next(records) if child is not None else None
+        meta = DS.row(dataset, parent.case_id, parent.condition, "probability")
+        score = score_answer(child or parent, record, meta)
+        rows.append({"model": model, "dataset": dataset, "case_id": parent.case_id, "condition": parent.condition,
+                     "output": FOLLOWUP, "replicate": parent.replicate, "sample": parent.sample, "status": score.status,
                      "check_relation": meta["check_relation"], "value": np.nan if score.value is None else score.value,
                      "text": None if record is None else record["text"]})
     frame = pd.DataFrame(rows, columns=["model", "dataset", "case_id", "condition", "output", "replicate",
