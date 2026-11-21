@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -171,6 +172,12 @@ class MethodsEstimators(unittest.TestCase):
         self.assertEqual(tight["interval"], "bounded")
         self.assertLess(tight["ci_lower"], 0.5)
         self.assertGreater(tight["ci_upper"], 0.5)
+
+    def test_shared_bootstrap_fits_each_setting_once_per_draw_and_reference(self):
+        beliefs = methods_beliefs(self.lam, n=20, dataset="ckd")
+        with patch.object(L, "setting_statistics", wraps=L.setting_statistics) as fits:
+            L.estimate_with_points(beliefs, "ckd", resamples=10, seed=7)
+        self.assertEqual(fits.call_count, 2 * len(references("ckd")) * (1 + 10))
 
     def test_layout_points_match_patient_ids_and_return_the_fitted_line(self):
         frame = methods_beliefs(self.lam, n=30, dataset="ckd")

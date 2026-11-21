@@ -171,9 +171,11 @@ def partial_linearity(out: dict[str, float], x, c, m, d) -> None:
     out["mean_position"] = _ratio(float(np.mean(c - m)), out["mean_D_minus_M"])
 
 
-def shared_statistics(W: dict[str, np.ndarray], ks: dict[str, dict[str, str]]) -> dict[str, float]:
+def shared_statistics(W: dict[str, np.ndarray], ks: dict[str, dict[str, str]],
+                      per: dict[str, dict[str, float]] | None = None) -> dict[str, float]:
     """The shared phi and the differences between the settings, on cases complete for both."""
-    per = {s: setting_statistics(W, k) for s, k in ks.items()}
+    if per is None:
+        per = {s: setting_statistics(W, k) for s, k in ks.items()}
     out = {f"diff_{stat}": per["false"][stat] - per["partial"][stat]
            for stat in ("lambda", "rho", "phi_setting") if all(stat in v for v in per.values())}
     for setting, stats in per.items():
@@ -203,16 +205,25 @@ def shared_statistics(W: dict[str, np.ndarray], ks: dict[str, dict[str, str]]) -
 def bootstrap(frame: pd.DataFrame, fn: Callable[[dict[str, np.ndarray]], dict[str, float]], *,
               resamples: int, seed: int) -> pd.DataFrame:
     """Point estimates, bootstrap medians and 95% percentile intervals (paired over cases)."""
+    return _bootstrap_tables(frame, lambda sample: {"all": fn(sample)}, resamples, seed)["all"]
+
+
+def _bootstrap_tables(frame, evaluate, resamples, seed):
+    """Resample patient rows once per draw and summarize each group of statistics separately."""
     arrays = {c: frame[c].to_numpy(dtype=float) for c in frame.columns}
-    point = fn(arrays)
+    points = evaluate(arrays)
+    draws = {group: {key: [] for key in point} for group, point in points.items()}
     rng = np.random.default_rng(seed)
     n = len(frame)
-    draws: dict[str, list[float]] = {key: [] for key in point}
     for _ in range(int(resamples)):
         idx = rng.integers(0, n, n)
-        stats = fn({c: v[idx] for c, v in arrays.items()})
-        for key in point:
-            draws[key].append(stats.get(key, np.nan))
+        for group, stats in evaluate({c: v[idx] for c, v in arrays.items()}).items():
+            for key, values in draws[group].items():
+                values.append(stats.get(key, np.nan))
+    return {group: _bootstrap_summary(point, draws[group], n, resamples) for group, point in points.items()}
+
+
+def _bootstrap_summary(point, draws, n, resamples):
     rows = []
     for key, value in point.items():
         d = np.asarray(draws[key], dtype=float)
@@ -319,6 +330,14 @@ def layout_difference(points, *, resamples, seed):
     return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
 
 
+def _paired_tables(frame, roles_by_setting, resamples, seed):
+    def evaluate(sample):
+        fits = {setting: setting_statistics(sample, roles) for setting, roles in roles_by_setting.items()}
+        return {**fits, "both": shared_statistics(sample, roles_by_setting, fits)}
+
+    return _bootstrap_tables(frame, evaluate, resamples, seed)
+
+
 def estimate_with_points(beliefs, dataset, *, resamples, seed, min_cases=5, match_references=False, points_only=False):
     W = wide(beliefs)
     tables, points = [], []
@@ -334,6 +353,7 @@ def estimate_with_points(beliefs, dataset, *, resamples, seed, min_cases=5, matc
         cols = {s: sorted({col for other in competitors for col in needed_columns(other[s], W.columns)})
                 for s in SETTINGS}
         shared = complete(sorted(set(cols["partial"] + cols["false"])))
+        paired = _paired_tables(shared, ks, resamples, seed) if len(shared) >= min_cases and not points_only else {}
         for setting, k in ks.items():
             part = shared if len(shared) >= min_cases else complete(cols[setting])
             if len(part) < min_cases:
@@ -345,7 +365,8 @@ def estimate_with_points(beliefs, dataset, *, resamples, seed, min_cases=5, matc
             if points_only:
                 point = setting_statistics({c: part[c].to_numpy() for c in part}, k)
             else:
-                t = bootstrap(part, lambda a: setting_statistics(a, k), resamples=resamples, seed=seed)
+                t = paired[setting] if paired else bootstrap(
+                    part, lambda a: setting_statistics(a, k), resamples=resamples, seed=seed)
                 tables.append(t.assign(setting=setting, reference=reference))
                 point = t.set_index("statistic").estimate
             g = pd.DataFrame({"case_id": part.index, "x_A_minus_B": part[k["A"]] - part[k["B"]]})
@@ -356,8 +377,8 @@ def estimate_with_points(beliefs, dataset, *, resamples, seed, min_cases=5, matc
                 g[f"beta_{role}"] = point[f"beta_{role}"]
                 g[f"residual_{role}"] = y - g[f"intercept_{role}"] - g[f"beta_{role}"] * g.x_A_minus_B
             points.append(g.assign(setting=setting, reference=reference))
-        if len(shared) >= min_cases and not points_only:
-            t = bootstrap(shared, lambda a: shared_statistics(a, ks), resamples=resamples, seed=seed)
+        if paired:
+            t = paired["both"]
             tables.append(t.assign(setting="both", reference=reference))
             for setting in SETTINGS:
                 for stat in ("tau", "phi_lambda", "phi"):
