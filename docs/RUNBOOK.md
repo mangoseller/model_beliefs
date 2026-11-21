@@ -58,9 +58,10 @@ $PY -m second_order.baseline_check --out-dir build/second_order_baseline   # fir
 ```
 
 `./reproduce.sh analysis` writes to `build/`, or to `LB_BUILD_DIR` if it is
-set. Off the pinned macOS environment, the CKD c-indices match the paper to
-within about 0.01, and R² matches exactly (README, "Reproducing the original
-paper").
+set; the runner does this in every run. Against the paper's CKD
+reports↔decisions numbers (`docs/baseline_ckd.csv`), pooled R² matches
+exactly and c-indices to within 0.009. That is within the platform tolerance
+`docs/REPLICATION.md` gives for runs off its pinned macOS build.
 
 ## The generation cache
 

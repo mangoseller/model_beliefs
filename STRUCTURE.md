@@ -3,7 +3,7 @@
 This file maps `latent_beliefs` (the replication package, most of this file)
 and `second_order` (the second-order belief experiment, at the end). The
 first-order toolkit in `model_beliefs/`, `scripts/` and `datasets/` is
-described in the README.
+described in `model_beliefs/README.md`.
 
 The package `latent_beliefs` is organised by pipeline stage.  Every stage is a
 module with a command-line interface (`python -m latent_beliefs.<module>`)

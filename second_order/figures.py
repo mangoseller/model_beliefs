@@ -349,69 +349,44 @@ def brace(ax, x0: float, x1: float, y: float, height: float, *, color=INK2, lw: 
     ax.plot(x0 + t * (x1 - x0), y + height * shape / shape.max(), color=color, lw=lw, solid_capstyle="round")
 
 
-def draw_decomposition(ax, lam: float, phi: float, *, w: float | None = None, annotate: bool = True) -> None:
-    """Own belief (top) and the belief attributed to John (bottom), as gaps with delta = 1.
+def draw_decomposition(ax, lam: float, phi: float) -> None:
+    """The model's own gap (top) and the belief attributed to John (bottom), with delta = 1.
 
-    Positions: l_B = l_M = 0 (both lines measured from their reduced-evidence point),
-    l_A = 1, l_D = phi, l_C = phi * lambda.  The dashed segment is the shortfall of D
-    from a fully responsive attribution (phi = 1).
+    l_B = l_M = 0, l_A = 1, l_D = phi, l_C = phi * lambda; dashed: D's shortfall from phi = 1.
     """
     top, bottom = 1.0, 0.0
     c, d = phi * lam, phi
-    ax.plot([0, 1], [top, top], color=INK, lw=2.2, solid_capstyle="round", zorder=2)
-    ax.plot([0, d], [bottom, bottom], color=INK, lw=2.2, solid_capstyle="round", zorder=2)
-    if d < 1:
-        ax.plot([d, 1], [bottom, bottom], color=MUTED, lw=1.4, ls=(0, (4, 3)), zorder=1)
+    ax.plot([0, 1], [top, top], color=INK, lw=2.2, solid_capstyle="round")
+    ax.plot([0, d], [bottom, bottom], color=INK, lw=2.2, solid_capstyle="round")
+    ax.plot([d, 1], [bottom, bottom], color=MUTED, lw=1.4, ls=(0, (4, 3)))
     for x in (0, 1):
         ax.plot([x, x], [bottom, top], color=GRID, lw=1, ls=":", zorder=0)
-    ax.scatter([0], [top], s=70, color=CONDITION_COLOR["B"], zorder=3)
-    ax.scatter([1], [top], s=70, color=CONDITION_COLOR["A"], zorder=3)
-    ax.scatter([0], [bottom], s=70, color=M_COLOR, zorder=3)
-    ax.scatter([c], [bottom], s=70, color=C_COLOR, zorder=3)
-    ax.scatter([d], [bottom], s=70, color=D_COLOR, zorder=3)
+    points = [(0, top, "$\\ell_B$", CONDITION_COLOR["B"]), (1, top, "$\\ell_A$", CONDITION_COLOR["A"]),
+              (0, bottom, "$\\ell_M$", M_COLOR), (c, bottom, "$\\ell_C$", C_COLOR), (d, bottom, "$\\ell_D$", D_COLOR)]
+    for x, y, label, color in points:
+        ax.scatter([x], [y], s=70, color=color, zorder=3)
+        ax.text(x, y + 0.1, label, color=color, ha="center", fontsize=12)
     ax.scatter([1], [bottom], s=70, facecolor="white", edgecolor=MUTED, lw=1.2, zorder=3)
-    label = dict(ha="center", fontsize=11)
-    ax.text(0, top + 0.1, "$l_B$", color=CONDITION_COLOR["B"], **label)
-    ax.text(1, top + 0.1, "$l_A$", color=CONDITION_COLOR["A"], **label)
-    for x, text, color in ((0, "$l_M$", M_COLOR), (c, "$l_C$", C_COLOR), (d, "$l_D$", D_COLOR)):
-        ax.text(x, bottom + 0.1, text, color=color, **label)
-    ax.text(1, bottom + 0.1, "$l_D$ if $\\varphi=1$", color=MUTED, ha="center", fontsize=9)
-    ax.text(-0.04, top, "model's own\nbelief", ha="right", va="center", fontsize=9, color=INK2)
-    ax.text(-0.04, bottom, "belief attributed\nto John", ha="right", va="center", fontsize=9, color=INK2)
-    if w is not None:
-        ax.plot([w * phi] * 2, [bottom - 0.06, bottom + 0.06], color=MUTED, lw=1.2)
-        ax.text(w * phi, bottom - 0.13, f"λ = {w:g}\n(Camerer et al.)", ha="center", va="top", fontsize=7,
-                color=MUTED)
-    if annotate:
-        brace(ax, 0, 1, top + 0.32, 0.08)
-        ax.text(0.5, top + 0.47, "$\\delta = l_A - l_B$: how far the private evidence moves the model's own belief",
-                ha="center", fontsize=9, color=INK2)
-        brace(ax, 0, c, bottom - 0.12, -0.07, color=C_COLOR)
-        ax.text(c / 2, bottom - 0.3, "leaked\n$\\lambda\\varphi\\delta$", ha="center", va="top", fontsize=9,
-                color=C_COLOR)
-        brace(ax, c, d, bottom - 0.12, -0.07, color=D_COLOR)
-        ax.text((c + d) / 2, bottom - 0.3, "withheld from John\n$\\tau\\delta = \\varphi(1-\\lambda)\\delta$",
-                ha="center", va="top", fontsize=9, color=D_COLOR)
-        brace(ax, d, 1, bottom - 0.12, -0.07, color=MUTED)
-        ax.text((d + 1) / 2, bottom - 0.3, "compression\n$(1-\\varphi)\\delta$", ha="center", va="top",
-                fontsize=9, color=MUTED)
-        brace(ax, 0, d, bottom - 0.62, -0.07)
-        ax.text(d / 2, bottom - 0.8, "$\\varphi\\delta = l_D - l_M$: John's belief moves when he has the evidence",
-                ha="center", va="top", fontsize=9, color=INK2)
-    ax.set_xlim(-0.32, 1.12)
-    ax.set_ylim(bottom - (1.05 if annotate else 0.3), top + (0.62 if annotate else 0.3))
+    ax.text(1, bottom + 0.1, "$\\varphi = 1$", color=MUTED, ha="center", fontsize=10)
+    ax.text(-0.05, top, "own", ha="right", va="center", fontsize=11, color=INK2)
+    ax.text(-0.05, bottom, "John", ha="right", va="center", fontsize=11, color=INK2)
+    brace(ax, 0, 1, top + 0.3, 0.08)
+    ax.text(0.5, top + 0.45, "$\\delta$", ha="center", fontsize=12, color=INK2)
+    for x0, x1, label, color in ((0, c, "$\\lambda\\varphi\\delta$", C_COLOR), (c, d, "$\\tau\\delta$", D_COLOR),
+                                 (d, 1, "$(1-\\varphi)\\delta$", MUTED)):
+        brace(ax, x0, x1, bottom - 0.12, -0.07, color=color)
+        ax.text((x0 + x1) / 2, bottom - 0.3, label, ha="center", va="top", fontsize=11, color=color)
+    brace(ax, 0, d, bottom - 0.55, -0.07)
+    ax.text(d / 2, bottom - 0.73, "$\\varphi\\delta$", ha="center", va="top", fontsize=11, color=INK2)
+    ax.set_xlim(-0.2, 1.1)
+    ax.set_ylim(bottom - 0.92, top + 0.62)
     ax.axis("off")
 
 
 def curse_schematic(lam: float = 0.45, phi: float = 0.75) -> None:
-    """What lambda, phi and tau measure (illustrative lambda and phi)."""
-    fig, ax = plt.subplots(figsize=(8.6, 4.4))
+    """What lambda, phi and tau measure (illustrative values)."""
+    fig, ax = plt.subplots(figsize=(6.4, 3.3))
     draw_decomposition(ax, lam, phi)
-    ax.set_title(f"Leakage λ, responsiveness φ and theory-of-mind score τ (illustration: λ = {lam}, φ = {phi})",
-                 fontsize=10, color=INK, loc="left")
-    fig.text(0.02, 0.01, "Gaps on the log-odds scale, in units of δ, across cases: l_C − l_M = λφδ, l_D − l_M = φδ.  "
-             "λ = 0: John is given only his own evidence; λ = 1: the model's private evidence fully leaks.",
-             fontsize=7.5, color=INK2)
     save(fig, "curse_schematic")
 
 

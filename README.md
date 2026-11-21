@@ -1,129 +1,70 @@
 # Second-order beliefs in language models
 
-When a language model says what *another agent* believes, does it reason from that agent's
-evidence, or report its own belief under another name? This repository measures how much of a
-model's private evidence leaks into the beliefs it attributes to others. It extends the
-latent-belief method of Smolin and Wilder, *Beliefs and Behavior in Language Models*
+When a model reports what someone else believes, how much of its own private evidence leaks in?
+This repository measures that *curse of knowledge* in Qwen3 8B and 14B, building on Smolin and
+Wilder, *Beliefs and Behavior in Language Models*
 ([arXiv:2609.07943](https://arxiv.org/abs/2609.07943)).
-
-| Folder | Contents |
-| --- | --- |
-| `second_order/` | The experiment: the curse of knowledge in Qwen3 8B and 14B |
-| `latent_beliefs/` | The paper's replication package, unchanged ([`docs/REPLICATION.md`](docs/REPLICATION.md)) |
-| `model_beliefs/`, `scripts/`, `datasets/` | First-order belief readouts on small models ([`model_beliefs/README.md`](model_beliefs/README.md)) |
 
 ## The experiment
 
-A patient's chart is shown to the model. John, a physician with the same training and
-judgement as the model, holds a different copy.
+The model reads a patient's chart. John, a physician as capable as the model, has a copy that
+is missing some fields.
 
 | We ask the model | Condition | Example |
 | --- | --- | --- |
-| Its own view, from the real chart | A | 30% chance of kidney disease |
+| Its own view, from the full chart | A | 30% |
 | Its own view, from John's copy | B | 12% |
-| What John thinks; John has the real chart too | D | 28% |
-| What John thinks; the model sees only John's copy | M | 13% |
-| What John thinks; the model sees the real chart, John has his copy | C | 25% |
+| What John thinks; it sees only John's copy | M | 13% |
+| What John thinks; it sees the full chart | C | 25% |
+| What John thinks, if John had the full chart | D | 28% |
 
-**Leakage** $\lambda$ is where C sits between M and D in log-odds $\ell$: $\lambda = 0$ means the
-model fully takes John's perspective, $\lambda = 1$ means it gives its own belief as John's. Here
-$\lambda = (\ell_C - \ell_M)/(\ell_D - \ell_M) \approx 0.84$; for people, Camerer, Loewenstein and
-Weber (1989) find about 0.51.
+**Leakage** $\lambda$ is where C falls between M and D in log-odds $\ell$: $0$ means the model
+kept its private evidence out of John's belief, $1$ means it all leaked in. Here
+$\lambda = (\ell_C - \ell_M)/(\ell_D - \ell_M) \approx 0.84$; people score about $0.51$
+(Camerer, Loewenstein and Weber, 1989).
 
 ![What λ, φ and τ measure](docs/figures/curse_schematic.png)
 
-Across cases, with $x = \ell_A - \ell_B$ the model's own update and $x'$ the same gap from an
-independent second run of A and B:
+Across cases, with $x = \ell_A - \ell_B$ and $x'$ the same gap from a second, independent run:
 
 $$
 \lambda = \frac{\beta_C}{\beta_D}, \qquad
 \rho = \frac{\mathrm{Cov}(x, x')}{\mathrm{Var}(x)}, \qquad
 \varphi = \frac{\beta_D}{\rho}, \qquad
-\tau = \frac{\beta_D - \beta_C}{\rho} = \varphi\,(1 - \lambda),
+\tau = \varphi\,(1 - \lambda),
 $$
 
 where $\beta_C$ and $\beta_D$ are the slopes of $\ell_C - \ell_M$ and $\ell_D - \ell_M$ on $x$. $\rho$
-is the reliability of $x$, $\varphi$ how strongly John's belief follows the evidence, and $\tau$ a
-theory-of-mind score.
+corrects for noise in $x$, $\varphi$ is how strongly John's belief follows the evidence, and $\tau$
+is a theory-of-mind score.
 
-Two settings: **partial evidence** (John's copy lacks three fields) and **false belief** (a
-colleague read John one line wrongly). Two datasets:
-
-- **CKD**: 500 kidney-disease cases × 16 outputs, with beliefs from the paper's latent fit and
-  from the stated probability.
-- **A bespoke dataset**: fictional items with known Bayes answers, placebo items and
-  comprehension checks ([`docs/BESPOKE.md`](docs/BESPOKE.md)).
-
-The design, estimators and assumption checks are in
+The study runs two settings, John missing evidence and John told something false, on two
+datasets: the paper's 500 kidney-disease cases and a set of fictional puzzles with known Bayes
+answers ([`docs/BESPOKE.md`](docs/BESPOKE.md)). The full design is in
 [`docs/IMPLEMENTATION_NOTES.md`](docs/IMPLEMENTATION_NOTES.md).
 
 ## Running it
 
-On a fresh Linux GPU machine (e.g. vast.ai):
+On a Linux machine with a GPU:
 
 ```bash
 git clone https://github.com/mangoseller/model_beliefs && cd model_beliefs
-# optional: the bespoke item file at data/bespoke/items.yaml (else a placeholder stands in)
-bash run_experiment.sh --smoke                    # a quick full check first: 20 cases
-nohup bash run_experiment.sh > run.out 2>&1 &     # then everything
+bash run_experiment.sh --smoke                    # quick check on 20 cases
+nohup bash run_experiment.sh > run.out 2>&1 &     # the full run
 ```
 
-`run_experiment.sh` installs the pinned environment (`requirements/`) and the Claude Code and
-Codex CLIs. It downloads the data and the model weights, reproduces the original paper, then
-for each model:
-
-1. tunes vLLM and smoke-tests the answers;
-2. runs every condition and follow-up;
-3. freezes residual-stream activations;
-4. fits, analyses and draws the figures.
-
-Everything lands in `runs/<run_id>/`, which is packaged as `runs/<run_id>.tar.gz` (activations in
-`runs/<run_id>_activations.tar`). Open `RUN_REPORT.md` first: it has the results, the figures and
-every setting.
-
-- `--run-id <run_id>` resumes a run without regenerating anything.
-- Expect about 120 GB of disk. Qwen3 14B needs a GPU with 40 GB or more; 24 GB is enough for 8B.
-- `CPU_ONLY=1 bash run_experiment.sh --models synthetic --smoke` runs the same pipeline without
-  a GPU, on a simulator with known answers.
-
-[`docs/RUNBOOK.md`](docs/RUNBOOK.md) covers each stage, the individual commands and the figures.
-
-## Tests
-
-```bash
-python -m unittest tests.test_prompts_second_order tests.test_leakage tests.test_bespoke \
-    tests.test_generation tests.test_runner      # about a minute
-python -m unittest tests.test_pipeline           # end to end on the synthetic backend, a few minutes
-```
-
-The tests read the paper's results bundle from `data/release/`
-([Zenodo](https://doi.org/10.5281/zenodo.23350428)).
-
-## Reproducing the original paper
-
-`./reproduce.sh analysis` rebuilds the paper's figures and tables from the released bundle in
-about five minutes on CPU; the runner does this in every run. Against the paper's CKD
-reports↔decisions numbers (`docs/baseline_ckd.csv`):
-- pooled R² matches exactly;
-- c-indices match to within 0.009, the platform tolerance noted in
-  [`docs/REPLICATION.md`](docs/REPLICATION.md) for runs outside the pinned macOS build.
+This installs everything, runs the experiment on both models, and packages the results as
+`runs/<run_id>.tar.gz`. Start with `RUN_REPORT.md` inside it. Put the puzzle set at
+`data/bespoke/items.yaml` first; without it, a placeholder is used. Details are in
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
 ## Layout
 
 ```
-second_order/        the experiment (module map: STRUCTURE.md)
-  deprecated/        the earlier RQ1–RQ3 design across nine hosted models, still runnable
-latent_beliefs/      the paper's replication package
-configs/             configs/second_order.yaml: every setting of the experiment
+second_order/        the experiment
+latent_beliefs/      the paper's replication package (unchanged; docs/REPLICATION.md)
+model_beliefs/       first-order belief readouts on small models (model_beliefs/README.md)
+configs/             every setting of the experiment
+docs/                runbook, implementation notes, data formats
 tests/               unit and end-to-end tests
-docs/                runbook, implementation notes, bespoke schema, example prompts
-run_experiment.sh    one-command setup and run; requirements/ pins its packages
-outputs/, runs/      results of local commands and of full runs (git-ignored)
-results/             write-ups of model_beliefs runs
 ```
-
-## License and citation
-
-The code is released under the MIT License ([`LICENSE`](LICENSE)). The replication package and
-its results bundle are the work of the original authors; if you use them, cite the paper (see
-[`CITATION.cff`](CITATION.cff) and [`docs/REPLICATION.md`](docs/REPLICATION.md)).
