@@ -36,8 +36,9 @@ record E. E_p withholds three fields; E_f alters two. Every column is read as a 
   - **Probability:** reasoning, then the JSON object `{"probability": <number>}` with a
     number between 0 and 1, the same format as the bespoke items. Only the JSON object is
     scored. The raw text, stop reason, parse method and any alternate fallback value remain in the response tables.
-  - **Multiple choice:** a single letter, optionally with its option text, or the option
-    text alone. It is decoded through the row's own options: 1 or 0 for screen/accept
+  - **Multiple choice:** reasoning, then a final `Choice:` line (amendment 2 in
+    [`design.md`](design.md)) naming a letter, optionally with its option text, or the option
+    text alone; a reply that is only the letter or option also counts. It is decoded through the row's own options: 1 or 0 for screen/accept
     or not, 1 to 5 up the Likert and quintile scales.
   - **Checks and probes:** scored against `check_answer`.
 - **Integrity:** the runner checks every file against `SHA256SUMS` and runs the dataset's

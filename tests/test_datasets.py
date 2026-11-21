@@ -150,7 +150,9 @@ class Parsing(unittest.TestCase):
         probability = CKD[CKD.question_id == "probability"]
         self.assertTrue(probability.prompt.str.endswith(json_ask).all())
         self.assertTrue(BESPOKE.prompt.str.endswith(json_ask).all())
-        self.assertTrue(CKD[CKD.question_id != "probability"].prompt.str.endswith("Answer with a single letter.").all())
+        choice = CKD[CKD.question_id != "probability"].prompt
+        self.assertTrue(choice.str.endswith("\n\n" + DS.CHOICE_ASK).all())
+        self.assertFalse(choice.str.contains(DS.ARCHIVED_CHOICE_ASK, regex=False).any())
 
     def test_letters(self):
         opts = {"A": "Accept the bet", "B": "Decline the bet"}
@@ -159,6 +161,35 @@ class Parsing(unittest.TestCase):
             self.assertEqual(DS.parse_letter(text, opts), letter, text)
         for text in ("C", "A. Decline the bet", "Either", "A or B"):
             self.assertIsNone(DS.parse_letter(text, opts), text)
+
+    def test_choices_are_read_from_the_final_choice_line(self):
+        for text, letter in (("Reasoning.\nChoice: A", "A"), ("Reasoning.\n\n**Choice:** B\n", "B"),
+                             ("Reasoning.\nChoice: **A**", "A"), ("Reasoning.\nchoice: B. Decline the bet", "B"),
+                             ("Choice: Decline the bet", "B"), ("A", "A"),
+                             ("Reasoning.\n\n**Choice: B**  \nDecline the bet.", "B"),
+                             ("Reasoning.\nChoice: A\n**Accept the bet**", "A"),
+                             ("Reasoning.\n\n### **Choice:**\nB. Decline the bet", "B"),
+                             ("Reasoning.\n\n**Choice: A**  \n**Answer: Choice: A**", "A")):
+            self.assertEqual(DS.parse("ckd", "bet_4/normal", "A. Accept the bet\nB. Decline the bet", text)[0],
+                             1.0 if letter == "A" else 0.0, text)
+        for text in ("Reasoning.\nChoice: A\nOn reflection, maybe B.", "I would pick A.", "Choice: A or B",
+                     "Reasoning.\n### Choice:", "My choice: A, but the final answer is unclear.\nMore reasoning",
+                     "Reasoning that runs out of tokens before"):
+            self.assertIsNone(DS.parse("ckd", "bet_4/normal", "A. Accept the bet\nB. Decline the bet", text)[0], text)
+
+    def test_followups_ask_for_the_statement_format(self):
+        questions = BESPOKE.comprehension_q[BESPOKE.comprehension_q != ""]
+        self.assertTrue(questions.str.contains(' in the form "(Draw|Witness|Test) ', regex=True).all())
+        self.assertEqual(DS.followup_question("What was Ben told about witness 1?"),
+                         'What was Ben told about witness 1? Answer on one line in the form "Witness 1: says "<name>"."')
+        self.assertEqual(DS.followup_question("Which draws did Alice see?"),
+                         'Which draws did Alice see? Write one line per draw in the form "Draw <number>: <result>."')
+
+    def test_followup_statements_ignore_markdown_and_json_escapes(self):
+        q, a = "Which draws did Alice see? List them with their results.", "Draw 2: red. Draw 3: red. Draw 4: blue."
+        bold = "Alice saw:\n\n- **Draw 2**: red\n- **Draw 3**: red\n- **Draw 4**: blue\n\nSo **Draw 2 (red)** and more."
+        self.assertEqual(DS.score_comprehension(q, a, bold), 1.0)
+        self.assertEqual(DS.statements('["Witness 3: says \\"Sam\\""]'), {("witness", 3): {"sam"}})
 
     def test_ckd_values_are_meanings_not_positions(self):
         case_id = DS.case_ids("ckd")[0]

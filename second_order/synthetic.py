@@ -157,7 +157,8 @@ def respond(model: str, item, seed: int) -> str:
             reasoning = f"<think>\n{reasoning}\n</think>\n\n{reasoning}"
         return f'{reasoning}\n{{"probability": {report:.3f}}}'
     letter = letter_for(question, item.prompt, choice_value(question, z, t, rng))
-    return f"{letter}. {DS.options(item.prompt)[letter]}" if rng.random() < 0.2 else letter
+    answer = f"{letter}. {DS.options(item.prompt)[letter]}" if rng.random() < 0.2 else letter
+    return f"Weighing the options step by step.\nChoice: {answer}"
 
 
 def generate(model: str, items: list, seed: int) -> list[dict[str, Any]]:

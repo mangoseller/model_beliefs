@@ -11,8 +11,8 @@ layer and three positions:
   of the scenario and evidence (bespoke);
 * ``prompt_end``: the last token of the chat-formatted prompt (where generation began);
 * ``pre_answer``: the last token before the final answer: for probability questions,
-  before the last ``{"probability"`` JSON object, after the model's reasoning; for the
-  single-letter answers, the same token as ``prompt_end``.
+  before the last ``{"probability"`` JSON object, after the model's reasoning; for
+  multiple-choice answers (not captured by default), the same token as ``prompt_end``.
 
 Which items: ``activations`` in the config (default: the probability question of every
 case and condition, main run, first sample), so that every direct belief the estimators

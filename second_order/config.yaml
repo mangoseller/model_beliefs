@@ -6,7 +6,7 @@ datasets:
   ckd:                     # datasets/ckd_second_order_v3 (its README.md describes the battery)
     dir: datasets/ckd_second_order_v3
     batteries: [main, high_thresholds, role_swap]   # prompt files to generate
-    max_tokens: {probability: 4096, choice: 256}   # reasoning then JSON; a single letter
+    max_tokens: {probability: 4096, choice: 4096}  # reasoning, then JSON or a final Choice: line
   bespoke:                 # datasets/second_order_simple_prompts.csv
     file: datasets/second_order_simple_prompts.csv
     samples: 20            # samples per item, condition and run

@@ -16,8 +16,8 @@ CKD outputs are ``<question_id>/<order>`` (``probability/normal``, ``bet_4/flip`
 ``check/normal``, ...); the bespoke output is ``probability``.
 
 Both datasets ask for a probability the same way: reasoning first, then the JSON
-object ``{"probability": <number>}`` with a number between 0 and 1.  Multiple-choice
-questions ask for a single letter.
+object ``{"probability": <number>}`` with a number between 0 and 1.  CKD multiple-choice
+questions (amendment 2) also ask for reasoning first, then a final ``Choice: <letter>`` line.
 """
 
 from __future__ import annotations
@@ -44,6 +44,12 @@ BESPOKE_META = ["family", "person", "n_shown", "n_hidden_or_altered", "model_evi
                 "normative_p", "normative_logodds", "full_leak_p", "comprehension_q", "comprehension_a",
                 "partial_c_indices", "report_position", "check_relation"]
 BESPOKE_OUTPUT = "probability"
+# CKD protocol amendment 2: the archived v3 multiple-choice prompts (questions, checks and probes)
+# end with ARCHIVED_CHOICE_ASK; Qwen3 with thinking off reasons anyway and runs past a short limit.
+# The loader asks for reasoning first and a final Choice line instead, as Smolin & Wilder did.
+ARCHIVED_CHOICE_ASK = "Answer with a single letter."
+CHOICE_ASK = ("Provide your reasoning first.\nThen output your answer on a new line in exactly this format:\n"
+              "Choice: <the letter of one option>")
 
 
 # Dataset files
@@ -90,6 +96,10 @@ def _ckd_battery(battery: str) -> pd.DataFrame:
     verified = frame[frame.condition.isin(["A", "D"])].copy()
     verified["condition"] += "_F"
     frame = pd.concat([frame, verified], ignore_index=True)
+    choice = frame.question_id != "probability"
+    if not frame.prompt[choice].str.endswith(ARCHIVED_CHOICE_ASK).all():
+        raise ValueError(f"{battery}: a multiple-choice prompt does not end with {ARCHIVED_CHOICE_ASK!r}")
+    frame.loc[choice, "prompt"] = frame.loc[choice, "prompt"].str[:-len(ARCHIVED_CHOICE_ASK)] + CHOICE_ASK
     false = frame.condition.str.endswith("_F")
     frame.loc[false, "prompt"] = frame.loc[false, "prompt"].str.replace(
         "Your record for this patient:", "Your record for this patient: Your chart gives the verified patient information.",
@@ -97,9 +107,29 @@ def _ckd_battery(battery: str) -> pd.DataFrame:
     return frame
 
 
+FOLLOWUP_VALUE = {"draw": "<result>", "test": "<result>", "witness": 'says "<name>"'}
+UNITS = {"draws": "draw", "witnesses": "witness", "tests": "test"}
+
+
+def followup_question(question: str) -> str:
+    """Amendment 2 for the bespoke follow-ups: the archived question plus the statement format the scorer reads."""
+    if not question:
+        return question
+    told = re.search(r"\babout (draw|witness|test) (\d+)\?$", question)
+    if told:
+        unit, index = told.groups()
+        return f'{question} Answer on one line in the form "{unit.capitalize()} {index}: {FOLLOWUP_VALUE[unit]}."'
+    which = re.match(r"Which (draws|witnesses|tests)\b", question)
+    if not which:
+        raise ValueError(f"unrecognised comprehension question: {question!r}")
+    unit = UNITS[which.group(1)]
+    return f'{question} Write one line per {unit} in the form "{unit.capitalize()} <number>: {FOLLOWUP_VALUE[unit]}."'
+
+
 @lru_cache(maxsize=1)
 def _bespoke() -> pd.DataFrame:
     raw = open_csv(C.resolve(C.load()["datasets"]["bespoke"]["file"]))
+    raw["comprehension_q"] = raw.comprehension_q.map(followup_question)
     out = pd.DataFrame({
         "dataset": "bespoke", "battery": "bespoke", "case_id": raw.item_id,
         "condition": [condition_key("bespoke", s, c) for s, c in zip(raw.setting, raw.case)],
@@ -160,7 +190,7 @@ def replicates(dataset: str, condition: str) -> int:
 
 
 def max_tokens(dataset: str, output: str) -> int:
-    """Output-token limit: reasoned probability answers get ``probability``, single letters ``choice``."""
+    """Output-token limit: probability answers get ``probability``, multiple-choice answers ``choice``."""
     limits = C.load()["datasets"][dataset]["max_tokens"]
     return int(limits["probability" if output.split("/")[0] == "probability" else "choice"])
 
@@ -174,6 +204,7 @@ LIKERT = {"Very unlikely": 1.0, "Somewhat unlikely": 2.0, "Neither likely nor un
 QUINTILE = {"Less than 5.07%": 1.0, "5.07% to less than 7.49%": 2.0, "7.49% to less than 13.02%": 3.0,
             "13.02% to less than 29.72%": 4.0, "29.72% or higher": 5.0}
 OPTION_SCORES = {"likert": LIKERT, "quintile": QUINTILE}
+CHOICE_LINE = re.compile(r"(?:^|[\s>#*_`:])choice[\s*_`]*:[\s*_`]*(.*?)\s*$", flags=re.I)
 LETTER = re.compile(r"\s*[*_`(\[]*([A-E])[*_`)\].:]*(?:\s+(.*?))?[\s.*_`]*", flags=re.S)
 
 
@@ -198,6 +229,20 @@ def parse_letter(text: str, opts: dict[str, str]) -> str | None:
             return match.group(1)
     by_text = [k for k, v in opts.items() if _norm(v) == _norm(text)]
     return by_text[0] if len(by_text) == 1 else None
+
+
+def final_choice(text: str) -> str | None:
+    """The answer on the last ``Choice:`` line (Markdown emphasis allowed), with any lines after it appended.
+
+    A model often repeats the option text on the next line, or puts the whole answer there after a
+    bare ``### Choice:`` heading; ``parse_letter`` accepts those and rejects anything else after the
+    Choice line.  None if there is no Choice line.
+    """
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    at = [k for k, line in enumerate(lines) if CHOICE_LINE.search(line)]
+    if not at:
+        return None
+    return " ".join([CHOICE_LINE.search(lines[at[-1]]).group(1), *lines[at[-1] + 1:]]).strip()
 
 
 def parse_probability(text: str | None) -> tuple[float | None, str | None]:
@@ -236,7 +281,7 @@ def fallback_probability(text: str | None) -> float | None:
 
 
 def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", text.strip().strip(".").strip()).lower()
+    return re.sub(r"\s+", " ", re.sub(r"[*_`]", "", text).strip().strip(".").strip()).lower()
 
 
 def parse(dataset: str, output: str, prompt: str, text: str | None, *,
@@ -248,7 +293,8 @@ def parse(dataset: str, output: str, prompt: str, text: str | None, *,
     if question == "probability":
         return parse_probability(text)
     opts = options(prompt)
-    letter = parse_letter(text, opts)
+    answer = final_choice(text)
+    letter = parse_letter(text if answer is None else answer, opts)
     if not letter:
         return None, None
     if check_answer is not None:
@@ -259,16 +305,17 @@ def parse(dataset: str, output: str, prompt: str, text: str | None, *,
 # Bespoke comprehension follow-ups, asked after each C answer (C, C_F, C_ctrl_F) and scored by the
 # observation statements in the answer ("Draw 2: red.", "Witness 1: says "Sam".", "Test 3: positive."):
 # "Which ... did PERSON see/hear" needs exactly the keyed statements; "What was PERSON told about ..."
-# needs every mention of that observation to carry the keyed value.
+# needs every mention of that observation to carry the keyed value.  Markdown emphasis is ignored.
+# Amendment 2 appends the statement format to each archived question (``followup_question``).
 COMPREHENSION_CONDITIONS = ("C", "C_F", "C_ctrl_F")
 # One observation statement: unit, index, value.  "Bag C draw 1" (a placebo's unrelated bag) is not one.
-STATEMENT = re.compile(r'(?<!bag c )\b(draw|witness|test) (\d+)\s*:\s*(?:says\s+)?"?([a-z]+)"?', flags=re.I)
+STATEMENT = re.compile(r'(?<!bag c )\b(draw|witness|test) (\d+)\s*:\s*(?:says\s+)?\\?"?([a-z]+)\\?"?', flags=re.I)
 
 
 def statements(text: str) -> dict[tuple[str, int], set[str]]:
     """(unit, index) -> the values stated for it, lower case."""
     found: dict[tuple[str, int], set[str]] = {}
-    for unit, index, value in STATEMENT.findall(text.lower()):
+    for unit, index, value in STATEMENT.findall(re.sub(r"[*_`]", "", text.lower())):
         found.setdefault((unit, int(index)), set()).add(value)
     return found
 

@@ -17,11 +17,11 @@ Backends: ``vllm`` (local open weights on CUDA, one seed per item), ``hf``
 (transformers fallback) and ``synthetic`` (``second_order/synthetic.py``: text from
 known parameters, for end-to-end checks).  A single user message and no system
 prompt; temperature from ``generation`` and the token limit per answer type (reasoning
-then JSON for probabilities, a single letter otherwise: ``datasets.<name>.max_tokens``),
+then JSON for probabilities, reasoning then a Choice line otherwise: ``datasets.<name>.max_tokens``),
 both overridable per model (``temperature``, ``top_p``, ``top_k``, ``max_tokens``,
 ``enable_thinking``).  vLLM also keeps the top log-probabilities of the first
-answer token (``generation.logprobs``), so the letter answers can be scored by
-answer probability as well as by the sampled choice.
+generated token (``generation.logprobs``, off by default); since multiple-choice answers now
+reason first, that token is not the answer letter.
 
     python -m second_order.run_generation --model qwen3_8b [--dataset ckd bespoke] [--stage all]
 """
