@@ -428,7 +428,7 @@ def followup_item(parent: Item, answer: str) -> Item:
 
 def followup_plan(model: str, dataset: str, case_ids: list[str]) -> list[tuple[Item, Item | None]]:
     """One entry per scheduled parent, in trial order. A missing or failed parent has no child yet."""
-    from second_order.bespoke import COMPREHENSION_CONDITIONS
+    from second_order.datasets import COMPREHENSION_CONDITIONS
 
     if dataset != "bespoke":
         return []

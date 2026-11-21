@@ -6,7 +6,6 @@ import re
 import unittest
 
 
-from second_order import bespoke as BS
 from second_order import datasets as DS
 from second_order.conditions import CONDITIONS, setting_conditions
 
@@ -139,9 +138,9 @@ class BespokeDesign(unittest.TestCase):
 
     def test_keyed_comprehension_answers_score_as_correct(self):
         rows = BESPOKE[BESPOKE.comprehension_q != ""]
-        self.assertEqual(set(rows.condition), set(BS.COMPREHENSION_CONDITIONS))
+        self.assertEqual(set(rows.condition), set(DS.COMPREHENSION_CONDITIONS))
         for r in rows.itertuples():
-            self.assertEqual(BS.score_comprehension(r.comprehension_q, r.comprehension_a, r.comprehension_a), 1.0)
+            self.assertEqual(DS.score_comprehension(r.comprehension_q, r.comprehension_a, r.comprehension_a), 1.0)
 
 
 class Parsing(unittest.TestCase):
@@ -187,16 +186,16 @@ class Parsing(unittest.TestCase):
 
     def test_free_text_comprehension(self):
         q, a = "Which draws did Alice see? List them with their results.", "Draw 2: red. Draw 3: red. Draw 4: blue."
-        self.assertEqual(BS.score_comprehension(q, a, "Alice saw draw 2: red, draw 3: red and draw 4: blue."), 1.0)
-        self.assertEqual(BS.score_comprehension(q, a, "Draw 2: red. Draw 3: red."), 0.0)
-        self.assertEqual(BS.score_comprehension(q, a, "Draw 1: red. Draw 2: red. Draw 3: red. Draw 4: blue."), 0.0)
-        self.assertIsNone(BS.score_comprehension(q, a, "I don't know."))
+        self.assertEqual(DS.score_comprehension(q, a, "Alice saw draw 2: red, draw 3: red and draw 4: blue."), 1.0)
+        self.assertEqual(DS.score_comprehension(q, a, "Draw 2: red. Draw 3: red."), 0.0)
+        self.assertEqual(DS.score_comprehension(q, a, "Draw 1: red. Draw 2: red. Draw 3: red. Draw 4: blue."), 0.0)
+        self.assertIsNone(DS.score_comprehension(q, a, "I don't know."))
         q, a = "What was Alice told about draw 1?", "Draw 1: blue."
-        self.assertEqual(BS.score_comprehension(q, a, "She was told Draw 1: blue."), 1.0)
-        self.assertEqual(BS.score_comprehension(q, a, "Draw 1: red."), 0.0)
+        self.assertEqual(DS.score_comprehension(q, a, "She was told Draw 1: blue."), 1.0)
+        self.assertEqual(DS.score_comprehension(q, a, "Draw 1: red."), 0.0)
         w = 'Witness 3: says "Kim".'
-        self.assertEqual(BS.score_comprehension("What was Sofia told about witness 3?", w, 'Witness 3: says "Kim".'), 1.0)
-        self.assertEqual(BS.statements("Draw 1: red. Bag C draw 1: blue."), {("draw", 1): {"red"}})
+        self.assertEqual(DS.score_comprehension("What was Sofia told about witness 3?", w, 'Witness 3: says "Kim".'), 1.0)
+        self.assertEqual(DS.statements("Draw 1: red. Bag C draw 1: blue."), {("draw", 1): {"red"}})
 
 
 if __name__ == "__main__":

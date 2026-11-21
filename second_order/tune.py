@@ -49,7 +49,7 @@ def benchmark_items(model: str, n: int, seed: int) -> list[dict]:
     """A seeded sample of the experiment's calls (main run, first sample), as plain dicts."""
     from second_order.run_generation import dataset_cases, experiment_items
 
-    from second_order.bespoke import COMPREHENSION_CONDITIONS
+    from second_order.datasets import COMPREHENSION_CONDITIONS
     rng = np.random.default_rng(seed)
     shares = {"ckd": 1 - settings()["bespoke_share"], "bespoke": settings()["bespoke_share"]}
     picked = []
@@ -102,7 +102,7 @@ def smoke_stats(items, records) -> dict:
 def trial(model: str, engine: dict, items_path: Path, out: Path) -> None:
     """One engine configuration in this process: load, generate every benchmark item, time it."""
     from second_order.run_generation import Item, generate_vllm, followup_item
-    from second_order.bespoke import COMPREHENSION_CONDITIONS
+    from second_order.datasets import COMPREHENSION_CONDITIONS
 
     C.load()["models"][model]["engine"] = engine  # this process only
     items = [Item(**d) for d in json.loads(items_path.read_text())]

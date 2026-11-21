@@ -37,7 +37,7 @@ controls. Partial trials keep the original wording.
 - **Comprehension.**
   - CKD: standalone yes/no checks after C, each in both option orders.
   - Bespoke: after each C answer, a second turn asks the row's free-text question, scored
-    by the observations named in the answer (`bespoke.score_comprehension`).
+    by the observations named in the answer (`datasets.score_comprehension`).
 - **Diagnostics** (analysed apart from the leakage estimator):
   - CKD role swaps: C_swap trades the two ownership headers; probe and probe_swap ask
     which record holds a field.
@@ -99,7 +99,7 @@ Each two-panel CKD layout figure uses the intersection for both layouts. The exp
   - **Calibration.** Latent posterior means shrink toward the prior, by different
     amounts in the model's fit and in PERSON's, which would scale φ. So ρ, φ and τ use
     each fit's posterior means de-shrunk with its own calibration line
-    (`measurement.py`). λ uses the values as measured; its outcomes come from one fit,
+    (`fit_pooled.calibration`). λ uses the values as measured; its outcomes come from one fit,
     so shrinkage cancels.
   - **Uncertainty.** A paired bootstrap over patients or items carries all of a case's
     conditions and replicates together, and gives 95% percentile intervals.

@@ -254,3 +254,33 @@ def parse(dataset: str, output: str, prompt: str, text: str | None, *,
     if check_answer is not None:
         return float(letter == check_answer), "letter"
     return option_value(question, opts[letter]), "letter"
+
+
+# Bespoke comprehension follow-ups, asked after each C answer (C, C_F, C_ctrl_F) and scored by the
+# observation statements in the answer ("Draw 2: red.", "Witness 1: says "Sam".", "Test 3: positive."):
+# "Which ... did PERSON see/hear" needs exactly the keyed statements; "What was PERSON told about ..."
+# needs every mention of that observation to carry the keyed value.
+COMPREHENSION_CONDITIONS = ("C", "C_F", "C_ctrl_F")
+# One observation statement: unit, index, value.  "Bag C draw 1" (a placebo's unrelated bag) is not one.
+STATEMENT = re.compile(r'(?<!bag c )\b(draw|witness|test) (\d+)\s*:\s*(?:says\s+)?"?([a-z]+)"?', flags=re.I)
+
+
+def statements(text: str) -> dict[tuple[str, int], set[str]]:
+    """(unit, index) -> the values stated for it, lower case."""
+    found: dict[tuple[str, int], set[str]] = {}
+    for unit, index, value in STATEMENT.findall(text.lower()):
+        found.setdefault((unit, int(index)), set()).add(value)
+    return found
+
+
+def score_comprehension(question: str, answer: str, text: str | None) -> float | None:
+    """1.0 correct, 0.0 wrong, None if the response states no observation at all."""
+    if not text:
+        return None
+    keyed = {k: next(iter(v)) for k, v in statements(answer).items()}
+    said = statements(text)
+    if not said:
+        return None
+    if question.lower().startswith("which"):  # exactly the observations PERSON had
+        return float(set(said) == set(keyed) and all(said[k] == {v} for k, v in keyed.items()))
+    return float(all(said.get(k) == {v} for k, v in keyed.items()))  # what PERSON was told

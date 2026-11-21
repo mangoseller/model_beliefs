@@ -10,7 +10,7 @@ and run (``replicate``), holding a belief on the logit scale:
   ask for), clipped to [0.01, 0.99].  With several samples per run (bespoke dataset),
   value = the mean of the sample logits and sd = its standard error.
 * ``value_calibrated``: for ``latent``, the posterior mean de-shrunk with the
-  fit's own calibration line (``measurement.calibration``); otherwise equal to ``value``.
+  fit's own calibration line (``fit_pooled.calibration``); otherwise equal to ``value``.
 """
 
 from __future__ import annotations

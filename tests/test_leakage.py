@@ -60,7 +60,7 @@ def methods_beliefs(lam: dict, phi: float = PHI, alpha: float = ALPHA, n: int = 
 
 def table(frame: pd.DataFrame, resamples: int = 20, dataset: str = "bespoke",
           reference: str = "single_record") -> pd.DataFrame:
-    t = L.leakage_table(frame, dataset, resamples=resamples, seed=1)
+    t = L.estimate_with_points(frame, dataset, resamples=resamples, seed=1)[0]
     return t[t.reference == reference].set_index(["setting", "statistic"])
 
 
@@ -214,7 +214,7 @@ class MethodsEstimators(unittest.TestCase):
 
     def test_ckd_reports_both_references(self):
         frame = methods_beliefs(self.lam, noise=0.0, n=300, dataset="ckd")
-        full = L.leakage_table(frame, "ckd", resamples=5, seed=1)
+        full = L.estimate_with_points(frame, "ckd", resamples=5, seed=1)[0]
         self.assertEqual(set(full.reference), {"two_record", "single_record"})
         for reference in ("two_record", "single_record"):
             t = full[full.reference == reference].set_index(["setting", "statistic"])

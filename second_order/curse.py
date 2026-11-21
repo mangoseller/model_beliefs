@@ -4,7 +4,7 @@
 
 Writes ``outputs/curse/``:
 
-* ``estimates.csv``: ``leakage.leakage_table`` per model, dataset (``ckd``: latent and
+* ``estimates.csv``: ``leakage.estimate_with_points`` per model, dataset (``ckd``: latent and
   direct beliefs; ``bespoke``: direct) and case set.  Reference ``two_record`` (CKD: C
   against M and D, the headline) and ``single_record`` (C against M_single and D_single, as in the
   Methods).  Case sets: ``all``; ``comprehension_pass`` (CKD: patients whose C checks were

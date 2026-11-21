@@ -60,6 +60,8 @@ from pathlib import Path
 
 import yaml
 
+from latent_beliefs.release import sha256
+
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "runs"
 DEFAULT_MODELS = ("qwen3_8b", "qwen3_14b")
@@ -146,14 +148,6 @@ class Run:
 
 def now() -> str:
     return dt.datetime.now().astimezone().isoformat(timespec="seconds")
-
-
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def capture(command: list[str]) -> str:

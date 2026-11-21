@@ -303,13 +303,6 @@ def apply_ratio_rule(table: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
-def leakage_table(beliefs: pd.DataFrame, dataset: str, *, resamples: int, seed: int,
-                  min_cases: int = 5) -> pd.DataFrame:
-    """Estimate on paired patients across settings when available."""
-    table, _ = estimate_with_points(beliefs, dataset, resamples=resamples, seed=seed, min_cases=min_cases)
-    return table
-
-
 def layout_difference(points, *, resamples, seed):
     """Two-chart minus one-chart leakage on the same patients, resampling patient IDs together."""
     out = []

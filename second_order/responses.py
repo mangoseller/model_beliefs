@@ -27,7 +27,6 @@ import pandas as pd
 from latent_beliefs.latent.model import OutputSpec
 from second_order import config as C
 from second_order import datasets as DS
-from second_order.bespoke import score_comprehension
 from second_order.conditions import CONDITIONS
 from second_order.run_generation import FOLLOWUP, Item, experiment_items, followup_plan, lookup
 
@@ -101,7 +100,7 @@ def score_answer(item: Item, record: dict | None, metadata: dict | None = None) 
     if question == FOLLOWUP:
         if metadata is None:
             metadata = DS.row(item.dataset, item.case_id, item.condition, "probability", item.replicate)
-        value = score_comprehension(metadata["comprehension_q"], metadata["comprehension_a"], text)
+        value = DS.score_comprehension(metadata["comprehension_q"], metadata["comprehension_a"], text)
         method = "comprehension" if value is not None else "invalid"
     else:
         key = metadata["check_answer"] if metadata is not None and question in CHECKS else None
