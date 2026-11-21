@@ -461,13 +461,12 @@ def stage_analyze(run: Run, cfg: dict) -> None:
     import pandas as pd
 
     est = pd.read_csv(run.dir / "outputs" / "curse" / "estimates.csv")
-    head = est[(est.case_set == "all") & est.statistic.isin(["lambda", "phi", "tau"])
-               & (est.setting != "false_minus_partial")]
-    for (model, dataset, method, setting), g in head.groupby(["model", "dataset", "method", "setting"], sort=False):
+    head = est[(est.case_set == "all") & est.statistic.isin(["lambda", "phi", "tau"])]
+    for key, g in head.groupby(["model", "dataset", "method", "reference", "setting"], sort=False):
         g = g.set_index("statistic")
         cells = [f"{s} {g.loc[s].estimate:.2f} [{g.loc[s].ci_lower:.2f}, {g.loc[s].ci_upper:.2f}]"
                  for s in ("lambda", "phi", "tau") if s in g.index and pd.notna(g.loc[s].estimate)]
-        run.log(f"result: {model} {dataset} {method} {setting}: " + ("; ".join(cells) or "blank (ratio rule)"))
+        run.log(f"result: {' '.join(map(str, key))}: " + ("; ".join(cells) or "blank (ratio rule)"))
 
 
 def stage_report(run: Run, cfg: dict) -> None:
