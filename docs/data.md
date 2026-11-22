@@ -20,11 +20,11 @@ record E. E_p withholds three fields; E_f alters two. Every column is read as a 
 (`datasets.open_csv`).
 
 - **Prompt files:** all three are generated (`datasets.ckd.batteries`).
-  - **Main** (65,700 archived prompts, 79,650 scheduled after the CKD amendment, 531 per patient):
+  - **Main** (65,700 released prompts; 79,650 with the verified-chart controls, 531 per patient):
     - every condition asks one probability question and 15 multiple-choice questions,
       each multiple-choice question in two option orders;
     - C and C_F add a yes/no check in both orders.
-  - **High-threshold supplement** (37,800 archived, 45,900 scheduled): 50%, 66.7% and 80% cutoffs.
+  - **High-threshold supplement** (37,800 released, 45,900 generated): 50%, 66.7% and 80% cutoffs.
   - **Role swap** (1,500): C_swap and the paired probes.
 - **Columns used:**
   - `item_id` (the case id), `setting` and `case` (the condition), `question_id` and
@@ -36,10 +36,11 @@ record E. E_p withholds three fields; E_f alters two. Every column is read as a 
   - **Probability:** reasoning, then the JSON object `{"probability": <number>}` with a
     number between 0 and 1, the same format as the bespoke items. Only the JSON object is
     scored. The raw text, stop reason, parse method and any alternate fallback value remain in the response tables.
-  - **Multiple choice:** reasoning, then a final `Choice:` line (amendment 2 in
-    [`design.md`](design.md)) naming a letter, optionally with its option text, or the option
-    text alone; a reply that is only the letter or option also counts. It is decoded through the row's own options: 1 or 0 for screen/accept
-    or not, 1 to 5 up the Likert and quintile scales.
+  - **Multiple choice:** reasoning, then a final `Choice:` line
+    ([`design.md`](design.md#prompt-adjustments-to-the-released-data)) naming a letter,
+    optionally with its option text, or the option text alone; a reply that is only the letter
+    or option also counts. It is decoded through the row's own options: 1 or 0 for
+    screen/accept or not, 1 to 5 up the Likert and quintile scales.
   - **Checks and probes:** scored against `check_answer`.
 - **Integrity:** the runner checks every file against `SHA256SUMS` and runs the dataset's
   own `validate.py` on a decompressed copy.

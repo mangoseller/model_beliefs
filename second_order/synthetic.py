@@ -13,13 +13,14 @@ fixed logistic score of the record's fields (a missing field at its cohort mean)
 the bespoke items it is the row's Bayes answer (``normative_logodds``, and
 ``full_leak_p`` for the model's evidence in C).
 
-Every call draws its belief once, ``call_noise`` logits around the value above; CKD
-decisions follow a logistic around each question's
-cutoff, and the Likert and quintile answers an ordered logit, answered by letter as
-the prompt asks; probabilities come after a line of reasoning as the JSON object.  Checks and role probes are answered correctly with probability
-``comprehension_accuracy``, as are the bespoke follow-ups.  A share
-``parse_failure_rate`` of responses has no answer, and ``think_tags`` wraps the
-reasoning in ``<think>`` tags.  Settings: ``models.synthetic.truth`` in the config.
+Every call draws its belief once, ``call_noise`` logits around the value above.  CKD
+decisions follow a logistic around each question's cutoff and the Likert and quintile
+answers an ordered logit; these and the probabilities follow a line of reasoning, as a
+final ``Choice:`` line or the JSON object.  Checks and role probes (a bare letter) are
+answered correctly with probability ``comprehension_accuracy``, as are the bespoke follow-ups.
+A share ``parse_failure_rate`` of responses has no answer, and ``think_tags`` wraps the
+reasoning of probability answers in ``<think>`` tags.  Settings: ``models.synthetic.truth``
+in the config.
 """
 
 from __future__ import annotations

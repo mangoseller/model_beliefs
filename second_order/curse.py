@@ -117,7 +117,7 @@ def case_sets(model: str, dataset: str, b: pd.DataFrame) -> dict[str, pd.DataFra
 def beliefs_for(model: str, dataset: str, method: str) -> pd.DataFrame:
     b = BL.read(model, method, dataset)
     if dataset == "ckd" and "M2" in set(b.condition):
-        raise ValueError("These CKD beliefs use the archived protocol. Generate the amended prompts in a new run.")
+        raise ValueError("These CKD beliefs use the release's condition names (M2); generate them in a new run.")
     return b[~b.case_id.isin(DS.placebo_ids())] if dataset == "bespoke" else b
 
 
@@ -137,6 +137,21 @@ def estimates(model: str, resamples: int, seed: int) -> tuple[pd.DataFrame, pd.D
     return concat(tables), concat(scatter)
 
 
+DIRECTIONS = ("sicker", "healthier")
+
+
+def direction_statistics(arrays: dict[str, np.ndarray], direction: np.ndarray, k: dict[str, str]) -> dict[str, float]:
+    """lambda and beta_D within each edit direction, and the difference in lambda."""
+    out = {}
+    for name in DIRECTIONS:
+        sel = {c: v[direction == name] for c, v in arrays.items()}
+        stats = L.setting_statistics(sel, k) if len(sel[k["A"]]) > 2 else {}
+        for key in ("lambda", "beta_D"):
+            out[f"{key}_{name}"] = stats.get(key, np.nan)
+    out["diff_lambda_sicker_minus_healthier"] = out["lambda_sicker"] - out["lambda_healthier"]
+    return out
+
+
 def direction_contrast(model: str, resamples: int, seed: int) -> pd.DataFrame:
     """False-record lambda for the randomized sicker and healthier edits, stratified bootstrap."""
     patients = DS.patients()
@@ -149,50 +164,38 @@ def direction_contrast(model: str, resamples: int, seed: int) -> pd.DataFrame:
             cols = [k[r] for r in "ABCMD"]
             part = W.loc[W.index.isin(eligible.index)].reindex(columns=cols).dropna()
             strata = eligible.loc[part.index, ["label", "false_direction"]].astype(str)
-            strata = strata.label + "|" + strata.false_direction
+            strata = (strata.label + "|" + strata.false_direction).to_numpy()
             direction = eligible.loc[part.index, "false_direction"].to_numpy()
-
-            def stat(arrays: dict, direction: np.ndarray) -> dict[str, float]:
-                out = {}
-                for name in ("sicker", "healthier"):
-                    sel = {c: v[direction == name] for c, v in arrays.items()}
-                    stats = L.setting_statistics(sel, k) if len(sel[k["A"]]) > 2 else {}
-                    for key in ("lambda", "beta_D"):
-                        out[f"{key}_{name}"] = stats.get(key, np.nan)
-                out["diff_lambda_sicker_minus_healthier"] = out["lambda_sicker"] - out["lambda_healthier"]
-                return out
-
+            counts = {name: int((direction == name).sum()) for name in DIRECTIONS}
             arrays = {c: part[c].to_numpy(float) for c in cols}
-            point = stat(arrays, direction)
+            point = direction_statistics(arrays, direction, k)
             rng = np.random.default_rng(seed)
-            groups = [np.flatnonzero(strata.to_numpy() == s) for s in sorted(strata.unique())]
+            groups = [np.flatnonzero(strata == s) for s in sorted(set(strata))]
             draws = []
             for _ in range(int(resamples)):
                 idx = np.concatenate([rng.choice(g, size=len(g)) for g in groups]) if groups else np.array([], dtype=int)
-                draws.append(stat({c: v[idx] for c, v in arrays.items()}, direction[idx]))
+                draws.append(direction_statistics({c: v[idx] for c, v in arrays.items()}, direction[idx], k))
             for key, value in point.items():
                 d = np.array([x[key] for x in draws], dtype=float)
                 d = d[np.isfinite(d)]
                 lo, hi = np.percentile(d, [2.5, 97.5]) if len(d) else (np.nan, np.nan)
+                # Ratio rule: lambda in a direction is blank when that direction's beta_D interval includes 0.
                 reasons = []
-                for group in ("sicker", "healthier"):
-                    if key.startswith("beta_D") or group not in key:
-                        continue
-                    n = (direction == group).sum()
+                for group in [] if key.startswith("beta_D") else [g for g in DIRECTIONS if g in key]:
                     dens = np.array([x[f"beta_D_{group}"] for x in draws])
                     dens = dens[np.isfinite(dens)]
-                    if n == 0:
+                    if counts[group] == 0:
                         reasons.append(f"empty subgroup ({group})")
-                    elif n < 3 or not len(dens):
+                    elif counts[group] < 3 or not len(dens):
                         reasons.append(f"insufficient cases or variation ({group})")
                     elif np.percentile(dens, 2.5) <= 0 <= np.percentile(dens, 97.5):
                         reasons.append(f"beta_D_{group} interval includes 0")
                 if reasons:
                     value = lo = hi = np.nan
                 rows.append({"model": model, "method": method, "reference": reference, "statistic": key,
-                             "blank_reason": ", ".join(reasons), "n_healthier": int((direction == "healthier").sum()),
+                             "blank_reason": ", ".join(reasons), "n_healthier": counts["healthier"],
                              "estimate": value, "ci_lower": lo, "ci_upper": hi, "n_cases": len(part),
-                             "n_sicker": int((direction == "sicker").sum()), "resamples": int(resamples)})
+                             "n_sicker": counts["sicker"], "resamples": int(resamples)})
     return pd.DataFrame(rows)
 
 
@@ -204,8 +207,8 @@ def check_tables(model: str) -> tuple[pd.DataFrame, pd.DataFrame]:
         return pd.DataFrame(), pd.DataFrame()
     scored["question"] = scored.output.str.split("/").str[0]
     checks = scored[scored.question == "check"]
-    acc = accuracy_summary(checks, ["model", "setting", "check_relation", "block_order"])
     keys = ["model", "setting", "check_relation", "block_order"]
+    acc = accuracy_summary(checks, keys)
     if not checks.empty:
         pairs = checks.pivot(index=keys + ["case_id"], columns="order", values="correct").reindex(columns=["normal", "flip"])
         paired = pairs.notna().all(axis=1)

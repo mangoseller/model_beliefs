@@ -1,7 +1,7 @@
 {
   "domain": "ckd",
   "event": "the patient has chronic kidney disease",
-  "source": "Smolin & Wilder 2026, Supplementary E.1 (wording copied). Cases below are hand-written pilot profiles in the paper's NHANES field format; labels unknown. Replace with real NHANES cases for the main run.",
+  "source": "Smolin & Wilder 2026, Supplementary E.1 (wording copied). Cases are a few hand-written profiles in the paper's NHANES field format, for quick checks; labels unknown. ckd_nhanes.json has the 500 NHANES cases.",
   "preamble": "",
   "context_label": "Patient profile:\n",
   "templates": {

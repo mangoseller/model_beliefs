@@ -6,27 +6,24 @@ described in [`data.md`](data.md).
 
 ## Conditions
 
-### CKD protocol amendment 1 (2026-11-21)
+### Prompt adjustments to the released data
 
-The loader applies this amendment to the archived v3 release. Each call uses a fresh context.
-In a false-belief trial the model's chart says “Your chart gives the verified patient information.”
-PERSON accepts their own chart. The cue appears wherever the model has a chart, including the
-controls. Partial trials keep the original wording.
+The loader (`second_order/datasets.py`) adjusts the released prompts in three ways. Each call
+uses a fresh context.
 
-### CKD protocol amendment 2 (2026-11-21)
-
-The v3 multiple-choice prompts (the 15 questions, the checks and the role probes) end with
-“Answer with a single letter.” Qwen3 with thinking off reasons anyway and ran past the
-256-token limit (5% of answers parsed in the first smoke test). The loader replaces that line
-with the paper's format: reasoning first, then a final `Choice: <letter>` line, with the same
-4,096-token limit as the probability question. The last `Choice:` line is scored (anything after
-it must be the chosen option's text), as is a reply that is just the letter or option.
-
-The bespoke follow-ups get the statement format their scorer reads, appended to the archived
-question: “Answer on one line in the form "Draw 1: <result>."” or “Write one line per draw in the
-form "Draw <number>: <result>."” (`datasets.followup_question`); without it the models answered
-the "What was PERSON told about …" questions in prose. The follow-up is the second turn, after
-the C answer, so no belief measurement changes.
+- **Verified chart (CKD, false setting).** Wherever the model has a chart, including the
+  controls, it says “Your chart gives the verified patient information.” PERSON accepts their
+  own chart. Partial trials keep the released wording.
+- **Reasoned multiple choice (CKD).** The released multiple-choice prompts (the 15 questions,
+  the checks and the role probes) end with “Answer with a single letter.” Qwen3 reasons anyway,
+  even with thinking off, so the loader asks for the paper's format instead: reasoning first,
+  then a final `Choice: <letter>` line, with the same 4,096-token limit as the probability
+  question. The last `Choice:` line is scored (anything after it must be the chosen option's
+  text), as is a reply that is just the letter or option.
+- **Follow-up format (bespoke).** The follow-up question gets the statement format its scorer
+  reads: “Answer on one line in the form "Draw 1: <result>."” or “Write one line per draw in the
+  form "Draw <number>: <result>."” (`datasets.followup_question`). The follow-up is the second
+  turn, after the C answer, so no belief measurement depends on it.
 
 | CKD condition (partial / false) | Model's chart | PERSON's chart | Whose belief? |
 |---|---|---|---|

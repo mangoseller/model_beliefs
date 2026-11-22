@@ -72,7 +72,6 @@ def run_bespoke(model: str, long: pd.DataFrame, case_ids: list[str]) -> pd.DataF
     if not comp.empty:
         (C.RESULTS / "comprehension").mkdir(parents=True, exist_ok=True)
         comp.drop(columns="text").to_csv(C.RESULTS / "comprehension" / f"{model}.csv", index=False)
-
     return comp
 
 

@@ -167,15 +167,19 @@ class LatentBelief(torch.nn.Module):
         o, n = self.obs, len(self.z)
         L = torch.zeros(len(o.cases), n, dtype=DT)
         mp, mb, mo = masks if masks is not None else (None, None, None)
+
+        def add(L, case, ll, mask):
+            return L.index_add(0, case, ll) if mask is None else L.index_add(0, case[mask], ll[mask])
+
         if len(o.p_case):
             phi = self.phi()
             ll = torch.distributions.Beta(self.z * phi, (1 - self.z) * phi).log_prob(o.p_val[:, None])
-            L = L.index_add(0, o.p_case[mp] if mp is not None else o.p_case, ll[mp] if mp is not None else ll)
+            L = add(L, o.p_case, ll, mp)
         if len(o.b_case):
             logit = self.alpha[o.b_q, None] + self.b_beta()[o.b_q, None] * self.lz[None]
             lw = torch.log(o.b_w.clamp_min(1e-12))
             ll = torch.logsumexp(torch.stack([F.logsigmoid(-logit) + lw[:, :1], F.logsigmoid(logit) + lw[:, 1:]]), 0)
-            L = L.index_add(0, o.b_case[mb] if mb is not None else o.b_case, ll[mb] if mb is not None else ll)
+            L = add(L, o.b_case, ll, mb)
         if len(o.o_case):
             beta = F.softplus(self.o_beta_raw)[o.o_q] + 1e-4
             cum = torch.sigmoid(self.tau()[o.o_q][:, None, :] - beta[:, None, None] * self.lz[None, :, None])
@@ -183,7 +187,7 @@ class LatentBelief(torch.nn.Module):
             cum = torch.cat([pad0, cum, pad1], -1)
             probs = (cum[..., 1:] - cum[..., :-1]).clamp_min(1e-12)  # [E, n, K]
             ll = torch.log(torch.einsum("enk,ek->en", probs, o.o_w).clamp_min(1e-300))
-            L = L.index_add(0, o.o_case[mo] if mo is not None else o.o_case, ll[mo] if mo is not None else ll)
+            L = add(L, o.o_case, ll, mo)
         return L
 
     def log_joint(self, masks=None):
@@ -219,7 +223,7 @@ def fit(model, train, val, epochs, patience, lr):
         loss = -marg[tr].mean()
         loss.backward()
         opt.step()
-        v = -marg[va].mean().item()  # (pre-step value; fine for early stopping)
+        v = -marg[va].mean().item()  # validation loss of the parameters before this step
         if v < best - 1e-5:
             best, bad = v, 0
             best_state = {k: t.detach().clone() for k, t in model.state_dict().items()}
@@ -227,6 +231,8 @@ def fit(model, train, val, epochs, patience, lr):
             bad += 1
             if bad >= patience:
                 break
+    if best_state is None:
+        raise RuntimeError("the validation loss was never finite: the latent fit diverged")
     model.load_state_dict(best_state)
     return best, ep
 
@@ -255,27 +261,25 @@ def analyse(run_dirs, out_dir, args):
         zr, zd, za = (post_r @ z).numpy(), (post_d @ z).numpy(), (post_a @ z).numpy()
 
         # direct readouts
-        prob = np.full(n, np.nan); prob_n = np.zeros(n)
-        for i, v in zip(obs.p_case.tolist(), obs.p_val.tolist()):
-            prob[i] = v if prob_n[i] == 0 else prob[i] + v; prob_n[i] += 1
-        prob = prob / np.maximum(prob_n, 1)
+        prob_n = np.bincount(obs.p_case.numpy(), minlength=n)
+        with np.errstate(invalid="ignore"):  # cases with no probability answer -> nan
+            prob = np.bincount(obs.p_case.numpy(), weights=obs.p_val.numpy(), minlength=n) / prob_n
         ordv = {q: [[] for _ in range(n)] for q in obs.ordinal}
         for i, q, w in zip(obs.o_case.tolist(), obs.o_name, obs.o_w.numpy()):
             ordv[q][i].append(float(np.dot(np.arange(len(w)), w)))
-        yes = np.zeros(n); cnt = np.zeros(n)
-        for i, w in zip(obs.b_case.tolist(), obs.b_w.numpy()):
-            yes[i] += w[1]; cnt[i] += 1
+        yes = np.bincount(obs.b_case.numpy(), weights=obs.b_w[:, 1].numpy(), minlength=n)
+        cnt = np.bincount(obs.b_case.numpy(), minlength=n)
 
         # coherence check: predict each decision from the reports only
         eval_idx = test if len(test) else np.arange(n)
-        p1 = model.p_act(post_r).clamp(1e-6, 1 - 1e-6)
-        ll = acc = m = 0.0
-        ev = set(eval_idx.tolist())
-        for i, j, w in zip(obs.b_case.tolist(), obs.b_q.tolist(), obs.b_w.numpy()):
-            if i in ev:
-                p, y = float(p1[i, j]), float(w[1])
-                ll += y * math.log(p) + (1 - y) * math.log(1 - p)
-                acc += (p >= 0.5) == (y >= 0.5); m += 1
+        in_eval = np.isin(obs.b_case.numpy(), eval_idx)
+        p_eval = model.p_act(post_r).clamp(1e-6, 1 - 1e-6)[obs.b_case, obs.b_q].numpy()[in_eval].tolist()
+        y_eval = obs.b_w[:, 1].numpy()[in_eval].tolist()
+        ll = acc = 0.0  # plain running sums (built-in sum() is compensated since Python 3.12)
+        for p, y in zip(p_eval, y_eval):
+            ll += y * math.log(p) + (1 - y) * math.log(1 - p)
+            acc += (p >= 0.5) == (y >= 0.5)
+        m = len(p_eval)
 
         thresholds = {}
         for j, q in enumerate(obs.binary):

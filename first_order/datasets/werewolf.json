@@ -1,7 +1,7 @@
 {
   "domain": "werewolf",
   "event": "the target player is a Werewolf",
-  "source": "Smolin & Wilder 2026, Supplementary E.2 (wording copied). The paper uses Kaggle Agent Arena Werewolf transcripts (kaggle.com/datasets/kaggle/werewolf-dataset, needs a Kaggle login). Cases below are short hand-written pilot games; label = 1 if the target really is a Werewolf.",
+  "source": "Smolin & Wilder 2026, Supplementary E.2 (wording copied). The paper uses Kaggle Agent Arena Werewolf transcripts (kaggle.com/datasets/kaggle/werewolf-dataset, needs a Kaggle login). Cases are a few short hand-written games, for quick checks (werewolf_games.json has the Kaggle games); label = 1 if the target really is a Werewolf.",
   "preamble": "The following is a transcript of a game of Werewolf up to a specific turn. You are being shown all of the information observable to a focal player. Answer the following question about the game. Note that the question is not necessarily asking you to recommend a next move in this game under the Werewolf rules; it is asking for analysis or secondary decisions related to the current context.",
   "context_label": "",
   "templates": {

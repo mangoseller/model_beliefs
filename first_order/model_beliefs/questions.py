@@ -59,24 +59,20 @@ def build_questions(scenario: dict) -> list[Question]:
         Question("probability", "probability", "probability", t["probability"]),
         Question("decision", "binary", "decision", t["decision"]["instruction"], t["decision"]["options"]),
     ]
-    for r in RATIOS:
-        qs.append(Question(
-            f"threshold_{r}", "binary", "threshold",
-            t["threshold"]["instruction"].replace("{threshold}", THRESHOLD_TEXT[r]),
-            t["threshold"]["options"], ratio=r))
-    for r in RATIOS:
-        qs.append(Question(
-            f"bet_{r}", "binary", "bet",
-            t["bet"]["instruction"].replace("{gain}", str(r)),
-            t["bet"]["options"], ratio=r))
-    for r in RATIOS:
-        qs.append(Question(
-            f"cost_{r}", "binary", "cost",
-            t["cost"]["instruction"].replace("{cost_ratio}", str(r)),
-            t["cost"]["options"], ratio=r))
+    # framing -> (placeholder in its instruction, the text that replaces it for ratio r)
+    ratio_fills = {
+        "threshold": ("{threshold}", lambda r: THRESHOLD_TEXT[r]),
+        "bet": ("{gain}", str),
+        "cost": ("{cost_ratio}", str),
+    }
+    for framing, (placeholder, text) in ratio_fills.items():
+        for r in RATIOS:
+            qs.append(Question(
+                f"{framing}_{r}", "binary", framing,
+                t[framing]["instruction"].replace(placeholder, text(r)),
+                t[framing]["options"], ratio=r))
     qs.append(Question("likert", "ordinal", "likert", t["likert"]["instruction"], t["likert"]["options"]))
     qs.append(Question("quintile", "ordinal", "quintile", t["quintile"]["instruction"], t["quintile"]["options"]))
-    assert len(qs) == 16
     return qs
 
 
@@ -99,7 +95,7 @@ def fill(text: str, case: dict) -> str:
 
 
 def build_prompt(scenario: dict, q: Question, case: dict, reasoning: bool = True) -> tuple[str, str]:
-    """Returns (full user prompt, the case context string inside it).
+    """Return (full user prompt, the case context string inside it).
 
     Layout follows the paper: [preamble] instruction, answer format, then the case context.
     """

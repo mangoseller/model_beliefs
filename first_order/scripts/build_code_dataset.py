@@ -135,7 +135,7 @@ def main():
 
     # 2. fill with random unpaired snippets, avoiding duplicate code
     for rows, label in ((insecure, 1), (secure, 0)):
-        need = args.n_per_label - sum(1 for _, l, _ in chosen if l == label)
+        need = args.n_per_label - sum(1 for _, lab, _ in chosen if lab == label)
         pool = [r for r in rows if r["user"] not in seen]
         rng.shuffle(pool)
         for r in pool:

@@ -23,7 +23,7 @@ final norm applied (Qwen3).
 Output in ``data/activations/<model>/<dataset>/``:
 
 * ``acts.npy``: ``[items, 3 positions, layers + 1, hidden]``, bfloat16 stored bit for bit
-  as uint16 (load with ``torch.from_numpy(a).view(torch.bfloat16)``, or
+  as uint16 (load with ``torch.from_numpy(a.view(np.int16)).view(torch.bfloat16)``, or
   ``freeze.load(path)``);
 * ``index.parquet``: one row per item (case, condition, output, run, sample, token
   counts, the token index of each position, -1 where a position was not found);

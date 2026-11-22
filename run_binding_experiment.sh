@@ -1,36 +1,39 @@
 #!/usr/bin/env bash
-# The binding experiment on one GPU, in one command, after `git pull` on the instance that ran 20261121-101311:
+# The binding experiment on one GPU host that holds the base run (runs/20261121-101311):
 #
-#   nohup bash run_binding_experiment.sh > binding.out 2>&1 &     # everything, in priority order
+#   nohup bash run_binding_experiment.sh > binding.out 2>&1 &     # every part, in priority order
 #   bash run_binding_experiment.sh part3a part3d                  # or any list of parts (setup always runs)
 #
 # Setup (idempotent): the pinned environment (as run_experiment.sh: uv, .venv-experiment,
-# requirements/lock-cuda.txt); then every plan is prepared from the archived run and refused unless its content
+# requirements/lock-cuda.txt); then every plan is prepared from the base run and refused unless its content
 # matches the reviewed plan (second_order/binding_plans.json). Parts, in order:
 #
 #   part1   binding pilot: Qwen3 8B, 30 fit-half patients, every arm, stated probability x10
-#   part3a  full binding run: Qwen3 8B and 14B, 150 patients, every arm (imports part 1; generates the
-#           order follow-up's items too, under its exact keys)
-#   part2   Astra's chart-order follow-up (both models, latent battery), plus its analysis: imports its
-#           answers and activation captures from part 3a, so it needs almost no GPU time after 3a
+#   part3a  full binding run: Qwen3 8B and 14B, 150 patients, every arm (imports part 1; also generates the
+#           order follow-up's items, under its exact keys)
+#   part2   chart-order follow-up (both models, latent battery) and its analysis; it imports its answers and
+#           activation captures from part 3a, so it needs almost no GPU time after 3a
 #   part3b  thinking mode, Qwen3 8B and 14B, the six deciding arms
 #   part3d  causal tests (HF transformers) on part 3a, after its analysis
 #   part3c  Qwen3 32B, every arm, stated probability
 #
-# Each part produces its own build in $RESULTS (partN_<run>.tar.gz, plus partN_<run>_activations.tar where it
+# Each part writes its own archives to $RESULTS (partN_<run>.tar.gz, plus partN_<run>_activations.tar where it
 # captured any, each with a .sha256), to download while later parts run. Every stage resumes from its cache.
-# The GPU only ever runs one thing. Within a part: generation, then (in the background) export, latent refits,
-# analysis and the main build while the GPU captures activations, whose build follows separately; nothing
-# downstream needs the captures. CPU stages overlap the next part's generation; part3d waits for part3a's
+# The GPU runs one stage at a time. Within a part: generation, then export, latent refits, analysis and the
+# main archive in the background while the GPU captures activations (nothing downstream needs the captures),
+# then the activations archive. CPU stages overlap the next part's generation; part3d waits for part3a's
 # analysis, and the script waits for every background stage before it exits.
 #
-# Environment: BASE_RUN (the archived run: its directory or tarball; default runs/20261121-101311, else
-# runs/20261121-101311_reanalysed.tar.gz), BASE_ACTIVATIONS (its activation index: the run directory, or
-# runs/20261121-101311_activations_index.tar or _activations.tar; found automatically),
-# PYTHON (skip the environment setup and use this interpreter), VENV (default .venv-experiment), RESULTS
-# (default runs/results), RUNS (default runs), ANALYSIS_THREADS (CPU threads for background analysis; default
-# half the cores), ENGINE_<MODEL> (vLLM engine overrides as JSON for one model's generation, e.g.
-# ENGINE_QWEN3_8B; speed only).
+# Environment:
+#   BASE_RUN          the base run: its directory or tarball (default runs/20261121-101311, else
+#                     runs/20261121-101311_reanalysed.tar.gz or runs/20261121-101311.tar.gz)
+#   BASE_ACTIVATIONS  its activation index: the run directory, or runs/20261121-101311_activations_index.tar
+#                     or _activations.tar (found automatically)
+#   PYTHON            skip the environment setup and use this interpreter
+#   VENV              default .venv-experiment
+#   RUNS, RESULTS     defaults runs and $RUNS/results
+#   ANALYSIS_THREADS  CPU threads for background analysis (default half the cores)
+#   ENGINE_<MODEL>    vLLM engine overrides as JSON for one model's generation, e.g. ENGINE_QWEN3_8B (speed only)
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 RUNS="${RUNS:-runs}"
@@ -58,8 +61,9 @@ step() { local name="$1"; shift; log "start $name"; "$@" >> "$RUNS/logs/$name.lo
 cpu() {  # CPU-only work, thread-limited so it can overlap GPU generation
     OMP_NUM_THREADS="$THREADS" MKL_NUM_THREADS="$THREADS" OPENBLAS_NUM_THREADS="$THREADS" CUDA_VISIBLE_DEVICES="" "$@"
 }
-background() {  # part, then a function to run in the background; its exit status lands in a file, so a part can
-    # be awaited from any shell (parts run in subshells, so one failing part cannot stop the others)
+# background part command...: run in the background, writing the exit status to a file so the part can be
+# awaited from any shell (parts run in subshells, so one failing part cannot stop the others)
+background() {
     local part="$1"; shift
     rm -f "$RUNS/logs/background_$part.status"
     ( set +e; ( set -e; "$@" ); echo $? > "$RUNS/logs/background_$part.status" ) &

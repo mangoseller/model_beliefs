@@ -16,8 +16,13 @@ Reads the session-1 export (``outputs/<model>_responses.parquet``) and writes
 * ``contrasts.csv``: order (person_first - own_first), binding and absence contrasts, every
   one from the same bootstrap draws;
 * ``checks.csv``, ``retention.csv``, ``drift.csv``;
-* ``decisions.json`` and ``RESULTS.md``: the pre-registered rules of the plan, and for the
-  pilot the decisions it exists to make.
+* ``lambda_cells_rules.csv``: the cells the decision rules read, from their own, larger bootstrap;
+* ``decisions.json`` and ``RESULTS.md``: the pre-registered decision rules (H1-H3), anomalies, and
+  for the pilot profile the decisions it exists to make (retention, check accuracy, precision).
+
+The partial-setting shown/withheld checks are scored from the reasoning where it reaches a
+conclusion (``check_scoring``): for yes/no fields the letter is confounded with the field's value.
+The release's letter scoring is kept beside it (``check_passed_letter``, ``accuracy_letter``).
 """
 from __future__ import annotations
 
@@ -31,6 +36,7 @@ import pandas as pd
 from second_order import binding as B
 from second_order import config as C
 from second_order import leakage as L
+from second_order import order_followup as F
 from second_order.beliefs import clip_logit
 
 ROLES = ("A", "B", "C", "M", "D")
@@ -39,12 +45,12 @@ ROLES = ("A", "B", "C", "M", "D")
 RULES = {
     "H1_false_misbinding": "false_labelled: lambda inside [-0.1, 0.1] in both orders, the person_first - own_first "
                            "difference inside (-0.2, 0.2), and labelling lowers the person_first leak "
-                           "(false_labelled - false_neutral, person_first, CI upper < 0; binding amendment 1: the plan's "
-                           "false_labelled - false_verified also removes the cue and changes A/B, and is reported; "
+                           "(false_labelled - false_neutral, person_first, CI upper < 0; false_labelled - "
+                           "false_verified, which also removes the cue and changes A/B, is reported beside it; "
                            "beta_D of both unlabelled person_first cells excluding 0)",
     "H2_curse_of_knowledge": "strictest cell of the variant (instructed+explicit if run, else labelled+explicit), "
-                             "check passed (binding amendment 1: shown/withheld checks scored from the reasoning), orders "
-                             "pooled: lambda lower bound > 0.15",
+                             "check passed (shown/withheld checks scored from the reasoning), orders pooled: "
+                             "lambda lower bound > 0.15",
     "H3_absence_not_ignorance": "the variant's labelled arms, orders pooled: lambda(implicit) - lambda(explicit) > 0.3 "
                                 "with CI lower > 0 (both cells' beta_D intervals excluding 0), and the strictest "
                                 "cell's lambda <= 0.1",
@@ -59,11 +65,9 @@ def load(root: Path, model: str) -> tuple[pd.DataFrame, dict]:
 
 
 def load_order_followup(root: Path, model: str) -> tuple[pd.DataFrame, dict]:
-    """Astra's order follow-up export in this module's schema, so it gets the same estimators."""
-    from second_order import order_followup as F
+    """The order follow-up's export in this module's schema, so it gets the same estimators."""
     F.read_plan(root)
-    raw = pd.read_parquet(root / "outputs" / f"{model}_responses.parquet")
-    long = raw.copy()
+    long = pd.read_parquet(root / "outputs" / f"{model}_responses.parquet")
     long["arm"] = [B.FOLLOWUP_ARM[(s, w)] for s, w in zip(long.setting, long.wording)]
     long["variant"], long["binding"], long["absence"] = long.setting, long.wording, "implicit"
     ab = long.role.isin(["A", "B"])
@@ -93,10 +97,6 @@ def direct_beliefs(long: pd.DataFrame) -> pd.DataFrame:
 def latent_beliefs(long: pd.DataFrame, plan: dict, model: str) -> pd.DataFrame:
     """One pooled refit across all latent-arm cells (self: A, B; person: C, M, D)."""
     from second_order import fit_pooled as FP
-    try:  # main folded measurement.py into fit_pooled
-        from second_order.fit_pooled import calibration
-    except ImportError:
-        from second_order.measurement import calibration
     from second_order.responses import configured_specs, split as patient_split
 
     arms = plan["spec"]["latent_arms"]
@@ -124,7 +124,7 @@ def latent_beliefs(long: pd.DataFrame, plan: dict, model: str) -> pd.DataFrame:
         fseed = FP.stable_seed(seed, model, "binding", family)
         fit, info = FP.fit_group(vectors, [family], fseed)
         post = FP.posteriors(fit, rows)
-        slope, intercept = calibration(fit, seed=fseed)
+        slope, intercept = FP.calibration(fit, seed=fseed)
         post["cal"] = (post["ell"] - intercept) / slope
         fitted.append(pd.concat([rows[["vector_id"]], post[["ell", "sd", "cal"]]], axis=1).assign(family=family))
         print(f"  latent {model}/{family}: epochs={info['epochs_ran']} val_nll={info['best_validation_mean_nll']:.4f} "
@@ -168,8 +168,8 @@ def load_texts(root: Path, model: str) -> pd.Series | None:
 
 
 def score_checks(long: pd.DataFrame, texts: pd.Series | None) -> pd.DataFrame:
-    """Every check row with ``correct_letter`` (the release's letter scoring) and ``correct`` (binding amendment 1: the
-    shown/withheld checks scored from the reasoning where it reaches a conclusion, else the letter)."""
+    """Every check row with ``correct_letter`` (the release's letter scoring) and ``correct`` (the shown/withheld
+    checks scored from the reasoning where it reaches a conclusion, else the letter)."""
     from second_order.check_scoring import reasoning_correct
     chk = long[long.output.str.startswith("check/") & (long.arm != "drift")].copy()
     missing = chk.status.isin(["not_generated", "call_error"])
@@ -189,9 +189,8 @@ def score_checks(long: pd.DataFrame, texts: pd.Series | None) -> pd.DataFrame:
 
 
 def check_pass(long: pd.DataFrame, texts: pd.Series | None = None) -> pd.DataFrame:
-    """case_id x 'pass:<arm>|<order>' -> 1.0 if the cell's check is right in both option orders (binding amendment 1:
-    shown/withheld checks scored from the reasoning), and 'passletter:<arm>|<order>' with the release's letter
-    scoring, as pre-registered."""
+    """case_id x 'pass:<arm>|<order>' -> 1.0 if the cell's check is right in both option orders (``correct`` of
+    ``score_checks``), and 'passletter:<arm>|<order>' with the release's letter scoring."""
     chk = score_checks(long, texts)
     out = []
     for column, prefix in (("correct", "pass:"), ("correct_letter", "passletter:")):
@@ -229,7 +228,7 @@ def _stacked(W, ks, masks=None):
 
 
 MIN_CASES = 8
-# check-passed subsets: binding amendment 1's scoring (shown/withheld checks from the reasoning), and the release's letter
+# check-passed subsets: shown/withheld checks scored from the reasoning, and by the release's letter
 CHECK_SUBSETS = {"check_passed": "pass:", "check_passed_letter": "passletter:"}
 
 
@@ -375,7 +374,7 @@ def _beta_d_reason(cells, arm, order, subset="all"):
 
 
 MAX_UNUSABLE_SHARE = 0.01  # a contrast whose draws are inestimable more often than this cannot decide a rule
-RULE_RESAMPLES = 10_000  # the rules' own bootstrap (binding amendment 1); the tables keep analysis.bootstrap_resamples
+RULE_RESAMPLES = 10_000  # the rules' own bootstrap; the tables use analysis.bootstrap_resamples
 MC_BATCHES = 10  # Monte Carlo error of each deciding quantity, from this many disjoint batches of those draws
 
 
@@ -391,6 +390,11 @@ def _interval(r):
     return None if r is None else [float(r.estimate), float(r.ci_lower), float(r.ci_upper)]
 
 
+def _triple(q, name):
+    """[estimate, lower, upper] of quantity ``name`` (None where missing), for the evidence."""
+    return [q.get(f"{name}.{s}") for s in ("est", "lo", "hi")]
+
+
 def _lam(q, cells, name, arm, order, subset="all"):
     """Puts a cell's Fieller lambda into ``q`` (estimate, lower, upper); returns the reason it can't, or ''."""
     iv, why = lambda_interval(cells, arm, order, subset)
@@ -403,16 +407,16 @@ def _con(q, contrasts, name, contrast):
     c = _contrast(contrasts, contrast)
     why = _contrast_reason(c, contrast)
     if c is not None:
-        q[f"{name}.est"], q[f"{name}.lo"], q[f"{name}.hi"] = float(c.estimate), float(c.ci_lower), float(c.ci_upper)
+        q[f"{name}.est"], q[f"{name}.lo"], q[f"{name}.hi"] = _interval(c)
     return why
 
 
 # Each rule: (cells, contrasts) -> (quantities, reasons it is undetermined, evidence); its decide(q) gives
 # (supported, refuted) from the quantities alone, so the Monte Carlo check can perturb them.
 def _h1(cells, contrasts, arms):
-    """Binding amendment 1: the reduction clause is decided on false_labelled - false_neutral (labelling alone: both arms
-    drop the cue and share A and B_F_neutral); the plan's false_labelled - false_verified also changes the cue
-    and the own-belief pair, and is reported beside it."""
+    """The reduction clause is decided on false_labelled - false_neutral, which isolates labelling (both arms drop
+    the cue and share A and B_F_neutral); false_labelled - false_verified also changes the cue and the own-belief
+    pair, and is reported beside it."""
     q, reasons = {}, []
     for o in B.ORDERS:
         reasons.append(_lam(q, cells, o, "false_labelled", o))
@@ -420,9 +424,9 @@ def _h1(cells, contrasts, arms):
     reasons.append(_con(q, contrasts, "reduction", "false_labelled-false_neutral:person_first"))
     reasons += [_beta_d_reason(cells, a, "person_first") for a in ("false_neutral", "false_verified")]
     prereg = _contrast(contrasts, "false_labelled-false_verified:person_first")
-    evidence = {o: [q.get(f"{o}.{s}") for s in ("est", "lo", "hi")] for o in B.ORDERS} | {
-        "order_difference": [q.get(f"order.{s}") for s in ("est", "lo", "hi")],
-        "labelling_reduction_person_first": [q.get(f"reduction.{s}") for s in ("est", "lo", "hi")],
+    evidence = {o: _triple(q, o) for o in B.ORDERS} | {
+        "order_difference": _triple(q, "order"),
+        "labelling_reduction_person_first": _triple(q, "reduction"),
         "reduction_contrast": "false_labelled-false_neutral:person_first",
         "plan_reduction_false_labelled_minus_false_verified": _interval(prereg)}
     return q, [r for r in reasons if r], evidence
@@ -442,7 +446,7 @@ def _h2(variant, subset="check_passed"):
         arm = strictest(arms, variant)
         reasons = [_lam(q, cells, "lam", arm, "pooled", subset)]
         evidence = {"cell": arm, "subset": subset,
-                    f"lambda_{subset}_pooled": [q.get(f"lam.{s}") for s in ("est", "lo", "hi")]}
+                    f"lambda_{subset}_pooled": _triple(q, "lam")}
         return q, [r for r in reasons if r], evidence
     return rule
 
@@ -458,8 +462,7 @@ def _h3(variant):
         reasons = [_con(q, contrasts, "drop", f"{variant}_labelled-{variant}_labelled_explicit:pooled"),
                    _lam(q, cells, "strict", arm, "pooled")]
         reasons += [_beta_d_reason(cells, a, "pooled") for a in (f"{variant}_labelled", f"{variant}_labelled_explicit")]
-        evidence = {"drop": [q.get(f"drop.{s}") for s in ("est", "lo", "hi")], "strictest": arm,
-                    "strictest_lambda": [q.get(f"strict.{s}") for s in ("est", "lo", "hi")]}
+        evidence = {"drop": _triple(q, "drop"), "strictest": arm, "strictest_lambda": _triple(q, "strict")}
         return q, [r for r in reasons if r], evidence
     return rule
 
@@ -504,9 +507,9 @@ def run_rule(rule, decide, cells, contrasts, arms, batches=()) -> dict:
 
 
 def decision_rules(cells, contrasts, arms, batches=(), exploratory=None) -> dict:
-    """The plan's rules on (cells, contrasts), as amended (binding amendment 1, docs/binding_experiment.md), with the Monte
-    Carlo check where ``batches`` are given. ``exploratory`` (cells, contrasts): the strong variant's H2 and H3,
-    which the plan did not pre-register, reported as exploratory."""
+    """The pre-registered rules on (cells, contrasts), with the Monte Carlo check where ``batches`` are given.
+    ``exploratory`` (cells, contrasts): the strong variant's H2 and H3, which are not pre-registered and are
+    reported as exploratory."""
     out = {}
     if {"false_labelled", "false_verified", "false_neutral"} <= set(arms):
         out["H1_false_misbinding"] = run_rule(_h1, _h1_decide, cells, contrasts, arms, batches)
@@ -550,7 +553,7 @@ def rule_tables(frame, arms, resamples, seed):
     return cells, contrasts, batches
 
 
-def pilot_decisions(cells, arms, retention, checks_table, n_patients, n_full=150) -> dict:
+def pilot_decisions(cells, retention, checks_table, n_patients, n_full=150) -> dict:
     """What the pilot reports before the full run: retention under the new prompts, check accuracy per arm, the
     manipulation size of each variant, and the lambda interval widths projected to 150 patients."""
     out = {}
@@ -577,15 +580,14 @@ def pilot_decisions(cells, arms, retention, checks_table, n_patients, n_full=150
 # Other tables
 def retention_table(long):
     part = long[long.arm != "drift"]
-    g = part.groupby(["arm", "role"])
-    return pd.DataFrame({"scheduled": g.size(), "parsed": g.status.apply(lambda s: (s == "parsed").sum()),
-                         "truncated": g.status.apply(lambda s: (s == "truncated").sum())}
+    g = part.assign(parsed=part.status == "parsed", truncated=part.status == "truncated").groupby(["arm", "role"])
+    return pd.DataFrame({"scheduled": g.size(), "parsed": g.parsed.sum(), "truncated": g.truncated.sum()}
                         ).assign(retention=lambda t: t.parsed / t.scheduled).reset_index()
 
 
 def checks_table(long, texts=None):
-    """Check accuracy per arm, order and relation: ``accuracy`` as scored for the check-passed subsets
-    (binding amendment 1), ``accuracy_letter`` by the release's letter, and the share scored from the reasoning."""
+    """Check accuracy per arm, order and relation: ``accuracy`` as scored for the check-passed subsets,
+    ``accuracy_letter`` by the release's letter, and the share scored from the reasoning."""
     chk = score_checks(long, texts)
     chk = chk[chk.correct_letter.notna()]
     if chk.empty:
@@ -603,7 +605,7 @@ def drift_table(long, resamples, seed):
     base = long[long.arm != "drift"].drop_duplicates("item_key").set_index("item_key")
     d = d.assign(base_value=d.drift_of.map(base.value), base_status=d.drift_of.map(base.status))
     d = d[(d.status == "parsed") & (d.base_status == "parsed")].copy()
-    d["kind"] = d.output.str.split("/").str[0].map(lambda q: "probability" if q == "probability" else "choice")
+    d["kind"] = np.where(d.output.str.split("/").str[0] == "probability", "probability", "choice")
     rows = []
     rng = np.random.default_rng(seed)
     for kind, part in d.groupby("kind"):
@@ -613,7 +615,7 @@ def drift_table(long, resamples, seed):
             diff = part.value.astype(float).to_numpy() - part.base_value.astype(float).to_numpy()
         frame = pd.DataFrame({"case": part.case_id.to_numpy(), "diff": diff})
         per = frame.groupby("case")["diff"].mean().to_numpy()
-        boots = [rng.choice(per, len(per)).mean() for _ in range(resamples)]
+        boots = rng.choice(per, (resamples, len(per))).mean(axis=1)
         rows.append(dict(kind=kind, n=len(part), patients=len(per), mean_difference=float(np.mean(diff)),
                          ci_lower=float(np.percentile(boots, 2.5)), ci_upper=float(np.percentile(boots, 97.5)),
                          scale="logit (new - baseline)" if kind == "probability" else "answer value (new - baseline)"))
@@ -651,7 +653,7 @@ def gate(reasoning, no_reasoning, arms) -> pd.DataFrame:
     """Phase 3 gate on one set of patients (both arguments: ``bootstrap``'s (cells, contrasts)). A cell enters
     Phase 3 if its no-reasoning lambda is estimable (bounded Fieller set), its interval overlaps the reasoning
     one, and, where the reasoning order effect is clear (CI excluding 0), the no-reasoning one has its sign.
-    Both lambda intervals are 95% Fieller sets (binding amendment 1; the reasoning side was a percentile interval)."""
+    Both lambda intervals are 95% Fieller sets."""
     (rc, rk), (nc, nk) = reasoning, no_reasoning
     rows = []
     for arm in arms:
@@ -696,7 +698,7 @@ def write_results(out: Path, model, plan, tables, decisions, pilot, flags=()) ->
              "## lambda per cell (95% paired patient-bootstrap intervals)", "",
              "`lambda` has the percentile interval and `lambda Fieller` the 95% Fieller set, which is what the "
              "rules read. `check_passed`: right on both option orders of the cell's check, the shown/withheld checks "
-             "scored from the reasoning (binding amendment 1); `check_passed_letter`: the release's letter scoring. `n` is "
+             "scored from the reasoning; `check_passed_letter`: the release's letter scoring. `n` is "
              "patients per order and patient-orders when pooled.", "",
              "| method | arm | order | subset | n | lambda | lambda Fieller | beta_C | beta_D | median abs x |",
              "|---|---|---|---|---|---|---|---|---|---|"]
@@ -716,7 +718,7 @@ def write_results(out: Path, model, plan, tables, decisions, pilot, flags=()) ->
     lines += ["", "## Contrasts of lambda (percentile intervals)", "", "| method | contrast | estimate |", "|---|---|---|"]
     for r in tables["contrasts"].itertuples():
         lines.append(f"| {r.method} | {r.contrast} | {r.estimate:.3f} [{r.ci_lower:.3f}, {r.ci_upper:.3f}] |")
-    lines += ["", "## Decision rules (pre-registered, as amended: binding amendment 1 in docs/binding_experiment.md)", "",
+    lines += ["", "## Decision rules (pre-registered)", "",
               f"The rules read a separate {RULE_RESAMPLES:,}-draw bootstrap of their cells (`lambda_cells_rules.csv`); "
               "`near_threshold` lists quantities whose move by 2 Monte Carlo s.e. would change the verdict.", ""]
     for method, rules in decisions.items():
@@ -793,10 +795,9 @@ def analyse(root: Path, model: str, resamples: int = 2000, seed: int | None = No
     drift = drift_table(long, resamples, seed)
     drift.to_csv(out / "drift.csv", index=False)
     flags = anomalies(drift, decisions) + truncation_anomalies(ret)
-    pilot = (pilot_decisions(cells[cells.method == "direct"], arms, ret, chk, len(plan["cases"]))
+    pilot = (pilot_decisions(cells[cells.method == "direct"], ret, chk, len(plan["cases"]))
              if plan["spec"]["profile"] == "pilot" else {})
-    result = {"decision_rules": decisions, "anomalies": flags, "pilot_decisions": pilot,
-              "amendment": "binding amendment 1 (2026-11-22): docs/binding_experiment.md"}
+    result = {"decision_rules": decisions, "anomalies": flags, "pilot_decisions": pilot}
     (out / "decisions.json").write_text(json.dumps(result, indent=2, default=float))
     write_results(out, model, plan, {"lambda_cells": cells, "contrasts": contrasts}, decisions, pilot, flags)
     print(f"{model}: analysis written to {out}")
@@ -810,14 +811,10 @@ def main():
     parser.add_argument("--resamples", type=int, default=None)
     parser.add_argument("--rule-resamples", type=int, default=RULE_RESAMPLES,
                         help="draws of the decision rules' own bootstrap (CPU only)")
-    parser.add_argument("--order-followup", action="store_true", help="the run is Astra's order follow-up")
+    parser.add_argument("--order-followup", action="store_true", help="the run is an order_followup plan")
     args = parser.parse_args()
     root = args.run.resolve()
-    if args.order_followup:
-        from second_order import order_followup as F
-        F.read_plan(root)
-    else:
-        B.read_plan(root)
+    (F.read_plan if args.order_followup else B.read_plan)(root)  # points the config at the run
     resamples = args.resamples or int(C.load()["analysis"]["bootstrap_resamples"])
     analyse(root, args.model, resamples, order_followup=args.order_followup, rule_resamples=args.rule_resamples)
 
