@@ -40,8 +40,7 @@ def package(run: Path, out: Path | None = None, name: str | None = None, what: s
     name = name or run.name
     everything = sorted(p for p in run.rglob("*") if p.name not in SKIP and not p.name.endswith(".tmp"))
     acts = [p for p in everything if "activations" in p.relative_to(run).parts[:2]]
-    skip = set(acts)
-    main = [p for p in everything if p not in skip]
+    main = sorted(set(everything) - set(acts))
     written = [_write(out / f"{name}.tar.gz", run, main, "w:gz")] if what in ("all", "main") else []
     if what in ("all", "activations") and any(p.is_file() for p in acts):
         written.append(_write(out / f"{name}_activations.tar", run, acts, "w"))
