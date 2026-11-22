@@ -1,0 +1,444 @@
+"""Session 2 (binding_causal): every intervention checked exactly on a tiny random Qwen3, then all stages
+end to end on synthetic session-1 output.
+
+Needs a Qwen3 tokenizer: the Hub snapshot of Qwen/Qwen3-0.6B (cached), or ``SO_TEST_TOKENIZER``.
+
+    python -m unittest tests.test_binding_causal
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import yaml
+
+from second_order import binding as B
+from second_order import binding_causal as BC
+from second_order import config as C
+
+ROOT = Path(__file__).resolve().parents[1]
+REVISION = "c1899de289a04d12100db370d81485cdf75e47ca"
+
+
+def tokenizer_path():
+    if os.environ.get("SO_TEST_TOKENIZER"):
+        return os.environ["SO_TEST_TOKENIZER"]
+    try:
+        from huggingface_hub import snapshot_download
+        return snapshot_download("Qwen/Qwen3-0.6B", revision=REVISION, local_files_only=True,
+                                 allow_patterns=["tokenizer*", "vocab.json", "merges.txt", "*.json"])
+    except Exception:
+        return None
+
+
+def tiny_lens():
+    import torch
+    from transformers import AutoTokenizer, Qwen3Config, Qwen3ForCausalLM
+    tok = AutoTokenizer.from_pretrained(tokenizer_path())
+    cfg = Qwen3Config(vocab_size=len(tok), hidden_size=64, intermediate_size=128, num_hidden_layers=4,
+                      num_attention_heads=4, num_key_value_heads=2, head_dim=16, max_position_embeddings=4096,
+                      attn_implementation="eager", tie_word_embeddings=True)
+    torch.manual_seed(0)
+    lm = Qwen3ForCausalLM(cfg).float().eval()
+    return BC.Lens(lm=lm, tok=tok, device=torch.device("cpu"), template_kwargs={"enable_thinking": False})
+
+
+def a_prompt(arm="false_labelled", order="person_first", role="C", case=None):
+    split = B.patient_split(20261111)
+    case = case or B.select_patients(30, split, 20261111)[0]
+    frame = B.release_frame([case])
+    src = frame[(frame.condition == B.source_condition(arm, role)) & (frame.output == "probability/normal")
+                & (frame.replicate == 0)].prompt.iloc[0]
+    return B.transform(src, arm, order if role in "CMD" else None, role)
+
+
+@unittest.skipIf(tokenizer_path() is None, "no Qwen3 tokenizer available")
+class Interventions(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import torch
+        cls.torch = torch
+        cls.lens = tiny_lens()
+        cls.prompt = BC.no_reasoning(a_prompt())
+        cls.enc = cls.lens.encode(cls.prompt)
+
+    def plain_logits(self, ids):
+        torch = self.torch
+        self.lens._rows = []
+        with torch.inference_mode():
+            return self.lens.lm(torch.tensor([ids])).logits[0, -1].float()
+
+    def test_positions_decode_to_the_intended_text(self):
+        tok, e = self.lens.tok, self.enc
+        dec = lambda k: tok.decode([e.ids[k]])
+        self.assertEqual(dec(e.positions["answer"]), ".")
+        self.assertTrue(tok.decode(e.ids[e.positions["answer"] - 4:]).endswith('": 0.'))
+        name = B.person_name(self.prompt)
+        self.assertTrue(tok.decode(e.ids[:e.positions["name"] + 1]).endswith(f"does {name}"))
+        self.assertTrue(tok.decode(e.ids[:e.positions["person_end"] + 1]).rstrip().endswith(f"{name}'s record.)"))
+        self.assertTrue(tok.decode(e.ids[:e.positions["own_end"] + 1]).rstrip().endswith("your record.)"))
+        self.assertTrue(tok.decode(e.ids[:e.positions["question_end"] + 1]).rstrip().endswith("(CKD)?"))
+        person = tok.decode([e.ids[k] for k in e.groups["person"]])
+        self.assertTrue(person.lstrip().startswith("Record X") and person.rstrip().endswith("record.)"))
+        self.assertTrue(tok.decode([e.ids[k] for k in e.groups["readout"]]).lstrip().startswith("What probability"))
+        filled = self.lens.encode(BC.with_filler(self.prompt))
+        self.assertTrue(tok.decode([filled.ids[k] for k in filled.groups["filler"]]).strip().startswith("Clinic notice"))
+        # Every arm and role encodes (A and B have no name or second block).
+        for arm in B.ARMS:
+            for role in "ABCMD":
+                e = self.lens.encode(BC.no_reasoning(a_prompt(arm, "own_first", role)))
+                self.assertIn("answer", e.positions)
+                self.assertEqual("name" in e.positions, role in "CMD")
+
+    def test_noop_hooks_change_nothing_and_two_digit_readout_is_exact(self):
+        ids = self.enc.ids
+        res = self.lens.readout(ids, [BC.Variant(), BC.Variant()])
+        self.assertAlmostEqual(float(res["p"][0]), float(res["p"][1]), places=6)
+        # First digit from a plain forward; second digit from explicit sequences, not the cache.
+        p = self.plain_logits(ids).softmax(-1)
+        d = self.lens.digits
+        p1 = p[d] / p[d].sum()
+        expected = 0.0
+        for a in range(10):
+            q = self.plain_logits(ids + [d[a]]).softmax(-1)
+            q2 = q[d]
+            end = 1 - q2.sum()
+            cond = (sum(q2[b] * (a / 10 + b / 100) for b in range(10)) + end * a / 10) / (q2.sum() + end)
+            expected += float(p1[a] * cond)
+        self.assertAlmostEqual(float(res["p"][0]), expected, places=5)
+
+    def test_tree_second_digit_is_exact_under_knockout_and_steering(self):
+        torch = self.torch
+        e = self.enc
+        L = len(e.ids)
+        vec = torch.randn(64) * 3
+        for knock in (True, False):
+            v = (BC.Variant(knock=[(1, e.groups["readout"], e.groups["own"], True)]) if knock
+                 else BC.Variant(steer=[(2, e.positions["name"], vec)]))
+            got = float(self.lens.readout(e.ids, [v])["p"][0])
+            # Explicit: every candidate as a real next token, the knockout also blocking it as a query.
+            explicit = (BC.Variant(knock=[(1, e.groups["readout"] + [L], e.groups["own"], False)]) if knock else v)
+            d = self.lens.digits
+
+            def last(ids):
+                self.lens._rows, self.lens._offset = [explicit], 0
+                try:
+                    with torch.inference_mode():
+                        return self.lens.lm(torch.tensor([ids])).logits[0, -1].float().softmax(-1)
+                finally:
+                    self.lens._rows = []
+            p = last(e.ids)
+            p1 = p[d] / p[d].sum()
+            expected = 0.0
+            for a in range(10):
+                q2 = last(e.ids + [d[a]])[d]
+                end = 1 - q2.sum()
+                cond = (sum(q2[b] * (a / 10 + b / 100) for b in range(10)) + end * a / 10) / (q2.sum() + end)
+                expected += float(p1[a] * cond)
+            self.assertAlmostEqual(got, expected, places=5)
+
+    def test_patching_every_position_reproduces_the_donor(self):
+        donor_prompt = self.prompt.replace("Age (age) is", "Age (age) is ", 1)
+        donor = self.lens.encode(donor_prompt)
+        if len(donor.ids) != len(self.enc.ids):
+            donor = self.lens.encode(self.prompt.replace("No.", "Yes", 1))
+        self.assertEqual(len(donor.ids), len(self.enc.ids))
+        full = list(range(len(donor.ids)))
+        states = self.lens.readout(donor.ids, [BC.Variant()], hidden_at=full)["hidden"][0]
+        target = float(self.lens.readout(donor.ids, [BC.Variant()])["p"][0])
+        for layer in (1, 2, 3):
+            v = BC.Variant(patch=[(layer, k, states[layer, k]) for k in full])
+            got = float(self.lens.readout(self.enc.ids, [v])["p"][0])
+            self.assertAlmostEqual(got, target, places=5)
+        base = float(self.lens.readout(self.enc.ids, [BC.Variant()])["p"][0])
+        self.assertNotAlmostEqual(base, target, places=5)
+
+    def test_knockout_zeroes_exactly_the_blocked_attention_from_its_start_layer(self):
+        torch = self.torch
+        e = self.enc
+        qs, ks = e.groups["readout"], e.groups["own"]
+        v = BC.Variant(knock=[(2, qs, ks, True)])
+        self.lens._rows, self.lens._offset = [v], 0
+        try:
+            with torch.inference_mode():
+                out = self.lens.lm(torch.tensor([e.ids]), output_attentions=True)
+        finally:
+            self.lens._rows = []
+        for layer, att in enumerate(out.attentions):
+            blocked = att[0][:, qs][:, :, ks]
+            if layer >= 2:
+                self.assertEqual(float(blocked.abs().max()), 0.0)
+                self.assertAlmostEqual(float(att[0][:, qs].sum(-1).min()), 1.0, places=5)
+            else:
+                self.assertGreater(float(blocked.sum()), 0.0)
+        # The second-digit pass blocks the new token too.
+        res = self.lens.readout(e.ids, [v])
+        ref = self.lens.readout(e.ids, [BC.Variant()])
+        self.assertNotAlmostEqual(float(res["p"][0]), float(ref["p"][0]), places=6)
+
+    def test_ablation_pins_the_projection_and_steering_adds_the_vector(self):
+        torch = self.torch
+        e = self.enc
+        pos = e.positions["answer"]
+        u = torch.randn(64)
+        u = u / u.norm()
+        mu = 0.37
+        vec = torch.randn(64)
+        for variant, check in (
+                (BC.Variant(ablate=[({2}, [pos], u, mu)]), "ablate"),
+                (BC.Variant(steer=[(2, pos, vec)]), "steer")):
+            self.lens._rows, self.lens._offset = [variant], 0
+            try:
+                with torch.inference_mode():
+                    out = self.lens.lm(torch.tensor([e.ids]), output_hidden_states=True)
+            finally:
+                self.lens._rows = []
+            with torch.inference_mode():
+                base = self.lens.lm(torch.tensor([e.ids]), output_hidden_states=True)
+            h, h0 = out.hidden_states[2][0, pos], base.hidden_states[2][0, pos]
+            if check == "ablate":
+                self.assertAlmostEqual(float(h @ u), mu, places=4)
+                self.assertTrue(torch.allclose(h - (h @ u) * u, h0 - (h0 @ u) * u, atol=1e-5))
+            else:
+                self.assertTrue(torch.allclose(h - h0, vec, atol=1e-5))
+            # Other positions and earlier layers are untouched.
+            self.assertTrue(torch.allclose(out.hidden_states[1], base.hidden_states[1]))
+            self.assertTrue(torch.allclose(out.hidden_states[2][0, :pos], base.hidden_states[2][0, :pos], atol=1e-6))
+
+    def test_shared_prefix_cache_is_exact_for_every_intervention(self):
+        torch = self.torch
+        e = self.enc
+        u = torch.randn(64)
+        u = u / u.norm()
+        donor = self.lens.readout(e.ids, [BC.Variant()], hidden_at=[e.positions["name"]])["hidden"][0]
+        variants = [BC.Variant(),
+                    BC.Variant(patch=[(2, e.positions["name"], donor[2, 0] * 1.5)]),
+                    BC.Variant(steer=[(1, e.positions["answer"], torch.randn(64) * 3)]),
+                    BC.Variant(ablate=[({1, 2}, [e.positions["answer"], e.positions["gen_start"]], u, 0.2)]),
+                    BC.Variant(knock=[(1, e.groups["readout"], e.groups["own"], True)]),
+                    BC.Variant(knock=[(2, e.groups["own"], e.groups["person"], False)])]
+        for v in variants:
+            fast = float(self.lens.readout(e.ids, [v])["p"][0])
+            slow = float(self.lens.readout(e.ids, [v], reuse_prefix=False)["p"][0])
+            self.assertAlmostEqual(fast, slow, places=5)
+        np.testing.assert_allclose(self.lens.readout(e.ids, variants)["p"],
+                                   self.lens.readout(e.ids, variants, reuse_prefix=False)["p"], atol=1e-5)
+
+    def test_padded_batch_readout_equals_one_at_a_time(self):
+        prompts = [BC.no_reasoning(a_prompt(arm, order, role)) for arm, order, role in
+                   (("false_labelled", "person_first", "C"), ("partial_original", "own_first", "C"),
+                    ("strong_labelled_explicit", "person_first", "M"), ("false_verified", "own_first", "A"),
+                    ("partial_instructed", "own_first", "D"))]
+        encs = [self.lens.encode(p) for p in prompts]
+        self.assertGreater(len({len(e.ids) for e in encs}), 1)  # really padded
+        at = [[e.positions["answer"], e.positions["gen_start"]] if i % 2 == 0 else None for i, e in enumerate(encs)]
+        ps, masses, hidden = self.lens.readout_batch(encs, at, batch=3)
+        for e, p, h, a in zip(encs, ps, hidden, at):
+            single = self.lens.readout(e.ids, [BC.Variant()], hidden_at=a)
+            self.assertAlmostEqual(p, float(single["p"][0]), places=5)
+            if a is None:
+                self.assertIsNone(h)
+                continue
+            # Both captures against transformers' own hidden_states (0 = embeddings, last = after the norm).
+            with self.torch.inference_mode():
+                ref = self.lens.lm(self.torch.tensor([e.ids]), output_hidden_states=True).hidden_states
+            ref = self.torch.stack([layer[0, a] for layer in ref])
+            self.assertTrue(self.torch.allclose(h, ref, atol=1e-4))
+            self.assertTrue(self.torch.allclose(single["hidden"][0], ref, atol=1e-5))
+
+    def test_rows_of_one_batch_are_independent(self):
+        torch = self.torch
+        e = self.enc
+        vec = torch.randn(64) * 5
+        alone = [float(self.lens.readout(e.ids, [v])["p"][0]) for v in
+                 (BC.Variant(), BC.Variant(steer=[(2, e.positions["answer"], vec)]),
+                  BC.Variant(knock=[(1, e.groups["readout"], e.groups["own"], True)]))]
+        together = self.lens.readout(e.ids, [BC.Variant(), BC.Variant(steer=[(2, e.positions["answer"], vec)]),
+                                             BC.Variant(knock=[(1, e.groups["readout"], e.groups["own"], True)])])["p"]
+        np.testing.assert_allclose(together, alone, atol=1e-5)
+
+
+def real_snapshot():
+    try:
+        from huggingface_hub import snapshot_download
+        return snapshot_download("Qwen/Qwen3-0.6B", revision=REVISION, local_files_only=True)
+    except Exception:
+        return None
+
+
+@unittest.skipIf(real_snapshot() is None, "Qwen3-0.6B weights not in the local HF cache")
+class RealWeights(unittest.TestCase):
+    """On real weights (where a misplaced tree mask shows; a tiny random model is insensitive to it): the
+    single-prompt readout, the padded batch readout and the explicit two-digit computation agree."""
+
+    def test_readout_paths_agree_with_the_explicit_computation(self):
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+        path = real_snapshot()
+        lm = AutoModelForCausalLM.from_pretrained(path, torch_dtype=torch.float32, attn_implementation="eager")
+        lens = BC.Lens(lm=lm, tok=AutoTokenizer.from_pretrained(path), device=torch.device("cpu"),
+                       template_kwargs={"enable_thinking": False})
+        encs = [lens.encode(BC.no_reasoning(a_prompt(arm, "person_first", "C")))
+                for arm in ("false_verified", "partial_labelled")]
+
+        def explicit(ids, v=None):
+            def last(seq):
+                lens._rows, lens._offset = [v] if v else [], 0
+                try:
+                    with torch.inference_mode():
+                        return lm(torch.tensor([seq])).logits[0, -1].float().softmax(-1)
+                finally:
+                    lens._rows = []
+            d = lens.digits
+            p = last(ids)
+            p1 = p[d] / p[d].sum()
+            total = 0.0
+            for a in range(10):
+                q2 = last(ids + [d[a]])[d]
+                end = 1 - q2.sum()
+                total += float(p1[a] * (sum(q2[b] * (a / 10 + b / 100) for b in range(10)) + end * a / 10)
+                               / (q2.sum() + end))
+            return total
+        batch = lens.readout_batch(encs, batch=2)[0]
+        for e, pb in zip(encs, batch):
+            want = explicit(e.ids)
+            self.assertAlmostEqual(float(lens.readout(e.ids, [BC.Variant()])["p"][0]), want, places=4)
+            self.assertAlmostEqual(pb, want, places=4)
+        # and under an intervention (a knockout also blocking the answer token)
+        e = encs[0]
+        v = BC.Variant(knock=[(4, e.groups["readout"], e.groups["own"], True)])
+        explicit_v = BC.Variant(knock=[(4, e.groups["readout"] + [len(e.ids)], e.groups["own"], False)])
+        self.assertAlmostEqual(float(lens.readout(e.ids, [v])["p"][0]), explicit(e.ids, explicit_v), places=4)
+
+
+class Probes(unittest.TestCase):
+    def test_grouped_cv_does_not_reward_patient_identity(self):
+        # Rows carry only the patient's identity; the target is unrelated to anything encoded.
+        rng = np.random.default_rng(0)
+        patients = np.repeat(np.arange(60), 3)
+        identity = rng.normal(size=(60, 200))[patients] + 0.01 * rng.normal(size=(180, 200))
+        y = rng.normal(size=60)[patients]
+        self.assertLess(BC.grouped_cv_r(identity, y, patients), 0.3)
+
+    def test_encoding_pattern_finds_the_signal_whatever_the_feature_scales(self):
+        rng = np.random.default_rng(1)
+        n, d = 200, 300
+        scales = np.exp(rng.uniform(np.log(0.02), np.log(20), d))
+        X = rng.normal(size=(n, d)) * scales
+        signal = np.zeros(d)
+        signal[np.argsort(scales)[-20:]] = 1  # signal on high-variance coordinates
+        signal /= np.linalg.norm(signal)
+        y = X @ signal / scales.max() + 0.1 * rng.normal(size=n)
+        X = X + np.outer(y, signal) * 5
+        u = BC.Ridge(X, y, np.arange(n)).pattern
+        self.assertGreater(abs(u @ signal), 0.8)
+
+
+@unittest.skipIf(tokenizer_path() is None, "no Qwen3 tokenizer available")
+class StagesEndToEnd(unittest.TestCase):
+    """Session 1 on the synthetic model, then every session-2 stage with the tiny model."""
+
+    def test_all_stages(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        cfg = yaml.safe_load(C.BUNDLED_CONFIG.read_text())
+        (root / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
+        env = {**os.environ, "SO_CONFIG": str(root / "config.yaml"), "PYTHONPATH": str(ROOT)}
+        source = root / "full"
+        for args in (["prepare", "--run", str(source), "--profile", "pilot", "--models", "synthetic", "--n-patients",
+                      "all", "--direct-samples", "1"],
+                     ["generate", "--run", str(source), "--model", "synthetic"],
+                     ["export", "--run", str(source), "--model", "synthetic"]):
+            done = subprocess.run([sys.executable, "-m", "second_order.binding", *args], cwd=ROOT, env=env,
+                                  capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr[-2000:])
+        # The analysis only needs the direct beliefs here (no latent arms): rewrite the spec's latent arms.
+        from second_order import binding_analysis as BA
+        saved = (C.CONFIG_PATH, C.CACHE)
+        try:
+            plan = B.read_plan(source)
+            long = pd.read_parquet(source / "outputs" / "synthetic_responses.parquet")
+            out = source / "outputs" / "analysis" / "synthetic"
+            out.mkdir(parents=True)
+            beliefs = BA.direct_beliefs(long)
+            beliefs.to_parquet(out / "beliefs_direct.parquet", index=False)
+            cells, contrasts = BA.bootstrap(BA.wide_frame(beliefs), plan["spec"]["arms"], 50, 1, checks=False)
+            cells.assign(method="direct").to_csv(out / "lambda_cells.csv", index=False)
+            contrasts.assign(method="direct").to_csv(out / "contrasts.csv", index=False)
+            run = root / "causal"
+            run.mkdir()
+            ccfg = BC.load_cfg(run) | {"cells": ["false_verified", "false_labelled", "partial_original",
+                                                 "partial_labelled_explicit"], "random_directions": 3,
+                                       "knockout_every": 2, "batch": 8, "report_min_cases": 4,
+                                       "apply_gate": False, "patch_min_gap": 0.0}  # random model: mechanics only
+            lens = tiny_lens()
+            # Keep the end-to-end test small: 12 fit and 6 test patients.
+            prompts = BC.source_prompts(source, "synthetic")
+            keep = (sorted(prompts.case_id[prompts.split == "fit"].unique())[:12]
+                    + sorted(prompts.case_id[prompts.split == "test"].unique())[:6])
+            original = BC.source_prompts
+            BC.source_prompts = lambda s, m: (lambda d: d[d.case_id.isin(keep)])(original(s, m))
+            try:
+                frame = BC.stage_readout(run, source, "synthetic", lens, ccfg)
+                wanted = BC.source_prompts(source, "synthetic")
+                self.assertEqual(len(frame), int(wanted.arm.isin(ccfg["cells"]).sum()))
+                self.assertTrue(((frame.p > 0) & (frame.p < 1)).all())
+                BC.stage_gate(run, source, "synthetic", ccfg, 20)
+                lock = BC.stage_probes(run, source, "synthetic", ccfg)
+                self.assertEqual(set(lock["variants"]), {"false", "partial"})
+                for v in lock["variants"].values():
+                    self.assertTrue(all(1 <= l < lens.n_layers for l in v["window"]))
+                with self.assertRaises(ValueError):
+                    BC.stage_probes(run, source, "synthetic", ccfg)  # the lock is written once
+                patch = BC.stage_patch(run, source, "synthetic", lens, ccfg)
+                self.assertEqual(set(patch.direction), {"sufficiency", "necessity"})
+                self.assertEqual(patch.layer.max(), lens.n_layers - 1)
+                ko = BC.stage_knockout(run, source, "synthetic", lens, ccfg)
+                self.assertEqual(set(ko.knockout), {"none", "readout", "encoding", "update"})
+                dr = BC.stage_directions(run, source, "synthetic", lens, ccfg)
+                self.assertIn("ablate_rec", set(dr.intervention))
+                rules = BC.stage_report(run, "synthetic", 20, ccfg)
+                self.assertTrue((run / "synthetic" / "RESULTS.md").exists())
+                pl = pd.read_csv(run / "synthetic" / "patch_lambda.csv")
+                self.assertEqual(set(pl.position), {"answer", "name", "own_end", "person_end"})
+                self.assertTrue(set(pl.layer) <= set(range(1, lens.n_layers)))  # chosen on the fit half
+                lam = pl[pl.statistic == "lambda_patched"]
+                # finite, or blanked because beta_D's interval includes 0 (a random model has no real beta_D)
+                self.assertTrue((np.isfinite(lam.estimate) | lam.blank_reason.fillna("").str.contains("beta_D")).all())
+                self.assertTrue(any(k.startswith("3.3") for k in rules), rules)
+                self.assertTrue(any(k.startswith("3.2_leak_enters_at") for k in rules), rules)
+                self.assertTrue(any(k.startswith("3.1_decided_at") for k in rules), rules)
+                self.assertTrue(all("interval" in v or "ablate_attr" in v for v in rules.values()))
+                # The gate restricts every Phase 3 stage to the cells that passed it.
+                d = run / "synthetic"
+                pd.DataFrame([dict(arm="false_verified", order="person_first", enters_phase3=True),
+                              dict(arm="partial_original", order="own_first", enters_phase3=False)]).to_csv(
+                    d / "gate.csv", index=False)
+                gc = BC.gate_cfg(d, ccfg | {"apply_gate": True})
+                self.assertTrue(all(tuple(p[0]) == ("false_verified", "person_first") for p in gc["patch_pairs"]))
+                self.assertEqual(gc["knockout_cells"], [["false_verified", "person_first"]])
+                self.assertEqual(gc["direction_cells"]["partial"], [])
+                bench = BC.stage_benchmark(run, source, "synthetic", lens, ccfg, n_readout=4)
+                self.assertEqual(set(bench["estimated_hours"]), {"readout", "patch", "knockout", "directions", "total"})
+                self.assertGreater(bench["rows_per_patient"]["patch"], 0)
+                self.assertLess(bench["batch_invariance_max_abs_dp"], 1e-4)  # float32 on the CPU
+                # Tampering with the directions after the lock is refused.
+                np.savez(run / "synthetic" / "directions.npz", x=np.zeros(1))
+                with self.assertRaisesRegex(ValueError, "changed after the lock"):
+                    BC.stage_patch(run, source, "synthetic", lens, ccfg)
+            finally:
+                BC.source_prompts = original
+        finally:
+            C.CONFIG_PATH, C.CACHE = saved
+            C.load.cache_clear()
+
+
+if __name__ == "__main__":
+    unittest.main()

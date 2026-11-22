@@ -42,7 +42,7 @@ CKD_META = ["label", "person_name", "changed_facts", "check_answer", "direction"
             "block_order", "check_fact", "check_relation"]
 BESPOKE_META = ["family", "person", "n_shown", "n_hidden_or_altered", "model_evidence", "person_evidence",
                 "normative_p", "normative_logodds", "full_leak_p", "comprehension_q", "comprehension_a",
-                "partial_c_indices", "report_position", "check_relation"]
+                "partial_c_indices", "check_relation"]
 BESPOKE_OUTPUT = "probability"
 # CKD protocol amendment 2: the archived v3 multiple-choice prompts (questions, checks and probes)
 # end with ARCHIVED_CHOICE_ASK; Qwen3 with thinking off reasons anyway and runs past a short limit.
