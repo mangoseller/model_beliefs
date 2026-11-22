@@ -39,6 +39,10 @@ work starts (it needs only the 3a plan, so it can also be run before part 1).
   waits only for part 3a's analysis.
 - **Reuse.** Part 3a imports the pilot's answers. Part 2 imports its answers and activation captures from 3a:
   all 57,000 of its new items per model are in 3a's plan with identical keys and prompt hashes.
+- **`run_fast.sh`** (how part 3a onwards ran): `run_binding_experiment.sh` with CUDA graphs captured for decode
+  batches up to 1,024 (vLLM 0.8.5 stops at 512; `max_num_seqs` is 1,024) and `SO_FAST_SEEDED_SAMPLING=1`, which
+  replaces vLLM's per-row seeded noise loop with one that draws bit-identical noise
+  (`run_generation.patch_seeded_sampling`). Neither is in a settings signature.
 - **vLLM engine.** `ENGINE_<MODEL>='{"max_num_batched_tokens": 65536}'` overrides engine settings for one
   model's generation. They are not in the settings signature (checked), so they change speed only. Last run's
   throughput is in its tuning record, and the pilot's log prints out tok/s.
