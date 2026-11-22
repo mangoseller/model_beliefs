@@ -4,11 +4,11 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
     "torch",
-    "transformers",
+    "transformers>=4.56",  # from_pretrained(dtype=...)
     "accelerate",
     "numpy",
-    "scipy",
-    "peft",
+    "pandas",  # build_ckd_dataset.py
+    "peft",  # --adapter
 ]
 
 [tool.setuptools.packages.find]
