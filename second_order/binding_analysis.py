@@ -93,7 +93,10 @@ def direct_beliefs(long: pd.DataFrame) -> pd.DataFrame:
 def latent_beliefs(long: pd.DataFrame, plan: dict, model: str) -> pd.DataFrame:
     """One pooled refit across all latent-arm cells (self: A, B; person: C, M, D)."""
     from second_order import fit_pooled as FP
-    from second_order.measurement import calibration
+    try:  # main folded measurement.py into fit_pooled
+        from second_order.fit_pooled import calibration
+    except ImportError:
+        from second_order.measurement import calibration
     from second_order.responses import configured_specs, split as patient_split
 
     arms = plan["spec"]["latent_arms"]
