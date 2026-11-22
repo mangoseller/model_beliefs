@@ -100,6 +100,50 @@ check-passed lambda with the all-patients lambda of the same cell rather than ac
 The pilot reports retention under the new prompts, check accuracy per arm, each variant's manipulation size
 (median |x|) and the lambda interval widths projected to 150 patients.
 
+## Binding amendment 1 (2026-11-22, during part 3a's generation: before any full-run analysis or causal stage)
+
+An audit of the pilot against this design found the following; each change is in the code, and the result
+tables keep the plan's version beside the amended one, so either can be read. None changes a prompt, a sampling
+setting, a seed or the GPU work of session 1.
+
+- **The partial checks are scored from the reasoning.** The check "Did the record shown to NAME include a value
+  for FACT? A. Yes / B. No" is answered by the value when FACT is a yes/no field: the model reasons correctly
+  and then picks the option that reads like the field's value. In the pilot, shown checks of a field whose value
+  is "No" were 43% right by the letter (100% for every other field), and the echo also scored some misread
+  withheld fields as right. `second_order/check_scoring.py` reads the conclusion of the reasoning instead (the
+  letter where none is found; 99.4% agreement with the letter on the checks it is not confounded on; of 40
+  hand-checked confounded checks, 36 right before its last fixes, and 40 of a fresh 40 after). `check_passed` uses it;
+  `check_passed_letter` is the plan's scoring. H2 is decided on `check_passed`, and reports the all-patients and
+  letter versions; a verdict that differs between them is flagged. False-setting checks ask for the value and
+  are scored by the letter, as before.
+- **The rules get their own 10,000-draw bootstrap** (CPU only; `lambda_cells_rules.csv`), with the Monte Carlo
+  s.e. of every deciding quantity from 10 disjoint batches; a verdict that changes when one moves by 2 s.e. is
+  flagged `near_threshold` / not robust. (With 2,000 draws the pilot's H2 verdict flipped between seeds.)
+- **H1's reduction clause is decided on false_labelled - false_neutral** (person_first). The plan's
+  false_labelled - false_verified also removes the cue and changes the own-belief pair (A_F, B_F against A,
+  B_F_neutral); it is reported beside it. H1 is undetermined if either unlabelled person_first cell's beta_D
+  interval includes 0. H1 is also recomputed without the C/M/D answers reused from the base run (another
+  session; `sensitivity_new_answers_only`), and a difference is flagged.
+- **The strong variant's H2 and H3 are exploratory** (not pre-registered): reported as `[strong, exploratory]`.
+- **Contrasts** whose bootstrap draws are inestimable more than 1% of the time cannot decide a rule.
+- **Anomalies** (RESULTS.md, decisions.json): drift between reused and new answers beyond 0.1 logit, arms losing
+  more than 5% of C/M/D answers to the token limit (relevant to thinking mode), and the flags above.
+- **Session 2:**
+  - the readout is the mean clipped logit over the two-digit answer distribution, as session 1's mean clipped
+    logit over samples (was the logit of the expected probability; `readout_statistic`);
+  - the gate compares Fieller sets on both sides (the reasoning side was a percentile interval);
+  - patching donors and w_attr training cells must be correctly bound: fit-half lambda <= 0.15 with and without
+    reasoning (`bound_max_lambda`; the pilot's partial_labelled_explicit|own_first, 0.51, and
+    false_verified|own_first, 0.25, were defaults);
+  - 3.2 tests a knockout only where the fit-half no-reasoning lambda is >= 0.3 (`knockout_min_lambda`), else
+    "not applicable";
+  - the filler block sits between the two records, and its control masks as many filler tokens as the knocked
+    record has, the ones nearest it (it was a fixed 135-token block at the start of the prompt);
+  - probe targets (l_A, l_B) are the no-reasoning readouts the activations come from (`probe_targets`);
+  - the null permutes patients, not rows; each patch sweep uses its own unpatched row;
+  - the benchmark reports how far the precision setting moves a readout between forward passes, in logits,
+    against `patch_min_gap`; ablation at the readout positions is refused; the resample count is locked.
+
 ## Session 2 (`second_order/binding_causal.py`)
 
 Runs in float32 with TF32 matmuls (in bfloat16 the batch shape alone moves a readout by ~0.03), eager attention,

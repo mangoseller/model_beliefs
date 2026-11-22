@@ -4,23 +4,29 @@ Run after session 1 (``binding`` profile ``full``) and its analysis.  Stages, in
 
     readout     no-reasoning answers for every Phase 3 cell (all patients; A/B both replicates): the prompt's
                 reasoning instruction becomes "Do not explain...", the answer prefix '{"probability": 0.' is
-                forced, and the belief is the exact expected value over two digits (second digit from the
-                KV cache, so interventions apply to both).  Also saves the residual stream of fit-half
-                patients at the probe positions, every layer.
-    gate        lambda per cell from the no-reasoning beliefs (``binding_analysis`` estimators) against
-                session 1's reasoning lambda: a cell enters Phase 3 only if the intervals overlap and the
-                order effect has the same sign.
+                forced, and the belief is the exact mean over the two-digit answer distribution of the clipped
+                logit (``readout_statistic``; second digit from the KV cache, so interventions apply to both).
+                Also saves the residual stream of fit-half patients at the probe positions, every layer.
+    gate        fit half: lambda per cell from the no-reasoning beliefs (``binding_analysis`` estimators) against
+                session 1's reasoning lambda, both 95% Fieller sets: a cell enters Phase 3 only if the intervals
+                overlap and the order effect has the same sign. Also marks the correctly bound cells (lambda <=
+                ``bound_max_lambda`` both ways), the only patching donors and w_attr training cells, and the cells
+                whose knockouts 3.2 can test (no-reasoning lambda >= ``knockout_min_lambda``).
     probes      fit half only: ridge probes for PERSON's correct belief (w_attr, trained on correctly bound
-                cells) and for it inside a misbound cell (w_rec, orthogonalised against w_attr); transfer;
-                then the lock: layer window L*, position and steering scale by a fixed rule, written to
-                ``lock.json`` before anything touches the test half.
-    patch       3.1 interchange patching (test half): one position-role at one layer, donor -> recipient
-                (sufficiency) and back (necessity), every layer in one batch.
+                cells) and for it inside a misbound cell (w_rec, orthogonalised against w_attr); transfer; a
+                null of probes on patient-permuted targets; then the lock: layer window L*, position and
+                steering scale by a fixed rule, written to ``lock.json`` before anything touches the test half.
+    patch       3.1 interchange patching (both halves: the fit half picks the layer, the test half tests it): one
+                position-role at one layer, donor -> recipient (sufficiency) and back (necessity), every layer
+                in one batch with its own unpatched row.
     knockout    3.2 attention-edge knockouts on filler-augmented prompts (readout, encoding, update), each
-                against the same knockout aimed at a neutral filler block, swept over start layers.
-    directions  3.3 mean-ablation of w_attr, w_rec and 20 random directions over L* (question positions),
-                and steering at the answer position, on misbound C, on M (references) and on D (specificity).
+                against the same knockout aimed at as many tokens of a neutral filler block between the records,
+                swept over start layers.
+    directions  3.3 mean-ablation of w_attr, w_rec and 20 null directions over L* at the locked (name)
+                position, and steering there, on misbound C, on M (references) and on D (specificity).
     report      gap closed, lambda under each intervention, the 3.x decision rules -> RESULTS.md.
+
+Binding amendment 1 (2026-11-22, before any causal stage ran) is in docs/binding_experiment.md.
 
     python -m second_order.binding_causal <stage> --run runs/binding-causal --source runs/binding-full --model qwen3_8b
 """
@@ -59,6 +65,14 @@ FILLER = "\n".join([
     "Wheelchairs are available near the main entrance.",
     "Appointment reminders are sent two days in advance.",
     "Please silence mobile phones in the examination rooms.",
+    "The second-floor elevator is closed for maintenance on Tuesday mornings.",
+    "Seasonal vaccination clinics run on the first Saturday of each month.",
+    "Free wireless internet is available; ask reception for the password.",
+    "Bicycle racks are located beside the east entrance.",
+    "Hand sanitizer stations are placed at every corridor junction.",
+    "A chaplain is available on request at any time of day.",
+    "The gift shop is open from 9 am to 4 pm, Monday to Saturday.",
+    "Fire exits are marked in green throughout the building.",
     "(End of clinic notice.)"])
 POSITION_ROLES = ("answer", "name", "own_end", "person_end")
 PROBE_POSITIONS = ("answer", "gen_start", "name")
@@ -85,11 +99,20 @@ DEFAULTS = {
     "lock_tolerance": 0.05,
     "lock_positions": ["name"],    # where the lock may put the directions: not answer/gen_start, which carry
                                    # the upcoming answer itself and would make 3.3 trivially pass
-    "ablate_positions": "probe",   # or "readout": every question and answer token, same mean projection
+    "ablate_positions": "probe",   # only "probe": the locked position (readout positions are refused)
     "patch_halves": ["fit", "test"],  # 3.1 picks each position's layer on the fit half, tests on the test half
     "patch_min_gap": 0.1,          # logits between donor and recipient below which gap closed is undefined
     "report_min_cases": 8,         # fewer patients than this: no lambda for that cell
     "apply_gate": True,            # Phase 3 runs only on cells whose no-reasoning lambda matches session 1's
+    "bound_max_lambda": 0.15,      # a donor or w_attr training cell must be correctly bound: fit-half lambda at
+                                   # most this, with reasoning (session 1) and without (binding amendment 1)
+    "knockout_min_lambda": 0.3,    # 3.2 tests a cell only if its fit-half no-reasoning lambda leaves room for the
+                                   # 0.3 drop (binding amendment 1)
+    "readout_statistic": "mean_logit",  # E[clip_logit(p)] over the two digits, as session 1's mean clipped logit;
+                                   # "expected_p": logit of E[p] (binding amendment 1)
+    "probe_targets": "noreason",   # l_A, l_B for the probes: the no-reasoning readouts the activations come
+                                   # from, or "reasoning" (session 1) (binding amendment 1)
+    "resamples": 2000,             # bootstrap draws of the gate and the report (locked)
     "dtype": "float32",
     "tf32": True,                  # TF32 matmuls on the GPU: much faster, ~1e-3 relative precision (the
                                    # benchmark stage measures what that costs in batch invariance)
@@ -104,7 +127,14 @@ def no_reasoning(prompt: str) -> str:
 
 
 def with_filler(prompt: str) -> str:
-    return FILLER + "\n\n" + prompt
+    """The prompt with the neutral filler block between its two record blocks (binding amendment 1: it was prepended, the
+    most distant block of all), so the filler control's keys sit as close to the queries as the records do."""
+    blocks = B.record_blocks(prompt)
+    if len(blocks) < 2:
+        return FILLER + "\n\n" + prompt
+    at = min(b["end"] for b in blocks)
+    cut = prompt.index("\n\n", at) if "\n\n" in prompt[at:] else at
+    return prompt[:cut] + "\n\n" + FILLER + prompt[cut:]
 
 
 @dataclass
@@ -137,8 +167,9 @@ def encode(tok, prompt: str, template_kwargs: dict) -> Encoded:
     for blk in B.record_blocks(prompt):
         pos[f"{blk['owner']}_end"] = last_token(base + blk["end"])
         groups[blk["owner"]] = span(base + blk["start"], base + blk["end"])
-    if prompt.startswith(FILLER):
-        groups["filler"] = span(base, base + len(FILLER))
+    if FILLER in prompt:
+        at = prompt.index(FILLER)
+        groups["filler"] = span(base + at, base + at + len(FILLER))
     question = prompt.rfind("\n\nWhat probability ")
     q_start = base + question + 2
     q_end = base + prompt.index("?", question) + 1
@@ -168,11 +199,14 @@ class Lens:
     knockouts before attention (eager attention, so every layer receives the 4D mask)."""
 
     def __init__(self, model: str | None = None, *, lm=None, tok=None, device=None, template_kwargs=None,
-                 dtype: str = "float32"):
+                 dtype: str = "float32", statistic: str = "mean_logit"):
         # float32 by default: in bfloat16 the batch shape alone moves a readout by ~0.03 in probability,
         # as large as the effects the causal tests look for (batched rows are exact in float32).
         import torch
         self.torch = torch
+        if statistic not in ("mean_logit", "expected_p"):
+            raise ValueError(f"unknown readout statistic {statistic!r}")
+        self.statistic = statistic
         if lm is None:
             from transformers import AutoModelForCausalLM, AutoTokenizer
             from second_order.run_generation import model_revision, template_kwargs as tk
@@ -336,10 +370,24 @@ class Lens:
         end = (1 - d2.sum(-1)).clamp_min(0)                               # anything else ends the number
         tenths = torch.arange(10, device=self.device, dtype=torch.float32)
         a = torch.tensor(cand, device=self.device, dtype=torch.float32)
-        cond = (tenths / 10 + 0.045).repeat(n, 1)
-        cond[:, cand] = ((d2 * (a[None, :, None] / 10 + tenths[None, None, :] / 100)).sum(-1)
-                         + end * a[None, :] / 10) / (d2.sum(-1) + end)
-        return (p1 * cond).sum(-1).cpu().numpy(), mass.cpu().numpy()
+        # f(p) is averaged over the two-digit answer distribution: the probability itself ("expected_p"), or its
+        # clipped logit ("mean_logit", the default: session 1's belief is the mean clipped logit of its samples;
+        # binding amendment 1). A mean logit is returned as the probability whose clipped logit it is, so callers that
+        # take logit_of(p) get it exactly.
+        if self.statistic == "expected_p":
+            def f(p):
+                return p
+        else:
+            def f(p):
+                p = p.clamp(0.01, 0.99)
+                return torch.log(p) - torch.log1p(-p)
+        cond = f(tenths / 10 + 0.045).repeat(n, 1)
+        cond[:, cand] = ((d2 * f(a[None, :, None] / 10 + tenths[None, None, :] / 100)).sum(-1)
+                         + end * f(a[None, :] / 10)) / (d2.sum(-1) + end)
+        value = (p1 * cond).sum(-1)
+        if self.statistic != "expected_p":
+            value = torch.sigmoid(value)
+        return value.cpu().numpy(), mass.cpu().numpy()
 
     def _captures(self, n):
         """The captured rows (layers + 1, positions, hidden), None for rows that captured nothing."""
@@ -546,6 +594,12 @@ def stage_gate(run: Path, source: Path, model: str, cfg: dict, resamples: int) -
         tables[name][0].to_csv(d / f"gate_{name}_lambda_cells.csv", index=False)
         tables[name][1].to_csv(d / f"gate_{name}_contrasts.csv", index=False)
     g = BA.gate(tables["reasoning"], tables["noreason"], arms)
+    # binding amendment 1, both on the fit half: a cell may serve as a donor or train w_attr only if it is correctly bound
+    # (lambda at most bound_max_lambda with and without reasoning), and 3.2 tests a knockout only where the
+    # no-reasoning lambda leaves room for its 0.3 drop
+    bound = float(cfg["bound_max_lambda"])
+    g["correctly_bound"] = (g.lambda_reasoning <= bound) & (g.lambda_no_reasoning <= bound)
+    g["knockout_testable"] = g.lambda_no_reasoning >= float(cfg["knockout_min_lambda"])
     g.to_csv(d / "gate.csv", index=False)
     print(g.to_string(index=False))
     return g
@@ -562,20 +616,36 @@ def gated(d: Path, cfg: dict) -> set[tuple[str, str]] | None:
     return set(zip(g.arm[g.enters_phase3], g.order[g.enters_phase3]))
 
 
+def bound_cells(d: Path, cfg: dict) -> set[tuple[str, str]] | None:
+    """(arm, order) cells correctly bound on the fit half (``stage_gate``), or None when the gate is off."""
+    if not cfg.get("apply_gate", True):
+        return None
+    g = pd.read_csv(d / "gate.csv")
+    if "correctly_bound" not in g:
+        raise ValueError("gate.csv predates binding amendment 1: rerun the gate stage")
+    return set(zip(g.arm[g.correctly_bound], g.order[g.correctly_bound]))
+
+
 def gate_cfg(d: Path, cfg: dict) -> dict:
-    """The config with Phase 3's cells restricted to those that passed the gate (patching: the recipient)."""
+    """The config with Phase 3's cells restricted to those that passed the gate (patching: the recipient), and
+    patching donors to correctly bound cells (binding amendment 1)."""
     cells = gated(d, cfg)
     if cells is None:
         return cfg
-    return cfg | {"patch_pairs": [p for p in cfg["patch_pairs"] if tuple(p[0]) in cells],
+    bound = bound_cells(d, cfg)
+    return cfg | {"patch_pairs": [p for p in cfg["patch_pairs"] if tuple(p[0]) in cells and tuple(p[1]) in bound],
                   "knockout_cells": [c for c in cfg["knockout_cells"] if tuple(c) in cells],
                   "direction_cells": {v: [c for c in cs if tuple(c) in cells] for v, cs in cfg["direction_cells"].items()}}
 
 
 # Stage: probes and lock (fit half only)
-def _targets(source: Path, model: str) -> pd.DataFrame:
-    """Per case and arm: session-1 truth (l_A) and PERSON's correct belief (l_B), means of replicates."""
-    beliefs = pd.read_parquet(source / "outputs" / "analysis" / model / "beliefs_direct.parquet")
+def _targets(source: Path, model: str, frame: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Per case and arm: the truth (l_A) and PERSON's correct belief (l_B), means of replicates. From the
+    no-reasoning readouts in ``frame`` (the condition the activations come from; binding amendment 1), else session 1."""
+    if frame is not None:
+        beliefs = frame.assign(value=logit_of(frame.p))
+    else:
+        beliefs = pd.read_parquet(source / "outputs" / "analysis" / model / "beliefs_direct.parquet")
     ab = beliefs[beliefs.role.isin(["A", "B"])].groupby(["case_id", "arm", "role"]).value.mean().unstack()
     return ab.rename(columns={"A": "truth", "B": "elena"}).reset_index()
 
@@ -670,9 +740,10 @@ def grouped_cv_r(X, y, groups, seed=0) -> float:
 
 
 def _training(d, targets, cases, cells):
-    """Stacked activations of ``cells`` with PERSON's belief residualised on the truth, and the patient groups."""
-    blocks, ys, truths, groups = [], [], [], []
-    for arm, order in cells:
+    """Stacked activations of ``cells`` with PERSON's belief residualised on the truth, the patient groups, and
+    each row's cell (index into ``cells``)."""
+    blocks, ys, truths, groups, cell_of = [], [], [], [], []
+    for j, (arm, order) in enumerate(cells):
         a, keep = _load_acts(d, cases, arm, order)
         if a is None:
             continue
@@ -681,10 +752,25 @@ def _training(d, targets, cases, cells):
         ys.append(t.elena.to_numpy())
         truths.append(t.truth.to_numpy())
         groups += keep
+        cell_of += [j] * len(keep)
     if not blocks:
-        return None, None, None, None
+        return None, None, None, None, None
     truth = np.concatenate(truths)
-    return np.concatenate(blocks), residual(np.concatenate(ys), truth), truth, np.array(groups)
+    return np.concatenate(blocks), residual(np.concatenate(ys), truth), truth, np.array(groups), np.array(cell_of)
+
+
+def permute_patients(y: np.ndarray, groups: np.ndarray, cells: np.ndarray, rng) -> np.ndarray:
+    """The null's targets: patient labels permuted (binding amendment 1; rows were permuted), so a patient's rows in
+    every cell take one other patient's targets, as real targets come per patient. A row whose new patient lacks
+    that cell keeps a target drawn from the same cell."""
+    patients = np.array(sorted(set(groups)))
+    to = dict(zip(patients, rng.permutation(patients)))
+    where = {(g, c): i for i, (g, c) in enumerate(zip(groups, cells))}
+    out = np.empty_like(y)
+    for i, (g, c) in enumerate(zip(groups, cells)):
+        j = where.get((to[g], c))
+        out[i] = y[j] if j is not None else y[rng.choice(np.flatnonzero(cells == c))]
+    return out
 
 
 def stage_probes(run: Path, source: Path, model: str, cfg: dict) -> dict:
@@ -695,8 +781,9 @@ def stage_probes(run: Path, source: Path, model: str, cfg: dict) -> dict:
     if lock_path.exists():
         raise ValueError(f"{lock_path} exists: the lock is written once; remove it deliberately to refit")
     frame = pd.read_parquet(d / "noreason_responses.parquet")
-    targets = _targets(source, model)
+    targets = _targets(source, model, frame if cfg.get("probe_targets", "noreason") == "noreason" else None)
     fit_cases = sorted(set(frame.case_id[frame.split == "fit"]))
+    bound = bound_cells(d, cfg)
     said = frame[(frame.role == "C") & (frame.replicate == 0)].set_index(["case_id", "arm", "block_order"]).p
     rng = np.random.default_rng(int(C.load()["seed"]) + 4242)
     report, arrays = [], {}
@@ -705,13 +792,22 @@ def stage_probes(run: Path, source: Path, model: str, cfg: dict) -> dict:
         f"{cfg['lock_positions']} of the attribution probe's best-layer CV r (folds and penalty grouped by patient); "
         f"L* = the contiguous layers around the best layer whose CV r is within {cfg['lock_tolerance']} of it; "
         "directions = the probes' encoding patterns; null = the encoding patterns of probes trained on shuffled "
-        "targets; steering unit = SD of the training projections on w_attr at the best layer"), "variants": {}}
+        "targets (patient labels permuted); steering unit = SD of the training projections on w_attr at the best "
+        "layer; w_attr trains only on correctly bound cells (gate.csv); targets from "
+        f"{cfg.get('probe_targets', 'noreason')} beliefs"), "variants": {}}
     for variant, train_cells in cfg["attr_train"].items():
-        A, y, truth, groups = _training(d, targets, fit_cases, train_cells)
+        if bound is not None:  # binding amendment 1: w_attr is trained only on correctly bound cells
+            dropped = [c for c in train_cells if tuple(c) not in bound]
+            train_cells = [c for c in train_cells if tuple(c) in bound]
+            lock.setdefault("attr_train_dropped", {})[variant] = dropped
+            lock.setdefault("attr_train_used", {})[variant] = train_cells
+        if not train_cells:
+            continue
+        A, y, truth, groups, train_cell_of = _training(d, targets, fit_cases, train_cells)
         if A is None:
             continue
         rec_arm, rec_order = cfg["rec_train"][variant][0]
-        R, yr, truth_r, groups_r = _training(d, targets, fit_cases, [(rec_arm, rec_order)])
+        R, yr, truth_r, groups_r, _ = _training(d, targets, fit_cases, [(rec_arm, rec_order)])
         n_layers = A.shape[1]
         usable = range(1, n_layers - 1)  # 0 = embeddings; the last index has the final norm applied
         best = {}
@@ -753,7 +849,7 @@ def stage_probes(run: Path, source: Path, model: str, cfg: dict) -> dict:
                                        target=name, r=float(np.corrcoef(pred, target)[0, 1]), n=len(yr)))
             if layer in window or layer == top:
                 for j in range(len(rand)):
-                    shuffled = Ridge(A[:, layer, p], rng.permutation(y), groups)
+                    shuffled = Ridge(A[:, layer, p], permute_patients(y, groups, train_cell_of, rng), groups)
                     rand[j, layer], mu_rand[layer, j] = shuffled.pattern, (A[:, layer, p] @ shuffled.pattern).mean()
         arrays |= {f"{variant}__u_attr": u_attr, f"{variant}__mu_attr": mu_attr, f"{variant}__rand": rand,
                    f"{variant}__mu_rand": mu_rand}
@@ -842,11 +938,14 @@ def patch_case(lens: Lens, prompts: dict, case: str, cfg: dict) -> list[dict]:
                 variants = [Variant()] + [Variant(patch=[(layer, e.positions[role], states[src][layer, k])])
                                           for layer in layers]
                 sweeps[direction, role] = (src, dst, _batched(lens, e.ids, variants, cfg["batch"]))
-        base = {dst: ps[0] for (src, dst, ps) in sweeps.values()}
+        other = {"sufficiency": "necessity", "necessity": "sufficiency"}
         for (direction, role), (src, dst, ps) in sweeps.items():
+            # p_target: this sweep's own unpatched row; p_source: the unpatched source prompt, from the sweep
+            # that runs on it (same role)
+            p_src = sweeps[other[direction], role][2][0]
             rows += [dict(case_id=case, recipient=f"{r_arm}|{r_order}", donor=f"{d_arm}|{d_order}",
-                          direction=direction, position=role, layer=layer, p=float(p), p_target=float(base[dst]),
-                          p_source=float(base[src])) for layer, p in zip(layers, ps[1:])]
+                          direction=direction, position=role, layer=layer, p=float(p), p_target=float(ps[0]),
+                          p_source=float(p_src)) for layer, p in zip(layers, ps[1:])]
     return rows
 
 
@@ -869,6 +968,15 @@ KNOCKOUTS = {  # name -> (query group, key group, include new answer tokens, ord
 TESTED_KNOCKOUTS = ("encoding", "update")
 
 
+def matched_filler(e: Encoded, group: str) -> list[int]:
+    """As many filler tokens as the knocked group has (binding amendment 1), the ones nearest that group."""
+    keys, filler = e.groups[group], e.groups["filler"]
+    if len(filler) < len(keys):  # never seen (the filler is ~230 tokens, record blocks <= ~200): use all of it
+        print(f"[knockout] filler ({len(filler)} tokens) shorter than the {group} block ({len(keys)})", flush=True)
+    centre = (min(keys) + max(keys)) / 2
+    return sorted(sorted(filler, key=lambda k: (abs(k - centre), k))[:len(keys)])
+
+
 def knockout_case(lens: Lens, prompts: dict, case: str, cfg: dict) -> list[dict]:
     starts = list(range(0, lens.n_layers, int(cfg["knockout_every"])))
     rows = []
@@ -883,7 +991,7 @@ def knockout_case(lens: Lens, prompts: dict, case: str, cfg: dict) -> list[dict]
                 for name, (qg, kg, new, only) in KNOCKOUTS.items():
                     if only and only != order:
                         continue
-                    for target, keys in (("record", e.groups[kg]), ("filler", e.groups["filler"])):
+                    for target, keys in (("record", e.groups[kg]), ("filler", matched_filler(e, kg))):
                         variants += [Variant(knock=[(s, e.groups[qg], keys, new)]) for s in starts]
                         specs += [(name, target, s) for s in starts]
             ps = _batched(lens, e.ids, variants, cfg["batch"])
@@ -923,7 +1031,10 @@ def directions_case(lens: Lens, prompts: dict, case: str, variant: str, info: di
             if key not in prompts:
                 continue
             e = lens.encode(no_reasoning(prompts[key]))
-            ps = e.groups["readout"] if cfg.get("ablate_positions") == "readout" else [e.positions[info["position"]]]
+            if cfg.get("ablate_positions", "probe") != "probe":
+                raise ValueError("ablate_positions must be 'probe': the question and answer tokens carry the upcoming "
+                                 "answer itself, so ablating there would make 3.3 pass trivially")
+            ps = [e.positions[info["position"]]]
             specs = [("none", np.nan, Variant())]
             for kind, (u, mu) in U.items():
                 specs.append((f"ablate_{kind}", np.nan, Variant(
@@ -1004,6 +1115,16 @@ def stage_benchmark(run: Path, source: Path, model: str, lens: Lens, cfg: dict, 
     e = lens.encode(no_reasoning(sample.prompt.iloc[0]))
     alone = float(lens.readout(e.ids, [Variant()])["p"][0])
     batch = lens.readout(e.ids, [Variant()] * int(cfg["batch"]))["p"]
+    # binding amendment 1: what the precision setting costs where the tests compare readouts from different forward
+    # passes: a padded batch of distinct prompts (readout, gate) and a prefix-cached sweep (patch, knockout,
+    # directions), each against the same prompts alone, in logits, beside 3.1's minimum gap
+    few = [lens.encode(no_reasoning(p)) for p in sample.prompt.iloc[:8]]
+    solo = np.array([float(lens.readout(x.ids, [Variant()], reuse_prefix=False)["p"][0]) for x in few])
+    padded = np.array(lens.readout_batch(few, batch=len(few))[0])
+    swept = np.array([float(lens.readout(x.ids, [Variant(steer=[(1, x.positions["answer"],
+                                                                 torch.zeros(hidden, device=lens.device))])])["p"][0])
+                      for x in few])
+    noise = float(max(np.abs(logit_of(padded) - logit_of(solo)).max(), np.abs(logit_of(swept) - logit_of(solo)).max()))
     n_read = need.prompt.nunique()
     est = {"readout": t_read / len(sample) * n_read, "patch": t_patch * n_patch, "knockout": t_ko * len(test),
            "directions": t_dir * len(test)}
@@ -1014,7 +1135,12 @@ def stage_benchmark(run: Path, source: Path, model: str, lens: Lens, cfg: dict, 
                   rows_per_patient=dict(patch=len(rows_p), knockout=len(rows_k), directions=len(rows_d)),
                   estimated_hours={k: round(v / 3600, 2) for k, v in est.items()} |
                                   {"total": round(sum(est.values()) / 3600, 2)},
-                  batch_invariance_max_abs_dp=float(np.abs(batch - alone).max()))
+                  batch_invariance_max_abs_dp=float(np.abs(batch - alone).max()),
+                  precision_noise_max_abs_logit=noise, patch_min_gap=float(cfg["patch_min_gap"]),
+                  precision_noise_warning=bool(noise > float(cfg["patch_min_gap"]) / 4))
+    if result["precision_noise_warning"]:
+        print(f"[benchmark] WARNING: readouts move by {noise:.3f} logit between forward passes under this precision, "
+              f"over a quarter of patch_min_gap ({cfg['patch_min_gap']}); consider tf32: false", flush=True)
     (d / "benchmark.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))
     return result
@@ -1049,11 +1175,6 @@ def _guarded(est: dict, *denominators: str) -> str:
     """'' if every denominator's interval excludes 0, else why the ratios are undetermined."""
     weak = [k for k in denominators if est[k][1] <= 0 <= est[k][2] or not np.isfinite(est[k][1])]
     return f"{', '.join(weak)} interval includes 0" if weak else ""
-
-
-def lock_variant(arm: str) -> str:
-    """The probe/lock variant of an arm (the strong variant uses the partial probes)."""
-    return "false" if B.ARMS[arm][0] == "false" else "partial"
 
 
 def _interval(est):
@@ -1163,8 +1284,19 @@ def stage_report(run: Path, model: str, resamples: int, cfg: dict | None = None)
                                 role="positive control" if name not in TESTED_KNOCKOUTS else "test"))
         kt = pd.DataFrame(out)
         kt.to_csv(d / "knockout_summary.csv", index=False)
+        testable = None
+        if (d / "gate.csv").exists() and "knockout_testable" in (g := pd.read_csv(d / "gate.csv")):
+            testable = dict(zip(zip(g.arm, g.order), g.knockout_testable))
         for r in (kt[(kt.start == 0) & kt.knockout.isin(TESTED_KNOCKOUTS)].itertuples() if not kt.empty else []):
-            rules[f"3.2_leak_enters_at[{r.knockout}|{r.arm}|{r.order}]"] = _verdict(
+            name = f"3.2_leak_enters_at[{r.knockout}|{r.arm}|{r.order}]"
+            if testable is not None and not testable.get((r.arm, r.order), False):
+                rules[name] = {"status": "not applicable", "supported": False,
+                               "reason": f"fit-half no-reasoning lambda below {cfg['knockout_min_lambda']}: no room "
+                                         "for the 0.3 drop (binding amendment 1)",
+                               "rule": "knocking out this attention edge lowers lambda by >= 0.3 beyond the filler",
+                               "interval": _interval((r.lambda_drop_vs_filler, r.ci_lower, r.ci_upper))}
+                continue
+            rules[name] = _verdict(
                 r.lambda_drop_vs_filler >= 0.3 and r.ci_lower > 0, r.blank_reason) | dict(
                 interval=_interval((r.lambda_drop_vs_filler, r.ci_lower, r.ci_upper)),
                 rule="knocking out this attention edge at every layer lowers lambda by >= 0.3 more than the same "
@@ -1238,7 +1370,7 @@ def main():
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True, help="the session-1 run (profile full), analysed")
     parser.add_argument("--model", required=True)
-    parser.add_argument("--resamples", type=int, default=2000)
+    parser.add_argument("--resamples", type=int, default=None, help="default: the config's resamples (locked)")
     args = parser.parse_args()
     run, source = args.run.resolve(), args.source.resolve()
     run.mkdir(parents=True, exist_ok=True)
@@ -1246,6 +1378,10 @@ def main():
     cfg = load_cfg(run)
     if not (run / "causal_config.json").exists():
         (run / "causal_config.json").write_text(json.dumps(cfg, indent=2))
+    if args.resamples is not None and args.resamples != int(cfg["resamples"]):
+        raise ValueError(f"--resamples {args.resamples} differs from the config's {cfg['resamples']}: set it in "
+                         "causal_config.json before the probes stage (it is locked)")
+    args.resamples = int(cfg["resamples"])
     stages = STAGES if args.stage == "all" else (args.stage,)
     lens = None
     with (run / ".causal.lock").open("a+b") as lock:
@@ -1255,7 +1391,8 @@ def main():
                 import torch
                 torch.backends.cuda.matmul.allow_tf32 = bool(cfg.get("tf32", True))
                 torch.backends.cudnn.allow_tf32 = bool(cfg.get("tf32", True))
-                lens = Lens(args.model, dtype=cfg.get("dtype", "float32"))
+                lens = Lens(args.model, dtype=cfg.get("dtype", "float32"),
+                            statistic=cfg.get("readout_statistic", "mean_logit"))
             if stage == "benchmark":
                 stage_benchmark(run, source, args.model, lens, cfg)
             if stage == "readout":
