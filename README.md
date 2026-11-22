@@ -45,6 +45,8 @@ The study runs two settings, PERSON missing evidence and PERSON given altered ev
 datasets in [`datasets/`](datasets): 150 kidney-disease patients, each asked the paper's 16
 questions, and 20 fictional puzzles with known Bayes answers. The design is in
 [`docs/design.md`](docs/design.md) and the data in [`docs/data.md`](docs/data.md).
+[`docs/binding.md`](docs/binding.md) describes a follow-up experiment that asks where the leak comes
+from: misbound ownership, evidence that is represented and overridden, or absence not read as ignorance.
 
 ## Running it
 
@@ -58,21 +60,22 @@ bash run_experiment.sh --core                  # main CKD battery, bespoke trial
 nohup bash run_experiment.sh > run.out 2>&1 &  # full run adds paper replication, extra batteries and activations
 ```
 
-The launcher installs dependencies and coding agents. Add `--no-install-agents` to skip the agents.
-With dependencies installed, you can run `python -m second_order.runner --core` directly.
+The launcher installs the pinned dependencies, and the Claude Code and Codex CLIs unless you pass
+`--no-install-agents`. With dependencies installed, `python -m second_order.runner --core` runs
+directly.
 
-Start a fresh run for this protocol revision. To resume it, pass `--run-id <run_id>` to reuse
-successful calls and retry failures. Open `RUN_REPORT.md` in `runs/<run_id>.tar.gz` for both
-models’ results. See the [running guide](docs/running.md) for individual stage options.
+To resume a run, pass `--run-id <run_id>`: successful calls are reused and failed ones retried. Each
+run's results, for both models, are in `RUN_REPORT.md` inside `runs/<run_id>.tar.gz`. The
+[running guide](docs/running.md) covers the individual stages.
 
 ## Layout
 
 ```
-second_order/      the experiment, and its config.yaml
+second_order/      the experiment and its config.yaml, and the binding experiment (binding*.py)
 datasets/          the two datasets, sent verbatim
 latent_beliefs/    the paper's replication package (latent_beliefs/README.md)
 first_order/       first-order belief readouts on small models (first_order/README.md)
-docs/              design, running, data formats
+docs/              design, data formats, running, the binding experiment
 tests/             unit and end-to-end tests
 requirements/      pinned dependencies for run_experiment.sh
 ```
