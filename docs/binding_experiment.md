@@ -164,12 +164,19 @@ archived run, which takes a few minutes and is skipped on resume, and refuses to
 content matches the reviewed one in `second_order/binding_plans.json`. The plans themselves (about 2.3 GB of
 fully written-out prompts) and the reused baseline answers are rebuilt there, not copied.
 
-On another machine, copy the archived run there first and point at it:
+On a new instance, clone the branch and copy two files from the archived run into `runs/`: the run itself and
+the index of its activations (only each model's `index.parquet` and `meta.json` are read, so the 1 MB
+`_activations_index.tar` replaces the 5.3 GB `_activations.tar`):
 
 ```bash
-BASE_RUN=path/to/20261121-101311_reanalysed.tar.gz BASE_ACTIVATIONS=path/to/20261121-101311_activations.tar \
-    nohup bash run_binding_experiment.sh > binding.out 2>&1 &
+git clone --branch claude/bold-archimedes-8vdm0o https://github.com/mangoseller/model_beliefs && cd model_beliefs
+mkdir -p runs   # then copy into it: 20261121-101311_reanalysed.tar.gz, 20261121-101311_activations_index.tar
+nohup bash run_binding_experiment.sh > binding.out 2>&1 &
 ```
+
+Other paths work through `BASE_RUN` and `BASE_ACTIVATIONS`. Plan for one H200 (the causal stages run Qwen3 14B in
+float32, and 32B in bf16 needs room for its KV cache) and about 300 GB of disk: about 110 GB of weights (8B, 14B,
+32B), the runs' caches and activations, and their archives.
 
 Builds appear in `runs/results/` as each part finishes, and progress is in `runs/logs/parts.log`. Qwen3 32B
 weights (about 65 GB) are downloaded at the pinned revision on first use. Stop the instance only after every

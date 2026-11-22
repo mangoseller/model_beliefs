@@ -24,8 +24,9 @@
 # downstream needs the captures. CPU stages overlap the next part's generation; part3d waits for part3a's
 # analysis, and the script waits for every background stage before it exits.
 #
-# Environment: BASE_RUN (the archived run: its directory or tarball; default runs/20261121-101311),
-# BASE_ACTIVATIONS (its activations: the run directory or the _activations.tar; found automatically),
+# Environment: BASE_RUN (the archived run: its directory or tarball; default runs/20261121-101311, else
+# runs/20261121-101311_reanalysed.tar.gz), BASE_ACTIVATIONS (its activation index: the run directory, or
+# runs/20261121-101311_activations_index.tar or _activations.tar; found automatically),
 # PYTHON (skip the environment setup and use this interpreter), VENV (default .venv-experiment), RESULTS
 # (default runs/results), RUNS (default runs), ANALYSIS_THREADS (CPU threads for background analysis; default
 # half the cores), ENGINE_<MODEL> (vLLM engine overrides as JSON for one model's generation, e.g.
@@ -117,8 +118,13 @@ base_inputs() {  # sets BASE_RUN and BASE_ACTIVATIONS, or explains what is missi
     [[ -e "$run" ]] || { log "no archived run 20261121-101311: set BASE_RUN to its directory or tarball"; return 1; }
     local acts="${BASE_ACTIVATIONS:-}"
     if [[ -z "$acts" ]]; then
+        # Only each model's index.parquet and meta.json are read, so the 1 MB _activations_index.tar will do.
         if [[ -d "$run" && -f "$run/data/activations/qwen3_8b/ckd/index.parquet" ]]; then acts="$run"
-        elif [[ -f "$RUNS/20261121-101311_activations.tar" ]]; then acts="$RUNS/20261121-101311_activations.tar"; fi
+        else
+            for candidate in "$RUNS/20261121-101311_activations_index.tar" "$RUNS/20261121-101311_activations.tar"; do
+                [[ -f "$candidate" ]] && { acts="$candidate"; break; }
+            done
+        fi
     fi
     [[ -e "$acts" ]] || { log "no activations of 20261121-101311: set BASE_ACTIVATIONS (directory or _activations.tar)"; return 1; }
     BASE_RUN="$run" BASE_ACTIVATIONS="$acts"
