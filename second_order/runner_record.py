@@ -63,7 +63,8 @@ Uncertainty: paired bootstrap over patients (CKD) or items (bespoke), carrying a
 case's conditions and replicates together; 95% percentile intervals, item parameters
 held fixed. lambda also has a 95% Fieller confidence set from the bootstrap covariance of
 beta_C and beta_D, unbounded when beta_D is weak. Ratio rule: any other ratio is blanked
-when its denominator's interval includes 0 (tau: the setting's rho; phi: pooled rho). tau_shared = phi - beta_C / rho uses the shared phi.
+when its denominator's interval includes 0 (tau: the setting's rho; phi: pooled rho).
+tau_shared = phi - beta_C / rho uses the shared phi.
 
 Also reported (CKD): lambda by assigned record order; false-record lambda for the
 randomized sicker and healthier edits (64 patients, bootstrap within label x direction);
@@ -234,7 +235,7 @@ def write_report(run_dir: Path) -> None:
         parts.append(f"## Settings\n\nUnavailable ({exc!r}); see `config.yaml` and `record/constants.json`.\n\n")
     parts.append("## Estimators\n\nIn full in `record/estimator.md`. With x = l_A − l_B (log-odds): λ = β_C / β_D "
                  "(slopes of l_C − l_M and l_D − l_M on x; CKD's headline uses C's matched references M and D), "
-                 "ρ = Cov(x, x′) / Var(x) from the second replicate, τ = φ(1 − λ) per setting, and "
+                 "ρ = Cov(x, x′) / Var(x) from the second replicate, τ = (β_D − β_C) / ρ per setting, and "
                  "φ = β_D / ρ shared by the two settings; bootstrap over patients or items, Fieller set for λ.\n\n")
     write_results(parts, run_dir, manifest, use)
 
@@ -267,7 +268,6 @@ def settings_table(consts: dict) -> str:
 
 
 def write_results(parts: list[str], run_dir: Path, manifest: dict, use: dict) -> None:
-
     results = run_dir / "outputs" / "curse" / "RESULTS.md"
     if results.exists():
         parts.append("## Results\n\n" + section(results.read_text().split("\n", 1)[1], 1) + "\n\n")
@@ -314,10 +314,12 @@ def write_results(parts: list[str], run_dir: Path, manifest: dict, use: dict) ->
                                                                     "input_tokens", "output_tokens"]) + "\n")
     parts.append("## Files\n\n"
                  "- `config.yaml`: the exact config used; `manifest.json`: stages, provenance, hardware\n"
-                 "- `record/`: constants, estimator, usage, example prompts, bespoke items, pip freeze, nvidia-smi\n"
+                 "- `record/`: constants, estimator, usage, example prompts, pip freeze, nvidia-smi, the paper "
+                 "comparison\n"
                  "- `outputs/curse/`: estimates, scatter, placebo, Bayes, comprehension, thresholds, decision curves, "
                  "RESULTS.md\n"
-                 "- `outputs/retention/`, `outputs/fits/`, `outputs/comprehension/`, `outputs/transcripts_C/`\n"
+                 "- `outputs/retention/`, `outputs/fits/`, `outputs/checks/`, `outputs/comprehension/`, "
+                 "`outputs/transcripts/`\n"
                  "- `data/`: generation cache (every prompt hash and response), parsed responses, latents, beliefs\n"
                  "- `figures/`: the figures above (PDF and PNG); `paper/`: the reproduced paper\n"
                  "- `record/tuning/`: every inference-tuning trial and its smoke checks\n"

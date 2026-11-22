@@ -49,7 +49,6 @@ def benchmark_items(model: str, n: int, seed: int) -> list[dict]:
     """A seeded sample of the experiment's calls (main run, first sample), as plain dicts."""
     from second_order.run_generation import dataset_cases, experiment_items
 
-    from second_order.datasets import COMPREHENSION_CONDITIONS
     rng = np.random.default_rng(seed)
     shares = {"ckd": 1 - settings()["bespoke_share"], "bespoke": settings()["bespoke_share"]}
     picked = []
@@ -58,7 +57,7 @@ def benchmark_items(model: str, n: int, seed: int) -> list[dict]:
                 if i.replicate == 0 and i.sample == 0]
         k = min(len(pool), int(round(n * shares.get(dataset, 0))))
         strata = ([lambda i: i.output.startswith("probability"), lambda i: not i.output.startswith("probability")]
-                  if dataset == "ckd" else [lambda i: i.condition in COMPREHENSION_CONDITIONS])
+                  if dataset == "ckd" else [lambda i: i.condition in DS.COMPREHENSION_CONDITIONS])
         required = {int(rng.choice([j for j, item in enumerate(pool) if pred(item)])) for pred in strata}
         rest = sorted(set(range(len(pool))) - required)
         extra = rng.choice(rest, size=max(0, k - len(required)), replace=False)
@@ -77,13 +76,15 @@ def smoke_stats(items, records) -> dict:
     groups = {}
     for item, record in zip(items, records, strict=True):
         text = record.get("text") or ""
-        kind = "probability" if item.output.startswith("probability") else "choice"
         if item.output == FOLLOWUP:
             kind = "followup"
+        else:
+            kind = "probability" if item.output.startswith("probability") else "choice"
         valid = score_answer(item, record).status == "parsed"
+        cut = record.get("stop_reason") == "length"
         parsed.append(valid)
-        groups.setdefault(f"{item.dataset}/{kind}", []).append((valid, record.get("stop_reason") == "length"))
-        truncated.append(record.get("stop_reason") == "length")
+        truncated.append(cut)
+        groups.setdefault(f"{item.dataset}/{kind}", []).append((valid, cut))
         thinking.append("<think>" in text and "</think>" in text and len(text.split("</think>")[0]) > 20)
         lengths.append((record.get("usage") or {}).get("output_tokens") or 0)
         key = f"{item.dataset}/{item.output}"
@@ -101,8 +102,7 @@ def smoke_stats(items, records) -> dict:
 
 def trial(model: str, engine: dict, items_path: Path, out: Path) -> None:
     """One engine configuration in this process: load, generate every benchmark item, time it."""
-    from second_order.run_generation import Item, generate_vllm, followup_item
-    from second_order.datasets import COMPREHENSION_CONDITIONS
+    from second_order.run_generation import Item, followup_item, generate_vllm
 
     C.load()["models"][model]["engine"] = engine  # this process only
     items = [Item(**d) for d in json.loads(items_path.read_text())]
@@ -114,7 +114,7 @@ def trial(model: str, engine: dict, items_path: Path, out: Path) -> None:
         started = time.time()
         records = generate_vllm(model, items, int(C.load()["seed"]))
         parents = [(i, r) for i, r in zip(items, records, strict=True)
-                   if i.dataset == "bespoke" and i.condition in COMPREHENSION_CONDITIONS]
+                   if i.dataset == "bespoke" and i.condition in DS.COMPREHENSION_CONDITIONS]
         followups = [followup_item(i, r.get("text") or "") for i, r in parents]
         if followups:
             replies = generate_vllm(model, followups, int(C.load()["seed"]))

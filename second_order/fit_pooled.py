@@ -36,6 +36,7 @@ from latent_beliefs.latent.model import FitConfig, ProbabilisticLatentModel, fit
 from second_order import config as C
 from second_order.beliefs import clip_logit
 from second_order.responses import configured_specs
+
 QUADRATURE_POINTS = 128
 PROBABILITY_EPSILON = 1e-4
 
@@ -53,6 +54,7 @@ class AnchoredLatentModel(ProbabilisticLatentModel):
 def new_model() -> ProbabilisticLatentModel:
     cls = AnchoredLatentModel if C.load()["latent"].get("anchor_cutoffs") else ProbabilisticLatentModel
     return cls(configured_specs(), quadrature_points=QUADRATURE_POINTS, probability_epsilon=PROBABILITY_EPSILON)
+
 
 def groups(conditions: Sequence[str]) -> list[tuple[str, ...]]:
     """Fit groups (one per fit family) for the conditions present, in a stable order."""
@@ -92,14 +94,14 @@ def fit_group(wide: pd.DataFrame, conditions: Sequence[str], seed: int,
 @torch.no_grad()
 def posteriors(model: ProbabilisticLatentModel, frame: pd.DataFrame, batch_size: int = 256, *,
                predict_decision: bool = True) -> pd.DataFrame:
-    """Compute posterior summaries and leave both screening decisions out of the predictive check."""
+    """Posterior summaries of logit z per row; ``z_without_decision`` leaves both screening decisions out."""
     parts = []
     predictors = [i for i, spec in enumerate(model.specs) if not spec.name.startswith("decision/")]
+    prior = model.prior_log_weights()
     for start in range(0, len(frame), batch_size):
         batch = frame.iloc[start:start + batch_size]
         obs = torch.as_tensor(likelihood_values(batch, model.specs), dtype=model.dtype)
         logp = model.log_likelihood_by_output(obs)
-        prior = model.prior_log_weights()
         w = (logp.sum(1) + prior).softmax(1)
         mean = w @ model.logit_z_grid
         var = (w * (model.logit_z_grid - mean[:, None]).square()).sum(1)

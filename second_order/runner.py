@@ -182,6 +182,11 @@ def write_config(run: Run) -> dict:
 
 
 # Run stages
+def md5sum(path: Path) -> str:
+    with path.open("rb") as handle:
+        return hashlib.file_digest(handle, "md5").hexdigest()
+
+
 def fetch_paper_data(run: Run) -> None:
     release = ROOT / "data" / "release"
     if not (release / "MANIFEST.sha256").exists():
@@ -189,9 +194,11 @@ def fetch_paper_data(run: Run) -> None:
 
         meta = requests.get(f"https://zenodo.org/api/records/{ZENODO_RECORD}", timeout=60).json()
         entry = next(f for f in meta["files"] if f["key"] == ZENODO_FILE)
+        expected = entry["checksum"].split(":")[1]
         target = ROOT / "data" / "downloads" / ZENODO_FILE
         target.parent.mkdir(parents=True, exist_ok=True)
-        if not target.exists() or hashlib.md5(target.read_bytes()).hexdigest() != entry["checksum"].split(":")[1]:
+        md5 = md5sum(target) if target.exists() else None
+        if md5 != expected:
             from tqdm import tqdm
 
             run.log(f"downloading the results bundle ({entry['size'] / 1e6:.0f} MB) from Zenodo")
@@ -203,14 +210,15 @@ def fetch_paper_data(run: Run) -> None:
                     for chunk in r.iter_content(1 << 20):
                         handle.write(chunk)
                         bar.update(len(chunk))
-        md5 = hashlib.md5(target.read_bytes()).hexdigest()
-        if md5 != entry["checksum"].split(":")[1]:
+            md5 = md5sum(target)
+        if md5 != expected:
             raise RuntimeError(f"Zenodo bundle MD5 {md5} does not match {entry['checksum']}")
         with tarfile.open(target) as archive:
             archive.extractall(ROOT)
         run.manifest["zenodo"] = {"record": ZENODO_RECORD, "file": ZENODO_FILE, "md5": md5}
     run.sh([sys.executable, "-m", "latent_beliefs.release", "verify"], "fetch_data")
     run.manifest["release_manifest_sha256"] = sha256(release / "MANIFEST.sha256")
+
 
 def stage_fetch_data(run: Run, cfg: dict) -> None:
     if cfg.get("run_profile", {}).get("paper", True) and "paper" not in run.args.skip:
@@ -252,10 +260,12 @@ def local_models(run: Run, cfg: dict) -> list[str]:
 
 
 def stage_fetch_models(run: Run, cfg: dict) -> None:
+    from huggingface_hub import snapshot_download
+
+    from second_order.run_generation import resolve_revision
+
     pins = run.manifest.setdefault("model_snapshots", {})
     for model in local_models(run, cfg):
-        from huggingface_hub import snapshot_download
-        from second_order.run_generation import resolve_revision
         entry = cfg["models"][model]
         repo = entry["path"]
         revision = resolve_revision(repo, entry.get("revision"))
@@ -360,13 +370,12 @@ def stage_tune(run: Run, cfg: dict) -> None:
         if summary.get("engine"):
             cfg["models"][model]["engine"] = summary["engine"]
             cfg["models"][model]["batch_size"] = summary["batch_size"]
-        run.manifest.setdefault("tuning", {})[model] = {
-            k: summary.get(k) for k in ("engine", "batch_size", "output_tokens_per_second", "speedup_over_first",
-                                        "error")} | {"smoke": {k: v for k, v in (summary.get("smoke") or {}).items()
-                                                              if k != "examples"},
-                                                     "trials": [{k: t.get(k) for k in ("engine", "ok", "error",
-                                                                                       "output_tokens_per_second")}
-                                                                for t in summary.get("trials", [])]}
+        smoke = {k: v for k, v in (summary.get("smoke") or {}).items() if k != "examples"}
+        trials = [{k: t.get(k) for k in ("engine", "ok", "error", "output_tokens_per_second")}
+                  for t in summary.get("trials", [])]
+        record = {k: summary.get(k) for k in ("engine", "batch_size", "output_tokens_per_second",
+                                               "speedup_over_first", "error")}
+        run.manifest.setdefault("tuning", {})[model] = record | {"smoke": smoke, "trials": trials}
         if summary.get("error"):
             failures.append(f"{model}: {summary['error']}")
     run.config_path.write_text(yaml.safe_dump(cfg, sort_keys=False))

@@ -1,8 +1,8 @@
-"""Condition names for the CKD protocol amendment and the bespoke experiment.
+"""Condition names of the CKD and bespoke experiments.
 
-The CKD release labels M2 and D2 become M and D in the experiment. Only those
-primary references use C's two-chart layout. The original one-chart prompts
-remain available as M_single and D_single. False trials use the suffix _F.
+The CKD release's two-chart cases M2 and D2, which share C's layout, are the
+experiment's M and D; its one-chart M and D are the controls M_single and D_single.
+False-record conditions carry the suffix _F.
 """
 
 from __future__ import annotations

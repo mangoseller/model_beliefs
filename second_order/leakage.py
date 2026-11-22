@@ -303,23 +303,26 @@ def apply_ratio_rule(table: pd.DataFrame) -> pd.DataFrame:
     return table
 
 
+def layout_statistics(data: dict[str, np.ndarray]) -> dict[str, float]:
+    """beta_D and lambda with each CKD reference, and the two-chart minus one-chart difference in lambda."""
+    stats = {}
+    for ref in ("single_record", "two_record"):
+        x = data["x_A_minus_B." + ref]
+        den = slope(data["y_D_minus_M." + ref], x)
+        stats["beta_D_" + ref] = den
+        stats["lambda_" + ref] = _ratio(slope(data["y_C_minus_M." + ref], x), den)
+    stats["diff_lambda_layout"] = stats["lambda_two_record"] - stats["lambda_single_record"]
+    return stats
+
+
 def layout_difference(points, *, resamples, seed):
     """Two-chart minus one-chart leakage on the same patients, resampling patient IDs together."""
     out = []
+    values = ["x_A_minus_B", "y_D_minus_M", "y_C_minus_M"]
     for (model, method, setting), group in points.groupby(["model", "method", "setting"]):
-        values = ["x_A_minus_B", "y_D_minus_M", "y_C_minus_M"]
         pairs = group.pivot(index="case_id", columns="reference", values=values).dropna()
         pairs.columns = [".".join(key) for key in pairs.columns]
-        def differences(data):
-            stats = {}
-            for ref in ("single_record", "two_record"):
-                x = data["x_A_minus_B." + ref]
-                den = slope(data["y_D_minus_M." + ref], x)
-                stats["beta_D_" + ref] = den
-                stats["lambda_" + ref] = _ratio(slope(data["y_C_minus_M." + ref], x), den)
-            stats["diff_lambda_layout"] = stats["lambda_two_record"] - stats["lambda_single_record"]
-            return stats
-        t = bootstrap(pairs, differences, resamples=resamples, seed=seed)
+        t = bootstrap(pairs, layout_statistics, resamples=resamples, seed=seed)
         out.append(t.assign(model=model, dataset="ckd", method=method, setting=setting))
     return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
 
@@ -332,11 +335,19 @@ def _paired_tables(frame, roles_by_setting, resamples, seed):
     return _bootstrap_tables(frame, evaluate, resamples, seed)
 
 
-def estimate_with_points(beliefs, dataset, *, resamples, seed, min_cases=5, match_references=False, points_only=False):
+def estimate_with_points(beliefs, dataset, *, resamples, seed, min_cases=5, match_references=False,
+                         points_only=False):
+    """(estimates, per-case points) for every reference and setting, and the shared statistics.
+
+    The two settings are bootstrapped together on the cases complete for both; with fewer than
+    ``min_cases`` such cases each setting uses its own complete cases.  ``match_references``
+    restricts every reference to the cases complete for all of them; ``points_only`` skips the
+    bootstrap and returns only the per-case points.
+    """
     W = wide(beliefs)
     tables, points = [], []
-    refs = references(dataset)
-    all_roles = {ref: {s: roles(dataset, s, ref) for s in SETTINGS} for ref in refs}
+    all_roles = {ref: {s: roles(dataset, s, ref) for s in SETTINGS} for ref in references(dataset)}
+
     def complete(names):
         if not set(names).issubset(W.columns):
             return W.iloc[:0]
