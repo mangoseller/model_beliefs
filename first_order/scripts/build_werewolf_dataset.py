@@ -89,8 +89,10 @@ def download(n_games, pages, rng):
 
 def load_game(path):
     g = json.loads(path.read_text())
-    events = [json.loads(e["json_str"]) for step in g["info"]["MODERATOR_OBSERVATION"] for e in step]
     end = g["info"].get("GAME_END") or {}
+    if end.get("terminated_with_agent_error"):
+        return None
+    events = [json.loads(e["json_str"]) for step in g["info"]["MODERATOR_OBSERVATION"] for e in step]
     roles = end.get("all_players_and_role") or {}
     if not roles:  # fall back to the private role announcements
         roles = {e["data"]["player_id"]: e["data"]["role"] for e in events
@@ -98,8 +100,6 @@ def load_game(path):
     players = end.get("all_players") or []
     roster = [p["id"] if isinstance(p, dict) else p for p in players] or list(roles)
     models = {p["id"]: (p.get("agent") or {}).get("display_name") for p in players if isinstance(p, dict)}
-    if end.get("terminated_with_agent_error"):
-        return None
     return {"id": str(g["info"].get("EpisodeId", path.stem)), "events": events, "roles": roles,
             "roster": roster, "models": models, "config": g.get("configuration", {})}
 
@@ -155,15 +155,17 @@ def eliminated_before(events, i):
 
 def cut_points(game):
     """Indices i (cut = events[:i]) during day discussion, after a chat message or right before the vote."""
-    ev, cuts = game["events"], []
-    for i, e in enumerate(ev):
+    cuts, n_chat = [], Counter()  # n_chat: chat messages so far, per day
+    for i, e in enumerate(game["events"]):
         if e["event_name"] == "game_end":
             break
+        chat = is_chat(e)
+        if chat:
+            n_chat[e["day"]] += 1
         if e["phase"] != "Day" or e["day"] < 1:
             continue
-        if is_chat(e):
-            n_chat = sum(1 for x in ev[:i + 1] if is_chat(x) and x["day"] == e["day"])
-            cuts.append((i + 1, f"Day {e['day']}, discussion, after {n_chat} message(s) so far today"))
+        if chat:
+            cuts.append((i + 1, f"Day {e['day']}, discussion, after {n_chat[e['day']]} message(s) so far today"))
         elif e["event_name"] == "phase_change" and e.get("public") and "Moving to day vote" in (e.get("description") or ""):
             cuts.append((i, f"Day {e['day']}, discussion has ended, before the day vote"))
     return cuts
@@ -174,16 +176,16 @@ def setup_line(game):
     order = ["Villager", "Werewolf", "Doctor", "Seer"]
     cstr = ", ".join(f"{r} {counts[r]}" for r in order + sorted(set(counts) - set(order)) if counts[r])
     cfg = game["config"]
-    reveal = {"role": "role", "team": "team"}
+    revealed = ("role", "team")  # other reveal levels (e.g. none) add no sentence
     parts = []
     dl, nl = cfg.get("day_exile_reveal_level", "role"), cfg.get("night_elimination_reveal_level", "role")
-    if dl in reveal and dl == nl:
-        parts.append(f"Exiled or night-eliminated players have their {reveal[dl]} revealed.")
+    if dl in revealed and dl == nl:
+        parts.append(f"Exiled or night-eliminated players have their {dl} revealed.")
     else:
-        if dl in reveal:
-            parts.append(f"Exiled players have their {reveal[dl]} revealed.")
-        if nl in reveal:
-            parts.append(f"Night-eliminated players have their {reveal[nl]} revealed.")
+        if dl in revealed:
+            parts.append(f"Exiled players have their {dl} revealed.")
+        if nl in revealed:
+            parts.append(f"Night-eliminated players have their {nl} revealed.")
     return (f"[Game setup] {len(game['roster'])} players: {', '.join(game['roster'])}. "
             f"Role counts: {cstr}. " + " ".join(parts)).strip()
 

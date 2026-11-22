@@ -34,7 +34,7 @@ import numpy as np
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root, so model_beliefs imports without install
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # first_order/, so model_beliefs imports without install
 from model_beliefs.questions import LETTERS, build_prompt, build_questions, load_scenario
 
 DEFAULT_MODEL = "Qwen/Qwen2.5-1.5B-Instruct"
@@ -124,21 +124,26 @@ def token_index_ending_at(offsets, char_end: int) -> int:
     return idx
 
 
+def last_match(pattern: re.Pattern, text: str):
+    matches = list(pattern.finditer(text))
+    return matches[-1] if matches else None
+
+
 def parse_answer(kind: str, text: str, n_options: int):
-    """Returns (answer, answer_char_start). answer is a float for probability, a letter index otherwise."""
+    """Return (answer, answer_char_start) from the last answer in the reply.
+
+    answer is a float for probability questions and an option index (0 = A) otherwise; both are None
+    when no valid answer is found.
+    """
     if kind == "probability":
-        m = None
-        for m in PROB_RE.finditer(text):
-            pass
+        m = last_match(PROB_RE, text)
         if m is None:
             return None, None
         v = float(m.group(1))
-        if m.group(2) == "%" or v > 1:
+        if m.group(2) == "%" or v > 1:  # "45%" or 45 -> 0.45
             v = v / 100.0
         return (v if 0 <= v <= 1 else None), m.start()
-    m = None
-    for m in CHOICE_RE.finditer(text):
-        pass
+    m = last_match(CHOICE_RE, text)
     if m is None and len(text.strip()) <= 60:  # short bare answer: "B", "E. Very likely" (--no-reasoning)
         m = BARE_RE.match(text)
     if m is None:
@@ -184,9 +189,9 @@ def map_back(res: dict, q) -> dict:
 
 @torch.no_grad()
 def run_batch(tok, model, device, jobs, args, want_acts):
-    """Run a list of jobs (each: dict with text, context, q_shown) in one generate call.
+    """Run jobs (dicts with text, context, q_shown) in one generate call.
 
-    Returns a list of (result dict, activations dict or None), in job order.
+    Return a list of (result dict, activations dict or None), in job order.
     """
     texts = [j["text"] for j in jobs]
     prompt_ids, ctx_tok = [], []
@@ -215,6 +220,7 @@ def run_batch(tok, model, device, jobs, args, want_acts):
         marker = '{"probability":' if q.kind == "probability" else "Choice:"
         forced_texts.append(j["text"] + reasoning + marker)
 
+    opt_ids = {n: option_token_ids(tok, n) for n in {len(j["q_shown"].options) for j in jobs}}
     out = [None] * len(jobs)
     bs = args.act_batch_size
     for s in range(0, len(jobs), bs):
@@ -232,8 +238,7 @@ def run_batch(tok, model, device, jobs, args, want_acts):
             q = jobs[i]["q_shown"]
             option_probs = None
             if q.kind != "probability":
-                per = torch.stack([torch.logsumexp(logp_all[b, ids], 0)
-                                   for ids in option_token_ids(tok, len(q.options))])
+                per = torch.stack([torch.logsumexp(logp_all[b, ids], 0) for ids in opt_ids[len(q.options)]])
                 option_probs = torch.softmax(per, 0).tolist()
             acts = None
             if want_acts:
@@ -256,16 +261,19 @@ def run_batch(tok, model, device, jobs, args, want_acts):
     return out
 
 
+ORDERS = {"normal": [False], "flip": [True], "both": [False, True]}  # --orders -> flip the options?
+
+
 def make_jobs(scenario, questions, case, system, tok, args):
-    orders = {"normal": [False], "flip": [True], "both": [False, True]}[args.orders]
+    """One job per (option order, question, sample) for a case, in that nesting order."""
     jobs = []
-    for flip in orders:
+    for flip in ORDERS[args.orders]:
         for q in questions:
             f = flip and q.kind != "probability"
             qs = dataclasses.replace(q, options=q.options[::-1]) if f else q
             user, context = build_prompt(scenario, qs, case, reasoning=not args.no_reasoning)
             for s in range(args.samples):
-                jobs.append({"case": case, "q": q, "q_shown": qs, "flipped": f,
+                jobs.append({"q": q, "q_shown": qs, "flipped": f,
                              "order": "flip" if flip else "normal", "sample": s, "prompt": user,
                              "context": context, "text": chat_text(tok, system, user)})
     return jobs
@@ -326,17 +334,16 @@ def main():
 
     todo = [c for c in cases if c["id"] not in done]
     t0, n_done = time.time(), len(cases) - len(todo)
-    per_case = len(make_jobs(scenario, questions, cases[0], system, tok, args))
+    per_case = len(ORDERS[args.orders]) * len(questions) * args.samples
     cases_per_batch = max(1, args.batch_size // per_case)
     for b in range(0, len(todo), cases_per_batch):
         chunk = todo[b:b + cases_per_batch]
         jobs = [j for c in chunk for j in make_jobs(scenario, questions, c, system, tok, args)]
         results = run_batch(tok, model, device, jobs, args, not args.no_activations)
-        for case in chunk:
-            rows, acts = [], {k: [] for k in POSITIONS}
-            for j, (res, a) in zip(jobs, results):
-                if j["case"] is not case:
-                    continue
+        for k, case in enumerate(chunk):
+            rows, acts = [], {p: [] for p in POSITIONS}
+            span = slice(k * per_case, (k + 1) * per_case)  # this case's jobs
+            for j, (res, a) in zip(jobs[span], results[span]):
                 q = j["q"]
                 res["flipped"] = j["flipped"]
                 if j["flipped"]:
@@ -348,11 +355,11 @@ def main():
                     "prompt": j["prompt"], **res,
                 })
                 if a is not None:
-                    for k in POSITIONS:
-                        acts[k].append(a[k])
+                    for p in POSITIONS:
+                        acts[p].append(a[p])
             if not args.no_activations:
                 np.savez_compressed(out_dir / "activations" / f"{case['id']}.npz",
-                                    **{k: np.stack(v) for k, v in acts.items()})
+                                    **{p: np.stack(v) for p, v in acts.items()})
             with resp_path.open("a") as f:
                 for r in rows:
                     f.write(json.dumps(r) + "\n")
