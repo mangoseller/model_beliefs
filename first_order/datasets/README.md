@@ -30,9 +30,10 @@ Rules:
 - `{threshold}`, `{gain}` and `{cost_ratio}` are filled in automatically with r ∈ {2, 4, 9, 19}
   (thresholds 33.3%, 20%, 10%, 5%).
 - Any other `{name}` in a template or context is filled from the case's `vars`.
-- `label` is the true answer (0/1) if known, else `null`. For a model organism, also note the
-  planted belief somewhere (e.g. `"planted_belief": 0.9` on the case or file) so
-  `control_model_organism.py` can compare against it.
+- `label` is the true answer (0/1) if known, else `null`. For a model organism, also record the
+  planted belief (e.g. `"planted_belief": 0.9` on the case or file) so the readouts can be
+  compared against it.
+- Other keys (`source`, per-case `meta`, `pair`, ...) are kept for reference and ignored by the code.
 
 Check a new file renders properly:
 
