@@ -20,8 +20,8 @@ prompt; temperature from ``generation`` and the token limit per answer type (rea
 then JSON for probabilities, reasoning then a Choice line otherwise: ``datasets.<name>.max_tokens``),
 both overridable per model (``temperature``, ``top_p``, ``top_k``, ``max_tokens``,
 ``enable_thinking``).  vLLM also keeps the top log-probabilities of the first
-generated token (``generation.logprobs``, off by default); since multiple-choice answers now
-reason first, that token is not the answer letter.
+generated token (``generation.logprobs``, off by default); multiple-choice answers reason
+first, so that token is not the answer letter.
 
     python -m second_order.run_generation --model qwen3_8b [--dataset ckd bespoke] [--stage all]
 """
@@ -45,6 +45,7 @@ from typing import Any, Iterable
 from tqdm import tqdm
 
 from second_order import config as C
+
 
 @dataclass(frozen=True)
 class Item:
@@ -215,7 +216,7 @@ def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
                 signatures[sig] = settings_signature(*sig)
             if record.get("settings_sha") != signatures[sig]:
                 raise ValueError(f"cached response for {item.key} was generated with other settings "
-                                 f"than this run (including unsigned legacy records). Use a new run directory.")
+                                 f"than this run (or records none). Use a new run directory.")
         out.append(record)
     return out
 

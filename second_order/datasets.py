@@ -17,7 +17,8 @@ CKD outputs are ``<question_id>/<order>`` (``probability/normal``, ``bet_4/flip`
 
 Both datasets ask for a probability the same way: reasoning first, then the JSON
 object ``{"probability": <number>}`` with a number between 0 and 1.  CKD multiple-choice
-questions (amendment 2) also ask for reasoning first, then a final ``Choice: <letter>`` line.
+questions also ask for reasoning first, then a final ``Choice: <letter>`` line (the
+loader rewrites the release's single-letter instruction, ``CHOICE_ASK``).
 """
 
 from __future__ import annotations
@@ -44,9 +45,9 @@ BESPOKE_META = ["family", "person", "n_shown", "n_hidden_or_altered", "model_evi
                 "normative_p", "normative_logodds", "full_leak_p", "comprehension_q", "comprehension_a",
                 "partial_c_indices", "check_relation"]
 BESPOKE_OUTPUT = "probability"
-# CKD protocol amendment 2: the archived v3 multiple-choice prompts (questions, checks and probes)
-# end with ARCHIVED_CHOICE_ASK; Qwen3 with thinking off reasons anyway and runs past a short limit.
-# The loader asks for reasoning first and a final Choice line instead, as Smolin & Wilder did.
+# The released v3 multiple-choice prompts (questions, checks and probes) end with ARCHIVED_CHOICE_ASK.
+# Qwen3 with thinking off reasons anyway, so the loader asks for reasoning first and a final Choice
+# line instead, as Smolin & Wilder did.
 ARCHIVED_CHOICE_ASK = "Answer with a single letter."
 CHOICE_ASK = ("Provide your reasoning first.\nThen output your answer on a new line in exactly this format:\n"
               "Choice: <the letter of one option>")
@@ -91,8 +92,8 @@ def _ckd_battery(battery: str) -> pd.DataFrame:
         "replicate": raw.replicate.astype(int) - 1, "prompt": raw.prompt, "placebo": False,
     })
     frame = pd.concat([out, raw[CKD_META]], axis=1)
-    # The source release shares A and matched D between settings. False trials
-    # need their own copies so all Qwen-owned charts have the same truth cue.
+    # The release shares A and the two-chart D between the settings; the false-record trials get their
+    # own copies so that every chart the model owns in them carries the same truth cue.
     verified = frame[frame.condition.isin(["A", "D"])].copy()
     verified["condition"] += "_F"
     frame = pd.concat([frame, verified], ignore_index=True)
@@ -112,7 +113,7 @@ UNITS = {"draws": "draw", "witnesses": "witness", "tests": "test"}
 
 
 def followup_question(question: str) -> str:
-    """Amendment 2 for the bespoke follow-ups: the archived question plus the statement format the scorer reads."""
+    """A bespoke follow-up question with the statement format the scorer reads appended."""
     if not question:
         return question
     told = re.search(r"\babout (draw|witness|test) (\d+)\?$", question)
@@ -251,7 +252,7 @@ def parse_probability(text: str | None) -> tuple[float | None, str | None]:
         return None, "invalid"
     answer = text.strip()
     if not answer.endswith("```"):
-        answer = answer.rstrip("*_` \t\n")  # **{"probability": 0.75}** (Qwen3 8B, 18 of 27 misses in the smoke run)
+        answer = answer.rstrip("*_` \t\n")  # Markdown emphasis around the JSON: **{"probability": 0.75}**
     if answer.endswith("```"):
         fence = re.search(r"```(?:json)?\s*([^`]*)```$", answer, re.I)
         if not fence:
@@ -308,7 +309,7 @@ def parse(dataset: str, output: str, prompt: str, text: str | None, *,
 # observation statements in the answer ("Draw 2: red.", "Witness 1: says "Sam".", "Test 3: positive."):
 # "Which ... did PERSON see/hear" needs exactly the keyed statements; "What was PERSON told about ..."
 # needs every mention of that observation to carry the keyed value.  Markdown emphasis is ignored.
-# Amendment 2 appends the statement format to each archived question (``followup_question``).
+# ``followup_question`` appends the statement format to each released question.
 COMPREHENSION_CONDITIONS = ("C", "C_F", "C_ctrl_F")
 # One observation statement: unit, index, value.  "Bag C draw 1" (a placebo's unrelated bag) is not one.
 STATEMENT = re.compile(r'(?<!bag c )\b(draw|witness|test) (\d+)\s*:\s*(?:says\s+)?\\?"?([a-z]+)\\?"?', flags=re.I)
