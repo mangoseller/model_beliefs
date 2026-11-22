@@ -41,16 +41,9 @@ reuses its archived answer, and the first three arms are exactly the chart-order
 
 ## Running
 
-On a GPU host with the base run and its activation index in `runs/`:
-
-```bash
-nohup bash run_binding_experiment.sh > binding.out 2>&1 &   # every part, in order
-bash run_binding_experiment.sh part3a part3d                # or chosen parts
-```
-
-The launcher installs the pinned environment as `run_experiment.sh` does, prepares every plan from the
-base run (skipped on resume) and refuses to start unless each plan's content digest matches
-`second_order/binding_plans.json`. Then it runs the parts:
+Run on a GPU host with the base run and its activation index in `runs/`, in the pinned environment that
+`run_experiment.sh` installs. Prepare every plan from the base run; a plan runs only if its content
+digest matches `second_order/binding_plans.json`. The parts, in priority order:
 
 | Part | Run | What |
 |---|---|---|
@@ -61,19 +54,13 @@ base run (skipped on resume) and refuses to start unless each plan's content dig
 | `part3d` | `binding-causal` | the causal stages on part 3a |
 | `part3c` | `binding-32b` | the `32b` profile |
 
-Each part writes its own build to `runs/results/` (`<part>_<run>.tar.gz`, and `_activations.tar` where
-it captured any, each with a `.sha256`); progress is in `runs/logs/parts.log`. Every stage resumes from
-its cache, and later parts import earlier parts' answers by item key instead of regenerating them. The
-GPU runs one stage at a time; export, latent refits, analysis and packaging run on the CPU in the
-background (thread count `ANALYSIS_THREADS`) while the next part generates.
-
-`BASE_RUN` and `BASE_ACTIVATIONS` locate the base run (directory or tarball) and its activation index
-(only each model's `index.parquet` and `meta.json` are read, so the small `_activations_index.tar`
-suffices). `PYTHON` skips the environment setup. `ENGINE_<MODEL>` overrides vLLM engine settings for one
-model as JSON. `run_fast.sh` runs the launcher with CUDA graphs captured for decode batches up to 1,024
-and `SO_FAST_SEEDED_SAMPLING=1`, a bit-identical replacement for vLLM's per-row seeded sampler
-(`run_generation.patch_seeded_sampling`). Engine settings and the sampler are outside the settings
-signature: they change speed, not answers.
+Every stage resumes from its cache, and later parts import earlier parts' answers by item key instead of
+regenerating them. `second_order.package_run` builds each part's archives (`--what main` and
+`--what activations`). Only each model's `index.parquet` and `meta.json` are read from the base run's
+activations, so the small `_activations_index.tar` suffices. `generate --engine '<json>'` overrides vLLM
+engine settings, and `SO_FAST_SEEDED_SAMPLING=1` swaps in a bit-identical replacement for vLLM's per-row
+seeded sampler (`run_generation.patch_seeded_sampling`). Engine settings and the sampler are outside the
+settings signature: they change speed, not answers.
 
 Individual stages:
 
@@ -145,7 +132,7 @@ battery and the comprehension check. `prepare` validates the dataset checksums, 
 config and model revisions, and verifies every reused answer's prompt and settings hash; it writes an
 immutable `plan.json` and copies the reused answers to `baseline_cache/`. `generate`, `capture` and
 `export` add only the missing calls; `status` reports the budget without loading weights.
-`run_order_followup.sh <run>` runs the stages per model in separate processes. The exports
+Run each stage per model in its own process so VRAM is released between stages. The exports
 (`outputs/<model>_responses.parquet`, `<model>_matrix.parquet`, checks, retention, activation references)
 mark absent answers `not_generated`; `binding_analysis --order-followup` analyses them with the
 estimators above.

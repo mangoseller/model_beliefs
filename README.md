@@ -7,22 +7,21 @@ Wilder, *Beliefs and Behavior in Language Models*
 
 ## The experiment
 
-The model reads a patient's record. PERSON (a named person; the name varies by patient) has a
-record of the same patient that is missing some fields.
+The model reads a patient's record. PERSON has a record of the same patient that is missing some
+fields.
 
 | We ask the model | Condition | Example |
 | --- | --- | --- |
 | Its own view, from the full record | A | 30% |
 | Its own view, from PERSON's record | B | 12% |
-| What PERSON thinks; both records shown, both PERSON's | M | 13% |
+| What PERSON thinks; it sees only PERSON's record | M | 13% |
 | What PERSON thinks; it has the full record, PERSON the partial one | C | 25% |
-| What PERSON thinks; both records shown, both full | D | 28% |
+| What PERSON thinks, if PERSON had the full record | D | 28% |
 
-**Leakage** $\lambda$ is where C falls between its two references in log-odds $\ell$: $0$ means
-the model kept its private evidence out of PERSON's belief, $1$ means it all leaked in. Here
+**Leakage** $\lambda$ is where C falls between M and D in log-odds $\ell$: $0$ means the model
+kept its private evidence out of PERSON's belief, $1$ means it all leaked in. Here
 $\lambda = (\ell_C - \ell_M)/(\ell_D - \ell_M) \approx 0.84$; people score about $0.51$
-(Camerer, Loewenstein and Weber, 1989). The single-record references M_single and D_single (only PERSON's record
-shown) give the Methods' version of the same estimate.
+(Camerer, Loewenstein and Weber, 1989).
 
 ![What λ, φ and τ measure](docs/curse_schematic.png)
 
@@ -35,49 +34,35 @@ $$
 \tau = \frac{\beta_D - \beta_C}{\rho},
 $$
 
-where $\beta_C$ and $\beta_D$ are the slopes of $\ell_C - \ell_M$ and $\ell_D - \ell_M$ on $x$, with M and D
-the reference pair. $\rho$
-corrects for noise in $x$, $\varphi$ is how strongly PERSON's belief follows the evidence (shared by
-the two settings below), and $\tau$ is a theory-of-mind score: $\varphi(1 - \lambda)$ under the
-model, and $\approx 0$ when PERSON's attributed belief ignores the evidence.
+where $\beta_C$ and $\beta_D$ are the slopes of $\ell_C - \ell_M$ and $\ell_D - \ell_M$ on $x$. $\rho$
+corrects for noise in $x$, $\varphi$ is how strongly PERSON's belief follows the evidence, and $\tau$
+is a theory-of-mind score.
 
-The study runs two settings, PERSON missing evidence and PERSON given altered evidence, on two
-datasets in [`datasets/`](datasets): 150 kidney-disease patients, each asked the paper's 16
-questions, and 20 fictional puzzles with known Bayes answers. The design is in
-[`docs/design.md`](docs/design.md) and the data in [`docs/data.md`](docs/data.md).
-[`docs/binding.md`](docs/binding.md) describes a follow-up experiment that asks where the leak comes
-from: misbound ownership, evidence that is represented and overridden, or absence not read as ignorance.
+The study runs two settings, PERSON missing evidence and PERSON given altered evidence. The full
+design is in [`docs/design.md`](docs/design.md).
 
 ## Running it
 
-On a Linux machine with an NVIDIA GPU, clone the repo and choose a run mode.
+On a Linux machine with an NVIDIA GPU:
 
 ```bash
 git clone https://github.com/mangoseller/model_beliefs && cd model_beliefs
-
-bash run_experiment.sh --smoke                 # quick check on 20 CKD patients
-bash run_experiment.sh --core                  # main CKD battery, bespoke trials, estimates and figures
-nohup bash run_experiment.sh > run.out 2>&1 &  # full run adds paper replication, extra batteries and activations
+bash run_experiment.sh --smoke                    # quick check
+nohup bash run_experiment.sh > run.out 2>&1 &     # the full run
 ```
 
-The launcher installs the pinned dependencies, and the Claude Code and Codex CLIs unless you pass
-`--no-install-agents`. With dependencies installed, `python -m second_order.runner --core` runs
-directly.
-
-To resume a run, pass `--run-id <run_id>`: successful calls are reused and failed ones retried. Each
-run's results, for both models, are in `RUN_REPORT.md` inside `runs/<run_id>.tar.gz`. The
-[running guide](docs/running.md) covers the individual stages.
+This installs everything, runs the experiment on both models, and packages the results as
+`runs/<run_id>.tar.gz`. Start with `RUN_REPORT.md` inside it. Details are in
+[`docs/running.md`](docs/running.md).
 
 ## Layout
 
 ```
-second_order/      the experiment and its config.yaml, and the binding experiment (binding*.py)
-datasets/          the two datasets, sent verbatim
+second_order/      the experiment, and its config.yaml
+datasets/          the experiment's input data
 latent_beliefs/    the paper's replication package (latent_beliefs/README.md)
 first_order/       first-order belief readouts on small models (first_order/README.md)
-docs/              design, data formats, running, the binding experiment
+docs/              design, running, data formats
 tests/             unit and end-to-end tests
 requirements/      pinned dependencies for run_experiment.sh
 ```
-
-`data/`, `outputs/`, `figures/` and `runs/` are created by runs and are not in git.
