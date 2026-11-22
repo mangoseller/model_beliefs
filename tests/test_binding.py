@@ -118,16 +118,17 @@ class Plan(unittest.TestCase):
 
     def test_order_followup_cells_get_its_exact_item_keys(self):
         ft, _ = F.make_plan("qwen3_8b", self.cases)
-        astra = pd.DataFrame(ft)
-        astra["arm"] = [{("partial", "original"): "partial_original", ("false", "verified"): "false_verified",
-                         ("false", "neutral"): "false_neutral"}[(s, w)] for s, w in zip(astra.setting, astra.wording)]
-        astra["block_order"] = astra.block_order.where(astra.role.isin(list("CMD")), "shared")
+        followup = pd.DataFrame(ft)
+        followup["arm"] = [{("partial", "original"): "partial_original", ("false", "verified"): "false_verified",
+                            ("false", "neutral"): "false_neutral"}[(s, w)]
+                           for s, w in zip(followup.setting, followup.wording)]
+        followup["block_order"] = followup.block_order.where(followup.role.isin(list("CMD")), "shared")
         keys = ["case_id", "arm", "block_order", "role", "output", "replicate"]
         mine = self.T[self.T.arm.isin(B.ORDER_FOLLOWUP_ARMS) & (self.T["sample"] == 0)].groupby(keys).item_key.first()
-        want = astra.groupby(keys).item_key.first()
-        joined = pd.concat([mine.rename("mine"), want.rename("astra")], axis=1)
+        want = followup.groupby(keys).item_key.first()
+        joined = pd.concat([mine.rename("mine"), want.rename("followup")], axis=1)
         self.assertEqual(len(joined), len(want))
-        self.assertTrue((joined.mine == joined.astra).all())
+        self.assertTrue((joined.mine == joined.followup).all())
 
     def test_items_are_unique_referenced_and_correctly_sourced(self):
         identities = [(v["case_id"], v["output"], v["replicate"], v["sample"], v["prompt_sha"]) for v in self.items.values()]
@@ -338,7 +339,7 @@ class SyntheticEndToEnd(unittest.TestCase):
 
 
 class OrderFollowupImport(unittest.TestCase):
-    """Part 2 after part 3a: Astra's plan imports answers and captures that another run generated."""
+    """An order follow-up plan imports answers and captures that another run generated under the same keys."""
 
     def test_order_followup_plan_imports_answers_and_captures(self):
         import hashlib
@@ -346,17 +347,17 @@ class OrderFollowupImport(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 tmp = Path(tmp)
-                astra, source = tmp / "astra", tmp / "source"
-                astra.mkdir()
-                (astra / "config.yaml").write_bytes(C.BUNDLED_CONFIG.read_bytes())
-                F.configure(astra)
+                followup, source = tmp / "followup", tmp / "source"
+                followup.mkdir()
+                (followup / "config.yaml").write_bytes(C.BUNDLED_CONFIG.read_bytes())
+                F.configure(followup)
                 cases = sorted(B.patient_split(SEED).index)[:2]
                 trials, items = F.make_plan("synthetic", cases)
                 plan = dict(protocol=F.PROTOCOL, models=["synthetic"],
                             settings={"synthetic": G.settings_signature("synthetic", "ckd")}, trials=trials, items=items)
                 plan["digest"] = F.digest(plan)
-                F.atomic_json(astra / "plan.json", plan)
-                F.atomic_json(astra / "prepared.json", {"plan_digest": plan["digest"]})
+                F.atomic_json(followup / "plan.json", plan)
+                F.atomic_json(followup / "prepared.json", {"plan_digest": plan["digest"]})
                 new = [F.item_from(v) for v in items.values() if v["source"] == "new"]
                 # Another run generated the same items (same keys) and captured one of them.
                 C.CACHE = source / "data" / "generation_cache"
@@ -373,14 +374,14 @@ class OrderFollowupImport(unittest.TestCase):
                     prompt_sha=capture["prompt_sha"], settings_sha=plan["settings"]["synthetic"],
                     array_sha256=hashlib.sha256((folder / "acts.npy").read_bytes()).hexdigest(),
                     response_sha=F.digest([record["text"], record["token_ids"]]))))
-                counts = B.import_cache(astra, [source])["synthetic"]
+                counts = B.import_cache(followup, [source])["synthetic"]
                 self.assertEqual(counts["imported"], len(new))
                 self.assertEqual(counts["still_pending"], 0)
                 self.assertEqual(counts["activations_imported"], 1)
-                F.read_plan(astra)
+                F.read_plan(followup)
                 G.cache_index.cache_clear()
                 self.assertEqual(G.pending(new), [])
-                self.assertEqual(B.import_cache(astra, [source])["synthetic"]["imported"], 0)  # idempotent
+                self.assertEqual(B.import_cache(followup, [source])["synthetic"]["imported"], 0)  # idempotent
         finally:
             C.CONFIG_PATH, C.CACHE = saved
             C.load.cache_clear()
@@ -388,7 +389,8 @@ class OrderFollowupImport(unittest.TestCase):
 
 
 class OrderFollowupAdapter(unittest.TestCase):
-    """Astra's plan, generated by the synthetic model and exported by its own code, analysed by the adapter."""
+    """An order follow-up plan, generated by the synthetic model, exported by ``order_followup`` and analysed by
+    ``binding_analysis --order-followup``."""
 
     def test_adapter_recovers_planted_lambda(self):
         from second_order import binding_analysis as BA
@@ -411,8 +413,8 @@ class OrderFollowupAdapter(unittest.TestCase):
                 pd.DataFrame(columns=["item_key", "row"]).to_parquet(root / "baseline_activations_synthetic.parquet")
                 with B.synthetic_backend("synthetic"):
                     # The synthetic model has no baseline, so generate every item of the plan.
-                    G.run([F.item_from(v) for v in items.values()], label="astra-synthetic")
-                # Astra's export reads reused items from baseline_cache/ (its prepare copies them there).
+                    G.run([F.item_from(v) for v in items.values()], label="followup-synthetic")
+                # order_followup.export reads reused items from baseline_cache/ (its prepare copies them there).
                 (root / "baseline_cache").mkdir()
                 (root / "baseline_cache" / "synthetic.jsonl").write_bytes(
                     (root / "data" / "generation_cache" / "synthetic.jsonl").read_bytes())

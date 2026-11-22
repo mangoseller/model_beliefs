@@ -1,18 +1,17 @@
-"""Scoring the partial-setting comprehension checks from the model's reasoning (binding amendment 1, 2026-11-22).
+"""Scoring the partial-setting comprehension checks from the model's reasoning.
 
 The release check asks "Did the record shown to NAME include a value for FACT?  A. Yes / B. No". When FACT is a
 yes/no field, the model often reasons correctly and then picks the option whose text equals the field's value
-(the pilot: "...the record did include a value for cardiovascular disease. Choice: B", B being "No"). The letter
-then measures that value echo, not comprehension: on shown checks of a field whose value is "No", 43% of letters
-were right against 100% for other fields, and the echo also makes some wrong readings of withheld fields score as
-right. The question the check exists to ask is answered in the reasoning, so these checks are scored from it:
+(e.g. "...the record did include a value for cardiovascular disease. Choice: B", B being "No"). The letter then
+measures that value echo rather than comprehension, on shown checks of fields whose value is "No" and on some
+withheld checks. The reasoning answers the question the check asks, so these checks are scored from it:
 
     conclusion(text, fact) -> "included" | "not_included" | None
 
 reads the last sentences before the "Choice:" line, preferring clauses that name the checked field and skipping
 clauses about the model's own record; quoted or stated yes/no values are masked first, so "the value is 'No'" is
 not read as a negation. ``None`` (no conclusion found) falls back to the letter. The false-setting checks ("what
-does it say about FACT?") ask for the value itself, so their letter is the answer; they are scored as before.
+does it say about FACT?") ask for the value itself, so their letter is the answer and they are not rescored.
 """
 from __future__ import annotations
 

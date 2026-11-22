@@ -1,7 +1,10 @@
-"""Binding vs inhibition experiment, session 1 (generation). See docs/binding_experiment.md.
+"""Binding vs inhibition experiment, session 1: prompts, plan, generation, activation capture, export.
 
-A superset of the chart-order follow-up (``order_followup``): every CKD patient sees every
-cell in both block orders.  A cell is (variant, binding, absence, order):
+The question is whether the model's own record leaks into its estimate of PERSON's belief because it
+misattributes the records (binding: fixed by naming each record's owner) or because it cannot set aside what
+it knows (inhibition: survives labelling and an explicit statement of what PERSON lacks). The design is a
+superset of the chart-order follow-up (``order_followup``): every CKD patient sees every cell in both block
+orders. A cell is (variant, binding, absence, order):
 
 * variant:  ``partial`` (the release's three withheld fields), ``false`` (its two edited
   fields), ``strong`` (age, diabetes and hypertension withheld for every patient, built
@@ -16,12 +19,14 @@ cell in both block orders.  A cell is (variant, binding, absence, order):
 
 Every prompt is a transformation of a released prompt, so field orders, names and
 questions never change between arms.  Identical prompts are one item: an arm that
-reproduces a baseline prompt reuses the archived answer, and an arm that reproduces an
-order-follow-up prompt gets that plan's exact item key.
+reproduces a base-run prompt reuses the archived answer, and an arm that reproduces an
+order-follow-up prompt gets that plan's exact item key, so answers move between the two
+plans with ``import-cache``.
 
     python -m second_order.binding prepare --run runs/binding-pilot --profile pilot \\
-        --base-run ../20261121-101311_reanalysed.tar.gz --base-activations ../20261121-101311_activations.tar
+        --base-run <base run dir or tarball> --base-activations <base run dir or activations tar>
     python -m second_order.binding status   --run runs/binding-pilot
+    python -m second_order.binding verify   --run runs/binding-pilot
     python -m second_order.binding import-cache --run runs/binding-full --from runs/binding-pilot
     python -m second_order.binding generate --run runs/binding-pilot --model qwen3_8b
     python -m second_order.binding capture  --run runs/binding-pilot --model qwen3_8b
@@ -31,8 +36,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import fcntl
-import hashlib
 import json
 import re
 import shutil
@@ -67,9 +72,6 @@ LABELS = {"sex": "sex", "inc": "household income bracket", "diab": "self-reporte
           "smkstat": "current smoking status", "edu": "education level", "bmi": "body mass index",
           "pa": "any physical activity indicator", "htn": "self-reported hypertension", "rce": "race/ethnicity",
           "age": "age", "cvd": "history of cardiovascular disease", "sodium": "estimated daily sodium intake"}
-CHOICE_AMENDMENT = ("Answer with a single letter.",
-                    "Provide your reasoning first.\nThen output your answer on a new line in exactly this format:\n"
-                    "Choice: <the letter of one option>")
 
 # arm -> (variant, binding, absence)
 ARMS = {
@@ -110,8 +112,8 @@ PROFILES = {
                 drift_fraction=0.0, activations=False),
 }
 # Model entries added to the archived config when a profile needs them (existing entries are never changed,
-# so every baseline settings signature is unchanged). Thinking: same weights and sampling, thinking on, and a
-# token limit that leaves room for the reasoning (max_model_len 16384).
+# so every base-run settings signature stays the same). Thinking: same weights and sampling, thinking on, and
+# a token limit that leaves room for the reasoning (max_model_len 16384).
 _ENGINE = {"max_num_seqs": 1024, "max_num_batched_tokens": 32768, "gpu_memory_utilization": 0.92,
            "enable_prefix_caching": True}
 _COMMON = {"backend": "vllm", "datasets": ["ckd", "bespoke"], "dtype": "bfloat16", "max_model_len": 16384,
@@ -335,11 +337,7 @@ def select_patients(n, split: pd.Series, seed: int) -> list[str]:
 
 
 # Plan
-def release_frame(cases) -> pd.DataFrame:
-    frame = DS.rows("ckd", ["main"]).copy()
-    # Run 20261121-101311 used this amendment; every reused prompt is verified against its cache hash.
-    frame["prompt"] = frame.prompt.str.replace(CHOICE_AMENDMENT[0], CHOICE_AMENDMENT[1], regex=False)
-    return frame[frame.case_id.isin(set(cases))]
+release_frame = F.release_frame
 
 
 class Builder:
@@ -365,20 +363,21 @@ class Builder:
 
 
 def make_plan(model: str, cases, spec: dict, split: pd.Series, seed: int, use_baseline: bool = True):
+    """(trials, items) of one model. ``use_baseline``: reuse the base run's answers and the order follow-up's
+    item keys (only for models the base run generated)."""
     frame = release_frame(cases)
-    index = {(r["case_id"], r["condition"], r["output"], r["replicate"]): r for r in frame.to_dict("records")}
+    records = frame.to_dict("records")
+    index = {(r["case_id"], r["condition"], r["output"], r["replicate"]): r for r in records}
     originals = {}
     if use_baseline:
-        for r in frame.to_dict("records"):
+        for r in records:
             item = G.Item(model, r["case_id"], r["condition"], r["output"], r["replicate"], r["prompt"])
             originals.setdefault((item.case_id, item.output, item.replicate, item.prompt_sha), item)
+    b = Builder(model, originals)
+    if use_baseline:
         # Seed identities with the order follow-up's items so identical prompts get its exact keys.
-        _, followup = F.make_plan(model, cases)
-        b = Builder(model, originals)
-        for data in followup.values():
+        for data in F.make_plan(model, cases)[1].values():
             b.resolve(F.item_from(data), data["source"])
-    else:
-        b = Builder(model, originals)
     latent = sorted(set(frame.output[~frame.question_id.isin(("check", "role_check"))]))
     k_direct = max(1, int(spec["direct_samples"]))
     for case in sorted(cases):
@@ -449,12 +448,11 @@ def _add_drift(b, fraction, seed, split):
 
 def capture_items_of(plan, model) -> list[dict]:
     """Items whose activations a plan captures: new probability items of replicate 0 (binding plans: sample 0,
-    no drift re-generations; the order follow-up: all of them)."""
+    no drift re-generations, and none unless the profile captures activations)."""
     if plan.get("protocol") == PROTOCOL and not plan["spec"]["activations"]:
         return []
-    return [v for v in plan["items"].values() if v["model"] == model and v["source"] == "new"
-            and v["output"] == "probability/normal" and v["replicate"] == 0 and v.get("sample", 0) == 0
-            and not v["condition"].startswith(DRIFT_TAG)]
+    return [v for v in F.capture_items(plan, model)
+            if v.get("sample", 0) == 0 and not v["condition"].startswith(DRIFT_TAG)]
 
 
 def summary(plan) -> dict:
@@ -488,26 +486,15 @@ def with_models(config_bytes: bytes, models) -> bytes:
 def prepare(args):
     root = args.run.resolve()
     root.mkdir(parents=True, exist_ok=True)
-    spec = json.loads(json.dumps(PROFILES[args.profile])) | {"profile": args.profile}
+    spec = copy.deepcopy(PROFILES[args.profile]) | {"profile": args.profile}
     if args.models:
         spec["models"] = args.models
     if args.n_patients:
         spec["n_patients"] = args.n_patients if args.n_patients == "all" else int(args.n_patients)
     if args.direct_samples is not None:
         spec["direct_samples"] = args.direct_samples
-    if args.base_run:
-        for f in F.stream_member(args.base_run, "config.yaml"):
-            config_bytes = f.read()
-    else:
-        config_bytes = C.CONFIG_PATH.read_bytes()
-    config_bytes = with_models(config_bytes, spec["models"])
-    cfg = root / "config.yaml"
-    if cfg.exists() and cfg.read_bytes() != config_bytes:
-        raise ValueError("existing run uses a different config")
-    cfg.write_bytes(config_bytes)
-    F.configure(root)
-    if not all(DS.ckd_checksums().values()):
-        raise ValueError("CKD release checksums failed")
+    config_bytes = F.read_member(args.base_run, "config.yaml") if args.base_run else C.CONFIG_PATH.read_bytes()
+    F.install_config(root, with_models(config_bytes, spec["models"]))
     seed = int(C.load()["seed"])
     split = patient_split(seed)
     cases = select_patients(spec["n_patients"], split, seed)
@@ -523,11 +510,7 @@ def prepare(args):
                 patient_split=split.to_dict(), base_run=str(args.base_run.resolve()) if args.base_run else None,
                 base_activations=str(args.base_activations.resolve()) if args.base_activations else None,
                 trials=trials, items=items)
-    plan["digest"] = F.digest(plan)
-    path = root / "plan.json"
-    if path.exists() and json.loads(path.read_text())["digest"] != plan["digest"]:
-        raise ValueError("plan changed; use another run directory")
-    F.atomic_json(path, plan)
+    F.write_plan(root, plan)
     split.rename_axis("case_id").reset_index().to_csv(root / "patient_split.csv", index=False)
     for model in spec["models"]:
         wanted = {k: v for k, v in items.items() if v["model"] == model and v["source"] == "baseline"}
@@ -550,7 +533,7 @@ PLAN_DIGESTS = Path(__file__).with_name("binding_plans.json")
 
 def content_digest(plan) -> str:
     """Digest of what a plan generates (items, trials, settings, patients), without the machine-specific paths
-    of its base run, so a plan prepared on the GPU host can be checked against the one reviewed here."""
+    of its base run, so a plan prepared on the GPU host can be checked against the reviewed one."""
     return F.digest({k: v for k, v in plan.items() if k not in ("digest", "base_run", "base_activations")})
 
 
@@ -559,18 +542,16 @@ def verify(root, expected: Path = PLAN_DIGESTS) -> None:
     plan = read_plan(root, (PROTOCOL, F.PROTOCOL))
     want = json.loads(Path(expected).read_text()).get(Path(root).name)
     got = content_digest(plan)
+    if want is None:
+        raise ValueError(f"{root}: no reviewed plan named {Path(root).name} in {expected}")
     if want != got:
         raise ValueError(f"{root}: plan content {got} differs from the reviewed plan {want} ({expected})")
     print(f"{Path(root).name}: plan content verified ({got[:16]})")
 
 
-def new_items(plan, model):
-    return [F.item_from(v) for v in plan["items"].values() if v["model"] == model and v["source"] == "new"]
-
-
 def import_cache(root, sources) -> dict:
     """Copy successful answers (and activation captures) for this plan's new items from earlier runs (same key,
-    prompt and settings), so no part regenerates what another produced. Works on binding plans and on the order
+    prompt and settings), so no run regenerates what another produced. Works on binding plans and on the order
     follow-up's plan, whose items the full binding run generates under the same keys."""
     plan = read_plan(root, (PROTOCOL, F.PROTOCOL))
     counts = {}
@@ -606,7 +587,9 @@ def _import_activations(root, plan, model, sources) -> int:
     copied = 0
     for source in map(Path, sources):
         src_root = source / "data" / "activations" / model / "ckd"
-        for key, item in (wanted.items() if src_root.is_dir() else ()):
+        if not src_root.is_dir():
+            continue
+        for key, item in wanted.items():
             src, dest = src_root / key, dest_root / key
             if dest.exists() or not (src / "meta.json").exists() or not (src / "acts.npy").exists():
                 continue
@@ -616,9 +599,8 @@ def _import_activations(root, plan, model, sources) -> int:
             record = cache.get(key)
             if not record or meta.get("response_sha") != F.digest([record["text"], record["token_ids"]]):
                 continue  # not a capture of this run's answer: capture makes its own
-            with (src / "acts.npy").open("rb") as f:
-                if hashlib.file_digest(f, "sha256").hexdigest() != meta.get("array_sha256"):
-                    continue  # damaged: capture regenerates it
+            if F.file_sha256(src / "acts.npy") != meta.get("array_sha256"):
+                continue  # damaged: capture regenerates it
             tmp = dest.with_name(key + ".tmp")
             shutil.rmtree(tmp, ignore_errors=True)
             shutil.copytree(src, tmp)
@@ -643,9 +625,9 @@ def synthetic_backend(model):
 
 
 def generate(root, model, engine: dict | None = None):
-    """Every pending new item, in the config's batches (as the baseline run: a vLLM call per batch, so the
-    engine keeps its full concurrency; an interrupted batch is regenerated on resume, identically, since every
-    item is seeded from its key). ``engine`` overrides vLLM engine settings, which change speed only."""
+    """Every pending new item, in the config's batches (one vLLM call per batch, so the engine keeps its full
+    concurrency; an interrupted batch is regenerated identically on resume, since every item is seeded from its
+    key). ``engine`` overrides vLLM engine settings, which change speed only."""
     plan = read_plan(root)
     if model not in plan["models"]:
         raise ValueError(f"model {model} is not in the prepared plan")
@@ -654,7 +636,7 @@ def generate(root, model, engine: dict | None = None):
         print(f"[{model}] engine: {C.model_config(model)['engine']}", flush=True)
         if G.settings_signature(model, "ckd") != plan["settings"][model]:
             raise ValueError("the engine override changed the settings signature")
-    items = new_items(plan, model)
+    items = F.new_items(plan, model)
     with synthetic_backend(model):
         result = G.run(items, label=f"{model}/binding")
     F.atomic_json(root / f"generation_{model}.json", result)
@@ -663,7 +645,7 @@ def generate(root, model, engine: dict | None = None):
 
 
 def capture(root, model):
-    """Residual stream at the original three positions for every captured item (``order_followup.capture``).
+    """Residual stream at the three positions of ``freeze`` for every capture item (``order_followup.capture``).
     Phase 3 captures its own prompt positions separately."""
     plan = read_plan(root)
     items = capture_items_of(plan, model)
@@ -675,18 +657,9 @@ def capture(root, model):
 
 def export(root, model):
     plan = read_plan(root)
-    baseline = G.Cache(model, root / "baseline_cache")
-    new = G.Cache(model, C.CACHE)
-    rows = []
-    for trial in (t for t in plan["trials"] if t["model"] == model):
-        data = plan["items"][trial["item_key"]]
-        item = F.item_from(data)
-        record = (baseline if data["source"] == "baseline" else new).get(item.key)
-        if record and (record["prompt_sha"] != item.prompt_sha or record["settings_sha"] != plan["settings"][model]):
-            raise ValueError("response provenance mismatch")
-        result = F.score(item, record, trial)
-        rows.append(trial | dict(status=result.status, value=result.value if result.status == "parsed" else np.nan,
-                                 text=(record or {}).get("text"), condition=item.condition))
+    rows = [trial | dict(status=result.status, value=result.value if result.status == "parsed" else np.nan,
+                         text=(record or {}).get("text"), condition=item.condition)
+            for trial, item, record, result in F.scored_trials(root, plan, model)]
     long = pd.DataFrame(rows)
     out = root / "outputs"
     out.mkdir(exist_ok=True)
@@ -698,12 +671,7 @@ def export(root, model):
 
 
 def status(root):
-    plan = read_plan(root)
-    result = summary(plan)
-    for model in plan["models"]:
-        result[model]["pending_generations"] = len(G.pending(new_items(plan, model)))
-    print(json.dumps(result, indent=2))
-    return result
+    return F.status(root, read_plan(root), summary)
 
 
 def main():
