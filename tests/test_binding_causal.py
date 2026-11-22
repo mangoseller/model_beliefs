@@ -49,6 +49,24 @@ def tiny_lens():
     return BC.Lens(lm=lm, tok=tok, device=torch.device("cpu"), template_kwargs={"enable_thinking": False})
 
 
+def two_digit_value(p1, q2s, statistic="mean_logit"):
+    """The readout from explicit first-digit probabilities ``p1`` and each first digit's second-digit
+    probabilities ``q2s[a]``: E[p] ("expected_p"), or the probability whose logit is E[clip_logit(p)]."""
+    import math
+
+    def f(p):
+        if statistic == "expected_p":
+            return p
+        p = min(max(p, 0.01), 0.99)
+        return math.log(p) - math.log1p(-p)
+    total = 0.0
+    for a in range(10):
+        q2 = [float(x) for x in q2s[a]]
+        end = max(1 - sum(q2), 0.0)
+        total += float(p1[a]) * (sum(q2[b] * f(a / 10 + b / 100) for b in range(10)) + end * f(a / 10)) / (sum(q2) + end)
+    return total if statistic == "expected_p" else 1 / (1 + math.exp(-total))
+
+
 def a_prompt(arm="false_labelled", order="person_first", role="C", case=None):
     split = B.patient_split(20261111)
     case = case or B.select_patients(30, split, 20261111)[0]
@@ -89,6 +107,18 @@ class Interventions(unittest.TestCase):
         self.assertTrue(tok.decode([e.ids[k] for k in e.groups["readout"]]).lstrip().startswith("What probability"))
         filled = self.lens.encode(BC.with_filler(self.prompt))
         self.assertTrue(tok.decode([filled.ids[k] for k in filled.groups["filler"]]).strip().startswith("Clinic notice"))
+        # binding amendment 1: the filler sits between the two records, longer than either, and the control masks as many
+        # of its tokens as the knocked record has
+        g = filled.groups
+        first, second = sorted((g["own"], g["person"]), key=min)
+        self.assertTrue(max(first) < min(g["filler"]) and max(g["filler"]) < min(second))
+        for group in ("own", "person"):
+            self.assertGreater(len(g["filler"]), len(g[group]))
+            keys = BC.matched_filler(filled, group)
+            self.assertEqual(len(keys), len(g[group]))
+            self.assertTrue(set(keys) <= set(g["filler"]))
+        self.assertEqual(sorted(b["owner"] for b in B.record_blocks(BC.with_filler(self.prompt))),
+                         sorted(b["owner"] for b in B.record_blocks(self.prompt)))
         # Every arm and role encodes (A and B have no name or second block).
         for arm in B.ARMS:
             for role in "ABCMD":
@@ -104,14 +134,15 @@ class Interventions(unittest.TestCase):
         p = self.plain_logits(ids).softmax(-1)
         d = self.lens.digits
         p1 = p[d] / p[d].sum()
-        expected = 0.0
-        for a in range(10):
-            q = self.plain_logits(ids + [d[a]]).softmax(-1)
-            q2 = q[d]
-            end = 1 - q2.sum()
-            cond = (sum(q2[b] * (a / 10 + b / 100) for b in range(10)) + end * a / 10) / (q2.sum() + end)
-            expected += float(p1[a] * cond)
-        self.assertAlmostEqual(float(res["p"][0]), expected, places=5)
+        q2s = [self.plain_logits(ids + [d[a]]).softmax(-1)[d] for a in range(10)]
+        self.assertAlmostEqual(float(res["p"][0]), two_digit_value(p1, q2s), places=5)
+        # the expected-probability statistic (before binding amendment 1) is still exact
+        self.lens.statistic = "expected_p"
+        try:
+            got = float(self.lens.readout(ids, [BC.Variant()])["p"][0])
+        finally:
+            self.lens.statistic = "mean_logit"
+        self.assertAlmostEqual(got, two_digit_value(p1, q2s, "expected_p"), places=5)
 
     def test_tree_second_digit_is_exact_under_knockout_and_steering(self):
         torch = self.torch
@@ -135,12 +166,7 @@ class Interventions(unittest.TestCase):
                     self.lens._rows = []
             p = last(e.ids)
             p1 = p[d] / p[d].sum()
-            expected = 0.0
-            for a in range(10):
-                q2 = last(e.ids + [d[a]])[d]
-                end = 1 - q2.sum()
-                cond = (sum(q2[b] * (a / 10 + b / 100) for b in range(10)) + end * a / 10) / (q2.sum() + end)
-                expected += float(p1[a] * cond)
+            expected = two_digit_value(p1, [last(e.ids + [d[a]])[d] for a in range(10)])
             self.assertAlmostEqual(got, expected, places=5)
 
     def test_patching_every_position_reproduces_the_donor(self):
@@ -273,6 +299,23 @@ def real_snapshot():
 
 
 @unittest.skipIf(real_snapshot() is None, "Qwen3-0.6B weights not in the local HF cache")
+class Null(unittest.TestCase):
+    def test_patient_permutation_moves_whole_patients(self):
+        rng = np.random.default_rng(0)
+        groups = np.array([f"p{i}" for i in range(6)] * 2 + ["p0"])
+        cells = np.array([0] * 6 + [1] * 6 + [2])
+        y = np.arange(13, dtype=float)
+        out = BC.permute_patients(y, groups, cells, rng)
+        # a patient's two cells take the two cells' targets of one other patient
+        where = {(g, c): v for g, c, v in zip(groups, cells, y)}
+        donors = {}
+        for g, c, v in zip(groups[:12], cells[:12], out[:12]):
+            donor = next(h for (h, cc), w in where.items() if cc == c and w == v)
+            donors.setdefault(g, set()).add(donor)
+        self.assertTrue(all(len(v) == 1 for v in donors.values()))
+        self.assertEqual(sorted(out[:6]), sorted(y[:6]))
+
+
 class RealWeights(unittest.TestCase):
     """On real weights (where a misplaced tree mask shows; a tiny random model is insensitive to it): the
     single-prompt readout, the padded batch readout and the explicit two-digit computation agree."""
@@ -298,13 +341,7 @@ class RealWeights(unittest.TestCase):
             d = lens.digits
             p = last(ids)
             p1 = p[d] / p[d].sum()
-            total = 0.0
-            for a in range(10):
-                q2 = last(ids + [d[a]])[d]
-                end = 1 - q2.sum()
-                total += float(p1[a] * (sum(q2[b] * (a / 10 + b / 100) for b in range(10)) + end * a / 10)
-                               / (q2.sum() + end))
-            return total
+            return two_digit_value(p1, [last(ids + [d[a]])[d] for a in range(10)])
         batch = lens.readout_batch(encs, batch=2)[0]
         for e, pb in zip(encs, batch):
             want = explicit(e.ids)
@@ -406,6 +443,13 @@ class StagesEndToEnd(unittest.TestCase):
                 self.assertIn("ablate_rec", set(dr.intervention))
                 rules = BC.stage_report(run, "synthetic", 20, ccfg)
                 self.assertTrue((run / "synthetic" / "RESULTS.md").exists())
+                # binding amendment 1: a knockout is tested only where the gate found room for the 0.3 drop
+                g = pd.read_csv(run / "synthetic" / "gate.csv")
+                testable = dict(zip(g.arm + "|" + g.order, g.knockout_testable))
+                for k, v in rules.items():
+                    if k.startswith("3.2_leak_enters_at"):
+                        cell = k.split("|", 1)[1].rstrip("]")
+                        self.assertEqual(v["status"] == "not applicable", not testable[cell], k)
                 pl = pd.read_csv(run / "synthetic" / "patch_lambda.csv")
                 self.assertEqual(set(pl.position), {"answer", "name", "own_end", "person_end"})
                 self.assertTrue(set(pl.layer) <= set(range(1, lens.n_layers)))  # chosen on the fit half
@@ -418,14 +462,24 @@ class StagesEndToEnd(unittest.TestCase):
                 self.assertTrue(all("interval" in v or "ablate_attr" in v for v in rules.values()))
                 # The gate restricts every Phase 3 stage to the cells that passed it.
                 d = run / "synthetic"
-                pd.DataFrame([dict(arm="false_verified", order="person_first", enters_phase3=True),
-                              dict(arm="partial_original", order="own_first", enters_phase3=False)]).to_csv(
-                    d / "gate.csv", index=False)
+                g = pd.read_csv(d / "gate.csv")
+                self.assertTrue({"correctly_bound", "knockout_testable"} <= set(g.columns))
+                pd.DataFrame([dict(arm="false_verified", order="person_first", enters_phase3=True,
+                                   correctly_bound=False, knockout_testable=True),
+                              dict(arm="false_labelled", order="person_first", enters_phase3=True,
+                                   correctly_bound=True, knockout_testable=False),
+                              dict(arm="false_verified", order="own_first", enters_phase3=True,
+                                   correctly_bound=False, knockout_testable=False),
+                              dict(arm="partial_original", order="own_first", enters_phase3=False,
+                                   correctly_bound=False, knockout_testable=True)]).to_csv(d / "gate.csv", index=False)
                 gc = BC.gate_cfg(d, ccfg | {"apply_gate": True})
                 self.assertTrue(all(tuple(p[0]) == ("false_verified", "person_first") for p in gc["patch_pairs"]))
-                self.assertEqual(gc["knockout_cells"], [["false_verified", "person_first"]])
+                # binding amendment 1: only correctly bound donors (false_verified|own_first is not)
+                self.assertEqual([tuple(p[1]) for p in gc["patch_pairs"]], [("false_labelled", "person_first")])
+                self.assertEqual(gc["knockout_cells"], [["false_verified", "person_first"], ["false_verified", "own_first"]])
                 self.assertEqual(gc["direction_cells"]["partial"], [])
                 bench = BC.stage_benchmark(run, source, "synthetic", lens, ccfg, n_readout=4)
+                self.assertLess(bench["precision_noise_max_abs_logit"], 1e-3)  # float32 on the CPU
                 self.assertEqual(set(bench["estimated_hours"]), {"readout", "patch", "knockout", "directions", "total"})
                 self.assertGreater(bench["rows_per_patient"]["patch"], 0)
                 self.assertLess(bench["batch_invariance_max_abs_dp"], 1e-4)  # float32 on the CPU

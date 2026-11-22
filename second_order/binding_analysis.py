@@ -39,12 +39,15 @@ ROLES = ("A", "B", "C", "M", "D")
 RULES = {
     "H1_false_misbinding": "false_labelled: lambda inside [-0.1, 0.1] in both orders, the person_first - own_first "
                            "difference inside (-0.2, 0.2), and labelling lowers the person_first leak "
-                           "(false_labelled - false_verified, person_first, CI upper < 0)",
-    "H2_curse_of_knowledge": "partial, strictest cell (instructed+explicit if run, else labelled+explicit), check "
-                             "passed, orders pooled: lambda lower bound > 0.15",
-    "H3_absence_not_ignorance": "partial labelled, orders pooled: lambda(implicit) - lambda(explicit) > 0.3 with CI "
-                                "lower > 0 (both cells' beta_D intervals excluding 0), and the strictest cell's "
-                                "lambda <= 0.1",
+                           "(false_labelled - false_neutral, person_first, CI upper < 0; binding amendment 1: the plan's "
+                           "false_labelled - false_verified also removes the cue and changes A/B, and is reported; "
+                           "beta_D of both unlabelled person_first cells excluding 0)",
+    "H2_curse_of_knowledge": "strictest cell of the variant (instructed+explicit if run, else labelled+explicit), "
+                             "check passed (binding amendment 1: shown/withheld checks scored from the reasoning), orders "
+                             "pooled: lambda lower bound > 0.15",
+    "H3_absence_not_ignorance": "the variant's labelled arms, orders pooled: lambda(implicit) - lambda(explicit) > 0.3 "
+                                "with CI lower > 0 (both cells' beta_D intervals excluding 0), and the strictest "
+                                "cell's lambda <= 0.1",
 }
 
 
@@ -90,7 +93,10 @@ def direct_beliefs(long: pd.DataFrame) -> pd.DataFrame:
 def latent_beliefs(long: pd.DataFrame, plan: dict, model: str) -> pd.DataFrame:
     """One pooled refit across all latent-arm cells (self: A, B; person: C, M, D)."""
     from second_order import fit_pooled as FP
-    from second_order.measurement import calibration
+    try:  # main folded measurement.py into fit_pooled
+        from second_order.fit_pooled import calibration
+    except ImportError:
+        from second_order.measurement import calibration
     from second_order.responses import configured_specs, split as patient_split
 
     arms = plan["spec"]["latent_arms"]
@@ -151,14 +157,49 @@ def wide_frame(beliefs: pd.DataFrame) -> pd.DataFrame:
     return W.join(Wc)
 
 
-def check_pass(long: pd.DataFrame) -> pd.DataFrame:
-    """case_id x '<arm>|<order>' -> 1.0 if the cell's check is right in both option orders."""
+def load_texts(root: Path, model: str) -> pd.Series | None:
+    """item_key -> generated text, for scoring the partial checks from the reasoning (``check_scoring``)."""
+    path = root / "outputs" / f"{model}_texts.parquet"
+    if not path.exists():
+        print(f"  {path.name} not found: partial checks are scored by the letter only", flush=True)
+        return None
+    t = pd.read_parquet(path, columns=["item_key", "text"])
+    return t.drop_duplicates("item_key").set_index("item_key").text
+
+
+def score_checks(long: pd.DataFrame, texts: pd.Series | None) -> pd.DataFrame:
+    """Every check row with ``correct_letter`` (the release's letter scoring) and ``correct`` (binding amendment 1: the
+    shown/withheld checks scored from the reasoning where it reaches a conclusion, else the letter)."""
+    from second_order.check_scoring import reasoning_correct
     chk = long[long.output.str.startswith("check/") & (long.arm != "drift")].copy()
-    chk["correct"] = chk.value.where(chk.status == "parsed", 0.0).where(~chk.status.isin(["not_generated", "call_error"]))
-    g = chk.groupby(["case_id", "arm", "block_order"]).correct.agg(["min", "count"]).reset_index()
-    g["passed"] = np.where(g["count"] == 2, (g["min"] == 1).astype(float), np.nan)
-    g["col"] = "pass:" + g.arm + "|" + g.block_order
-    return g.pivot(index="case_id", columns="col", values="passed")
+    missing = chk.status.isin(["not_generated", "call_error"])
+    chk["correct_letter"] = chk.value.where(chk.status == "parsed", 0.0).where(~missing)
+    chk["correct"] = chk["correct_letter"]
+    chk["scored_by"] = np.where(missing, "", "letter")
+    if texts is not None and len(chk):
+        rel = chk.check_relation.astype(str)
+        use = ~missing & rel.isin(["shown", "withheld"]) & chk.status.isin(["parsed", "parse_failure"])
+        got = [reasoning_correct(texts.get(k), f, r) for k, f, r in
+               zip(chk.item_key[use], chk.check_fact[use].astype(str), rel[use])]
+        got = pd.Series(got, index=chk.index[use], dtype=object)
+        have = got.notna()
+        chk.loc[have[have].index, "correct"] = got[have].astype(float)
+        chk.loc[have[have].index, "scored_by"] = "reasoning"
+    return chk
+
+
+def check_pass(long: pd.DataFrame, texts: pd.Series | None = None) -> pd.DataFrame:
+    """case_id x 'pass:<arm>|<order>' -> 1.0 if the cell's check is right in both option orders (binding amendment 1:
+    shown/withheld checks scored from the reasoning), and 'passletter:<arm>|<order>' with the release's letter
+    scoring, as pre-registered."""
+    chk = score_checks(long, texts)
+    out = []
+    for column, prefix in (("correct", "pass:"), ("correct_letter", "passletter:")):
+        g = chk.groupby(["case_id", "arm", "block_order"])[column].agg(["min", "count"]).reset_index()
+        g["passed"] = np.where(g["count"] == 2, (g["min"] == 1).astype(float), np.nan)
+        g["col"] = prefix + g.arm + "|" + g.block_order
+        out.append(g.pivot(index="case_id", columns="col", values="passed"))
+    return pd.concat(out, axis=1)
 
 
 def _subset(W, k, mask=None):
@@ -188,6 +229,8 @@ def _stacked(W, ks, masks=None):
 
 
 MIN_CASES = 8
+# check-passed subsets: binding amendment 1's scoring (shown/withheld checks from the reasoning), and the release's letter
+CHECK_SUBSETS = {"check_passed": "pass:", "check_passed_letter": "passletter:"}
 
 
 def cell_statistics(W: dict, arms, checks: bool) -> dict:
@@ -199,17 +242,19 @@ def cell_statistics(W: dict, arms, checks: bool) -> dict:
             sub, n = _subset(W, k)
             if n >= MIN_CASES:
                 out[(arm, order, "all")] = L.setting_statistics(sub, k) | {"n": n}
-            if checks and f"pass:{arm}|{order}" in W:
-                sub, n = _subset(W, k, W[f"pass:{arm}|{order}"])
-                if n >= MIN_CASES:
-                    out[(arm, order, "check_passed")] = L.setting_statistics(sub, k) | {"n": n}
+            for subset, prefix in CHECK_SUBSETS.items():
+                if checks and f"{prefix}{arm}|{order}" in W:
+                    sub, n = _subset(W, k, W[f"{prefix}{arm}|{order}"])
+                    if n >= MIN_CASES:
+                        out[(arm, order, subset)] = L.setting_statistics(sub, k) | {"n": n}
         sub, n = _stacked(W, ks)
         if n >= MIN_CASES:
             out[(arm, "pooled", "all")] = L.setting_statistics(sub, ks[0]) | {"n": n}
-        if checks and all(f"pass:{arm}|{o}" in W for o in B.ORDERS):
-            sub, n = _stacked(W, ks, [W[f"pass:{arm}|{o}"] for o in B.ORDERS])
-            if n >= MIN_CASES:
-                out[(arm, "pooled", "check_passed")] = L.setting_statistics(sub, ks[0]) | {"n": n}
+        for subset, prefix in CHECK_SUBSETS.items():
+            if checks and all(f"{prefix}{arm}|{o}" in W for o in B.ORDERS):
+                sub, n = _stacked(W, ks, [W[f"{prefix}{arm}|{o}"] for o in B.ORDERS])
+                if n >= MIN_CASES:
+                    out[(arm, "pooled", subset)] = L.setting_statistics(sub, ks[0]) | {"n": n}
     return out
 
 
@@ -240,7 +285,8 @@ def evaluate(W, arms, checks=True):
     return cells, contrasts
 
 
-def bootstrap(frame: pd.DataFrame, arms, resamples: int, seed: int, checks=True):
+def bootstrap_draws(frame: pd.DataFrame, arms, resamples: int, seed: int, checks=True):
+    """Point estimates and the paired patient-bootstrap draws of every cell statistic and contrast."""
     arrays = {c: frame[c].to_numpy(dtype=float) for c in frame.columns}
     points, cpoints = evaluate(arrays, arms, checks)
     draws = {key: {s: [] for s in stats} for key, stats in points.items()}
@@ -256,20 +302,35 @@ def bootstrap(frame: pd.DataFrame, arms, resamples: int, seed: int, checks=True)
                 values.append(got.get(s, np.nan))
         for name, values in cdraws.items():
             values.append(contrasts.get(name, np.nan))
+    draws = {key: {s: np.asarray(v, float) for s, v in stats.items()} for key, stats in draws.items()}
+    cdraws = {name: np.asarray(v, float) for name, v in cdraws.items()}
+    return points, cpoints, draws, cdraws
+
+
+def summarise(points, cpoints, draws, cdraws, take=None):
+    """(cells, contrasts) tables from ``bootstrap_draws``; ``take`` (an index array) summarises a subset of the
+    draws, which is how the decision rules estimate their Monte Carlo error."""
     rows = []
     for (arm, order, subset), point in points.items():
-        n_cases = point.pop("n")
-        draws[(arm, order, subset)].pop("n")
-        t = L._bootstrap_summary(point, draws[(arm, order, subset)], n_cases, resamples)
+        point = {s: v for s, v in point.items() if s != "n"}
+        d = {s: (v if take is None else v[take]) for s, v in draws[(arm, order, subset)].items() if s != "n"}
+        resamples = len(next(iter(d.values()))) if d else 0
+        t = L._bootstrap_summary(point, d, points[(arm, order, subset)]["n"], resamples)
         rows.append(t.assign(arm=arm, order=order, subset=subset))
     cells = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
     crow = []
     for name, value in cpoints.items():
-        d = np.asarray(cdraws[name], float)
+        d = cdraws[name] if take is None else cdraws[name][take]
+        total = len(d)
         d = d[np.isfinite(d)]
         lo, hi = np.percentile(d, [2.5, 97.5]) if len(d) else (np.nan, np.nan)
-        crow.append(dict(contrast=name, estimate=value, ci_lower=lo, ci_upper=hi, usable_draws=len(d)))
+        crow.append(dict(contrast=name, estimate=value, ci_lower=lo, ci_upper=hi, usable_draws=len(d),
+                         resamples=total))
     return cells, pd.DataFrame(crow)
+
+
+def bootstrap(frame: pd.DataFrame, arms, resamples: int, seed: int, checks=True):
+    return summarise(*bootstrap_draws(frame, arms, resamples, seed, checks))
 
 
 # Decisions
@@ -307,50 +368,186 @@ def _verdict(supported, refuted, reasons):
     return {"status": status, "supported": bool(supported)}
 
 
-def _beta_d_reason(cells, arm, order):
-    r = _get(cells, arm, order, "beta_D")
-    return "" if r is not None and not (r.ci_lower <= 0 <= r.ci_upper) else f"{arm}|{order}: beta_D interval includes 0"
+def _beta_d_reason(cells, arm, order, subset="all"):
+    r = _get(cells, arm, order, "beta_D", subset)
+    return "" if r is not None and not (r.ci_lower <= 0 <= r.ci_upper) else \
+        f"{arm}|{order}|{subset}: beta_D interval includes 0"
 
 
-def decision_rules(cells, contrasts, arms) -> dict:
-    out = {}
+MAX_UNUSABLE_SHARE = 0.01  # a contrast whose draws are inestimable more often than this cannot decide a rule
+RULE_RESAMPLES = 10_000  # the rules' own bootstrap (binding amendment 1); the tables keep analysis.bootstrap_resamples
+MC_BATCHES = 10  # Monte Carlo error of each deciding quantity, from this many disjoint batches of those draws
 
-    def interval(r):
-        return None if r is None else [float(r.estimate), float(r.ci_lower), float(r.ci_upper)]
 
-    # H1: labels remove the misbinding leak (which must exist in the unlabelled person_first cell)
-    if {"false_labelled", "false_verified"} <= set(arms):
-        got = {o: lambda_interval(cells, "false_labelled", o) for o in B.ORDERS}
-        order_diff = _contrast(contrasts, "order:false_labelled")
-        reduction = _contrast(contrasts, "false_labelled-false_verified:person_first")
-        reasons = [f"{o}: {why}" for o, (iv, why) in got.items() if iv is None]
-        reasons += [f"no {n} contrast" for n, c in (("order", order_diff), ("reduction", reduction)) if c is None]
-        ok = not reasons
-        supported = ok and all(-0.1 <= iv[1] and iv[2] <= 0.1 for iv, _ in got.values()) \
-            and -0.2 < order_diff.ci_lower and order_diff.ci_upper < 0.2 and reduction.ci_upper < 0
-        refuted = ok and (any(iv[1] > 0.1 or iv[2] < -0.1 for iv, _ in got.values())
-                          or order_diff.ci_lower >= 0.2 or order_diff.ci_upper <= -0.2 or reduction.ci_lower >= 0)
-        out["H1_false_misbinding"] = _verdict(supported, refuted, reasons) | {o: iv for o, (iv, _) in got.items()} | \
-            {"order_difference": interval(order_diff), "labelling_reduction_person_first": interval(reduction)}
-    for variant in ("partial", "strong"):
+def _contrast_reason(c, name):
+    if c is None:
+        return f"no {name} contrast"
+    if c.usable_draws < (1 - MAX_UNUSABLE_SHARE) * c.resamples:
+        return f"{name}: {1 - c.usable_draws / c.resamples:.1%} of bootstrap draws inestimable"
+    return ""
+
+
+def _interval(r):
+    return None if r is None else [float(r.estimate), float(r.ci_lower), float(r.ci_upper)]
+
+
+def _lam(q, cells, name, arm, order, subset="all"):
+    """Puts a cell's Fieller lambda into ``q`` (estimate, lower, upper); returns the reason it can't, or ''."""
+    iv, why = lambda_interval(cells, arm, order, subset)
+    if iv is not None:
+        q[f"{name}.est"], q[f"{name}.lo"], q[f"{name}.hi"] = iv
+    return f"{arm}|{order}|{subset}: {why}" if why else ""
+
+
+def _con(q, contrasts, name, contrast):
+    c = _contrast(contrasts, contrast)
+    why = _contrast_reason(c, contrast)
+    if c is not None:
+        q[f"{name}.est"], q[f"{name}.lo"], q[f"{name}.hi"] = float(c.estimate), float(c.ci_lower), float(c.ci_upper)
+    return why
+
+
+# Each rule: (cells, contrasts) -> (quantities, reasons it is undetermined, evidence); its decide(q) gives
+# (supported, refuted) from the quantities alone, so the Monte Carlo check can perturb them.
+def _h1(cells, contrasts, arms):
+    """Binding amendment 1: the reduction clause is decided on false_labelled - false_neutral (labelling alone: both arms
+    drop the cue and share A and B_F_neutral); the plan's false_labelled - false_verified also changes the cue
+    and the own-belief pair, and is reported beside it."""
+    q, reasons = {}, []
+    for o in B.ORDERS:
+        reasons.append(_lam(q, cells, o, "false_labelled", o))
+    reasons.append(_con(q, contrasts, "order", "order:false_labelled"))
+    reasons.append(_con(q, contrasts, "reduction", "false_labelled-false_neutral:person_first"))
+    reasons += [_beta_d_reason(cells, a, "person_first") for a in ("false_neutral", "false_verified")]
+    prereg = _contrast(contrasts, "false_labelled-false_verified:person_first")
+    evidence = {o: [q.get(f"{o}.{s}") for s in ("est", "lo", "hi")] for o in B.ORDERS} | {
+        "order_difference": [q.get(f"order.{s}") for s in ("est", "lo", "hi")],
+        "labelling_reduction_person_first": [q.get(f"reduction.{s}") for s in ("est", "lo", "hi")],
+        "reduction_contrast": "false_labelled-false_neutral:person_first",
+        "plan_reduction_false_labelled_minus_false_verified": _interval(prereg)}
+    return q, [r for r in reasons if r], evidence
+
+
+def _h1_decide(q):
+    supported = all(q[f"{o}.lo"] >= -0.1 and q[f"{o}.hi"] <= 0.1 for o in B.ORDERS) \
+        and q["order.lo"] > -0.2 and q["order.hi"] < 0.2 and q["reduction.hi"] < 0
+    refuted = any(q[f"{o}.lo"] > 0.1 or q[f"{o}.hi"] < -0.1 for o in B.ORDERS) \
+        or q["order.lo"] >= 0.2 or q["order.hi"] <= -0.2 or q["reduction.lo"] >= 0
+    return supported, refuted
+
+
+def _h2(variant, subset="check_passed"):
+    def rule(cells, contrasts, arms):
+        q = {}
         arm = strictest(arms, variant)
-        if arm is None:
-            continue
-        iv, why = lambda_interval(cells, arm, "pooled", "check_passed")
-        out[f"H2_curse_of_knowledge[{variant}]"] = _verdict(
-            iv is not None and iv[1] > 0.15, iv is not None and iv[2] <= 0.15, [why] if why else []) | {
-            "cell": arm, "lambda_check_passed_pooled": iv}
-        drop = _contrast(contrasts, f"{variant}_labelled-{variant}_labelled_explicit:pooled")
-        strict, why = lambda_interval(cells, arm, "pooled")
-        reasons = ([] if drop is not None else ["no absence contrast"]) + ([why] if why else [])
-        reasons += [r for a in (f"{variant}_labelled", f"{variant}_labelled_explicit")
-                    if (r := _beta_d_reason(cells, a, "pooled"))]
-        ok = not reasons
-        supported = ok and drop.estimate > 0.3 and drop.ci_lower > 0 and strict[0] <= 0.1
-        refuted = ok and (drop.ci_upper < 0.3 or strict[1] > 0.1)
-        out[f"H3_absence_not_ignorance[{variant}]"] = _verdict(supported, refuted, reasons) | {
-            "drop": interval(drop), "strictest": arm, "strictest_lambda": strict}
+        reasons = [_lam(q, cells, "lam", arm, "pooled", subset)]
+        evidence = {"cell": arm, "subset": subset,
+                    f"lambda_{subset}_pooled": [q.get(f"lam.{s}") for s in ("est", "lo", "hi")]}
+        return q, [r for r in reasons if r], evidence
+    return rule
+
+
+def _h2_decide(q):
+    return q["lam.lo"] > 0.15, q["lam.hi"] <= 0.15
+
+
+def _h3(variant):
+    def rule(cells, contrasts, arms):
+        q = {}
+        arm = strictest(arms, variant)
+        reasons = [_con(q, contrasts, "drop", f"{variant}_labelled-{variant}_labelled_explicit:pooled"),
+                   _lam(q, cells, "strict", arm, "pooled")]
+        reasons += [_beta_d_reason(cells, a, "pooled") for a in (f"{variant}_labelled", f"{variant}_labelled_explicit")]
+        evidence = {"drop": [q.get(f"drop.{s}") for s in ("est", "lo", "hi")], "strictest": arm,
+                    "strictest_lambda": [q.get(f"strict.{s}") for s in ("est", "lo", "hi")]}
+        return q, [r for r in reasons if r], evidence
+    return rule
+
+
+def _h3_decide(q):
+    supported = q["drop.est"] > 0.3 and q["drop.lo"] > 0 and q["strict.est"] <= 0.1
+    refuted = q["drop.hi"] < 0.3 or q["strict.lo"] > 0.1
+    return supported, refuted
+
+
+def _status(decide, q):
+    supported, refuted = decide(q)
+    return "supported" if supported else "refuted" if refuted else "inconclusive"
+
+
+def run_rule(rule, decide, cells, contrasts, arms, batches=()) -> dict:
+    """The rule's verdict; with ``batches`` (``summarise`` on disjoint subsets of the same draws), the Monte Carlo
+    s.e. of every deciding quantity and ``near_threshold``: the quantities whose move by 2 s.e. changes the
+    verdict (the verdict then rests on bootstrap noise, and is reported as not robust)."""
+    q, reasons, evidence = rule(cells, contrasts, arms)
+    if reasons:
+        return _verdict(False, False, reasons) | evidence
+    out = _verdict(*decide(q), []) | evidence
+    if batches:
+        values = {k: [] for k in q}
+        for bc, bk in batches:
+            qb, rb, _ = rule(bc, bk, arms)
+            for k in q:
+                values[k].append(qb.get(k, np.nan))
+        mcse = {}
+        for k, v in values.items():
+            v = np.asarray(v, float)
+            v = v[np.isfinite(v)]
+            mcse[k] = float(np.std(v, ddof=1) / np.sqrt(len(v))) if len(v) > 1 else np.nan
+        near = []
+        for k, se in mcse.items():
+            if np.isfinite(se) and any(_status(decide, q | {k: q[k] + s * se}) != out["status"] for s in (-2, 2)):
+                near.append(k)
+        out |= {"monte_carlo_se": {k: round(v, 5) for k, v in mcse.items()}, "near_threshold": near,
+                "robust": not near}
     return out
+
+
+def decision_rules(cells, contrasts, arms, batches=(), exploratory=None) -> dict:
+    """The plan's rules on (cells, contrasts), as amended (binding amendment 1, docs/binding_experiment.md), with the Monte
+    Carlo check where ``batches`` are given. ``exploratory`` (cells, contrasts): the strong variant's H2 and H3,
+    which the plan did not pre-register, reported as exploratory."""
+    out = {}
+    if {"false_labelled", "false_verified", "false_neutral"} <= set(arms):
+        out["H1_false_misbinding"] = run_rule(_h1, _h1_decide, cells, contrasts, arms, batches)
+    if strictest(arms, "partial"):
+        h2 = run_rule(_h2("partial"), _h2_decide, cells, contrasts, arms, batches)
+        # the same rule on every patient and on the release's letter-scored check, for comparison
+        others = {s: run_rule(_h2("partial", s), _h2_decide, cells, contrasts, arms)
+                  for s in ("all", "check_passed_letter")}
+        h2["other_subsets"] = {s: {"status": r["status"], "lambda": r.get(f"lambda_{s}_pooled")}
+                               for s, r in others.items()}
+        h2["subset_dependent"] = any(r["status"] != h2["status"] for r in others.values())
+        out["H2_curse_of_knowledge[partial]"] = h2
+    if {"partial_labelled", "partial_labelled_explicit"} <= set(arms) and strictest(arms, "partial"):
+        out["H3_absence_not_ignorance[partial]"] = run_rule(_h3("partial"), _h3_decide, cells, contrasts, arms,
+                                                            batches)
+    if exploratory is not None:
+        ec, ek = exploratory
+        if strictest(arms, "strong"):
+            out["H2_curse_of_knowledge[strong, exploratory]"] = run_rule(
+                _h2("strong"), _h2_decide, ec, ek, arms) | {"exploratory": True}
+        if {"strong_labelled", "strong_labelled_explicit"} <= set(arms) and strictest(arms, "strong"):
+            out["H3_absence_not_ignorance[strong, exploratory]"] = run_rule(
+                _h3("strong"), _h3_decide, ec, ek, arms) | {"exploratory": True}
+    return out
+
+
+# The cells the pre-registered rules read; they get their own, larger bootstrap.
+RULE_ARMS = ("false_labelled", "false_verified", "false_neutral", "partial_labelled", "partial_labelled_explicit",
+             "partial_instructed_explicit")
+
+
+def rule_tables(frame, arms, resamples, seed):
+    """(cells, contrasts, batches) for the rule arms: one bootstrap of ``resamples`` draws, summarised whole and
+    in ``MC_BATCHES`` disjoint batches."""
+    rule_arms = [a for a in RULE_ARMS if a in arms]
+    if not rule_arms:
+        return None
+    draws = bootstrap_draws(frame, rule_arms, resamples, seed)
+    cells, contrasts = summarise(*draws)
+    batches = [summarise(*draws, take=idx) for idx in np.array_split(np.arange(int(resamples)), MC_BATCHES)]
+    return cells, contrasts, batches
 
 
 def pilot_decisions(cells, arms, retention, checks_table, n_patients, n_full=150) -> dict:
@@ -361,15 +558,19 @@ def pilot_decisions(cells, arms, retention, checks_table, n_patients, n_full=150
         low = retention[retention.retention < 0.9]
         out["prompt_retention_ok"] = dict(decision=bool(low.empty), rule="every arm x role keeps >= 90% parsed",
                                           below=low.to_dict("records"))
-    if not checks_table.empty:
-        out["check_accuracy_by_arm"] = checks_table.groupby("arm").accuracy.mean().round(3).to_dict()
+    if not checks_table.empty:  # item-weighted over the order x relation strata
+        g = checks_table.assign(w=checks_table.accuracy * checks_table.n,
+                                wl=checks_table.accuracy_letter * checks_table.n).groupby("arm")
+        out["check_accuracy_by_arm"] = (g.w.sum() / g.n.sum()).round(3).to_dict()
+        out["check_accuracy_by_arm_letter"] = (g.wl.sum() / g.n.sum()).round(3).to_dict()
     gaps = cells[(cells.statistic == "manipulation_median_abs_gap") & (cells.order == "pooled") & (cells.subset == "all")]
     out["median_abs_gap_by_arm"] = {r.arm: round(float(r.estimate), 3) for r in gaps.itertuples()}
     scale = float(np.sqrt(n_patients / n_full))
-    half = cells[(cells.statistic == "lambda") & (cells.subset == "all")].assign(
+    # the rules read Fieller sets, so those are what is projected (bounded sets only)
+    half = cells[(cells.statistic == "lambda_fieller") & (cells.subset == "all") & (cells.interval == "bounded")].assign(
         half_width=lambda t: (t.ci_upper - t.ci_lower) / 2)
-    out["projected_lambda_ci_half_width_at_150"] = {f"{r.arm}|{r.order}": round(float(r.half_width * scale), 3)
-                                                     for r in half.itertuples() if np.isfinite(r.half_width)}
+    out["projected_lambda_fieller_half_width_at_150"] = {
+        f"{r.arm}|{r.order}": round(float(r.half_width * scale), 3) for r in half.itertuples() if np.isfinite(r.half_width)}
     return out
 
 
@@ -377,17 +578,22 @@ def pilot_decisions(cells, arms, retention, checks_table, n_patients, n_full=150
 def retention_table(long):
     part = long[long.arm != "drift"]
     g = part.groupby(["arm", "role"])
-    return pd.DataFrame({"scheduled": g.size(), "parsed": g.status.apply(lambda s: (s == "parsed").sum())}
+    return pd.DataFrame({"scheduled": g.size(), "parsed": g.status.apply(lambda s: (s == "parsed").sum()),
+                         "truncated": g.status.apply(lambda s: (s == "truncated").sum())}
                         ).assign(retention=lambda t: t.parsed / t.scheduled).reset_index()
 
 
-def checks_table(long):
-    chk = long[long.output.str.startswith("check/") & (long.arm != "drift")].copy()
+def checks_table(long, texts=None):
+    """Check accuracy per arm, order and relation: ``accuracy`` as scored for the check-passed subsets
+    (binding amendment 1), ``accuracy_letter`` by the release's letter, and the share scored from the reasoning."""
+    chk = score_checks(long, texts)
+    chk = chk[chk.correct_letter.notna()]
     if chk.empty:
         return pd.DataFrame()
-    chk["correct"] = chk.value.where(chk.status == "parsed", 0.0)
-    return chk.groupby(["arm", "block_order", "check_relation"]).correct.agg(["mean", "size"]).rename(
-        columns={"mean": "accuracy", "size": "n"}).reset_index()
+    chk = chk.assign(by_reasoning=(chk.scored_by == "reasoning").astype(float))
+    return chk.groupby(["arm", "block_order", "check_relation"]).agg(
+        accuracy=("correct", "mean"), accuracy_letter=("correct_letter", "mean"),
+        scored_from_reasoning=("by_reasoning", "mean"), n=("correct", "size")).reset_index()
 
 
 def drift_table(long, resamples, seed):
@@ -414,10 +620,38 @@ def drift_table(long, resamples, seed):
     return pd.DataFrame(rows)
 
 
+DRIFT_LOGIT = 0.1  # a stated-probability drift beyond this (CI excluding 0) is flagged as an anomaly
+
+
+def anomalies(drift: pd.DataFrame, decisions: dict) -> list[str]:
+    """What RESULTS.md lists under Anomalies: drift between the reused and the new answers, rules that rest on
+    bootstrap noise or depend on how the check is scored, and H1 verdicts that change without reused answers."""
+    out = []
+    for r in drift.itertuples() if not drift.empty else ():
+        if r.kind == "probability" and not (r.ci_lower <= 0 <= r.ci_upper) and abs(r.mean_difference) > DRIFT_LOGIT:
+            out.append(f"drift: new - reused stated probability {r.mean_difference:+.3f} logit "
+                       f"[{r.ci_lower:+.3f}, {r.ci_upper:+.3f}] ({r.patients} patients): the reused answers in the "
+                       "follow-up arms (false_verified, partial_original) and in A/B are from another session")
+    for method, rules in decisions.items():
+        for name, r in rules.items():
+            if r.get("near_threshold"):
+                out.append(f"{method} / {name}: {r['status']}, but within 2 Monte Carlo s.e. of a threshold "
+                           f"({', '.join(r['near_threshold'])})")
+            if r.get("subset_dependent"):
+                out.append(f"{method} / {name}: the verdict depends on the patient subset "
+                           f"({r['status']} on check_passed; "
+                           + ", ".join(f"{s}: {o['status']}" for s, o in r["other_subsets"].items()) + ")")
+            sens = r.get("sensitivity_new_answers_only")
+            if sens and sens.get("status") != r["status"]:
+                out.append(f"{method} / {name}: {r['status']}, but {sens.get('status')} without the reused answers")
+    return out
+
+
 def gate(reasoning, no_reasoning, arms) -> pd.DataFrame:
     """Phase 3 gate on one set of patients (both arguments: ``bootstrap``'s (cells, contrasts)). A cell enters
     Phase 3 if its no-reasoning lambda is estimable (bounded Fieller set), its interval overlaps the reasoning
-    one, and, where the reasoning order effect is clear (CI excluding 0), the no-reasoning one has its sign."""
+    one, and, where the reasoning order effect is clear (CI excluding 0), the no-reasoning one has its sign.
+    Both lambda intervals are 95% Fieller sets (binding amendment 1; the reasoning side was a percentile interval)."""
     (rc, rk), (nc, nk) = reasoning, no_reasoning
     rows = []
     for arm in arms:
@@ -425,24 +659,47 @@ def gate(reasoning, no_reasoning, arms) -> pd.DataFrame:
         clear = oa is not None and not (oa.ci_lower <= 0 <= oa.ci_upper)
         same = not clear or (ob is not None and np.sign(oa.estimate) == np.sign(ob.estimate))
         for order in B.ORDERS:
-            a = _get(rc, arm, order)
-            b, why = lambda_interval(nc, arm, order)
-            if a is None:
+            if _get(rc, arm, order) is None:
                 continue
-            overlap = b is not None and max(a.ci_lower, b[1]) <= min(a.ci_upper, b[2])
-            rows.append(dict(arm=arm, order=order, lambda_reasoning=a.estimate,
+            a, why_a = lambda_interval(rc, arm, order)
+            b, why = lambda_interval(nc, arm, order)
+            overlap = a is not None and b is not None and max(a[1], b[1]) <= min(a[2], b[2])
+            reason = "; ".join(x for x in (f"reasoning: {why_a}" if why_a else "",
+                                           f"no reasoning: {why}" if why else "") if x)
+            rows.append(dict(arm=arm, order=order, lambda_reasoning=np.nan if a is None else a[0],
                              lambda_no_reasoning=np.nan if b is None else b[0], no_reasoning_estimable=b is not None,
                              intervals_overlap=bool(overlap), order_effect_consistent=bool(same),
-                             enters_phase3=bool(b is not None and overlap and same), reason=why))
+                             enters_phase3=bool(a is not None and b is not None and overlap and same), reason=reason))
     return pd.DataFrame(rows)
 
 
-def write_results(out: Path, model, plan, tables, decisions, pilot) -> None:
+TRUNCATION_FLAG = 0.05  # an arm whose stated-probability answers are truncated more often than this is flagged
+
+
+def truncation_anomalies(retention: pd.DataFrame) -> list[str]:
+    """Truncated answers are never retried (every item is seeded from its key, so a retry repeats them); an arm
+    that truncates more than the others loses its longest answers selectively."""
+    if retention.empty or "truncated" not in retention:
+        return []
+    part = retention[retention.role.isin(["C", "M", "D"])]
+    g = part.groupby("arm")[["truncated", "scheduled"]].sum()
+    share = g.truncated / g.scheduled
+    bad = share[share > TRUNCATION_FLAG]
+    return [f"truncation: {arm} loses {s:.1%} of its C/M/D answers to the token limit (arms range "
+            f"{share.min():.1%}-{share.max():.1%})" for arm, s in bad.items()]
+
+
+def write_results(out: Path, model, plan, tables, decisions, pilot, flags=()) -> None:
     cells = tables["lambda_cells"]
     lines = [f"# Binding experiment: {model} ({plan['spec']['profile']} profile)", "",
              f"{len(plan['cases'])} patients; arms: {', '.join(plan['spec']['arms'])}.", "",
              "## lambda per cell (95% paired patient-bootstrap intervals)", "",
-             "| method | arm | order | subset | n | lambda | beta_C | beta_D | median abs x |", "|---|---|---|---|---|---|---|---|---|"]
+             "`lambda` has the percentile interval and `lambda Fieller` the 95% Fieller set, which is what the "
+             "rules read. `check_passed`: right on both option orders of the cell's check, the shown/withheld checks "
+             "scored from the reasoning (binding amendment 1); `check_passed_letter`: the release's letter scoring. `n` is "
+             "patients per order and patient-orders when pooled.", "",
+             "| method | arm | order | subset | n | lambda | lambda Fieller | beta_C | beta_D | median abs x |",
+             "|---|---|---|---|---|---|---|---|---|---|"]
     for (method, arm, order, subset), part in cells.groupby(["method", "arm", "order", "subset"], sort=True):
         s = part.set_index("statistic")
 
@@ -450,20 +707,27 @@ def write_results(out: Path, model, plan, tables, decisions, pilot) -> None:
             if stat not in s.index or not np.isfinite(s.loc[stat, "estimate"]):
                 return s.loc[stat, "blank_reason"] if stat in s.index and s.loc[stat, "blank_reason"] else ""
             r = s.loc[stat]
+            if stat == "lambda_fieller" and r.get("interval") != "bounded":
+                return f"{r.get('interval') or 'not estimable'} (weak beta_D)"
             return f"{r.estimate:.3f} [{r.ci_lower:.3f}, {r.ci_upper:.3f}]"
         n = int(s.loc["lambda", "n_cases"]) if "lambda" in s.index else ""
-        lines.append(f"| {method} | {arm} | {order} | {subset} | {n} | {fmt('lambda')} | {fmt('beta_C')} | "
-                     f"{fmt('beta_D')} | {fmt('manipulation_median_abs_gap')} |")
-    lines += ["", "## Contrasts of lambda", "", "| method | contrast | estimate |", "|---|---|---|"]
+        lines.append(f"| {method} | {arm} | {order} | {subset} | {n} | {fmt('lambda')} | {fmt('lambda_fieller')} | "
+                     f"{fmt('beta_C')} | {fmt('beta_D')} | {fmt('manipulation_median_abs_gap')} |")
+    lines += ["", "## Contrasts of lambda (percentile intervals)", "", "| method | contrast | estimate |", "|---|---|---|"]
     for r in tables["contrasts"].itertuples():
         lines.append(f"| {r.method} | {r.contrast} | {r.estimate:.3f} [{r.ci_lower:.3f}, {r.ci_upper:.3f}] |")
-    lines += ["", "## Pre-registered decision rules", ""]
+    lines += ["", "## Decision rules (pre-registered, as amended: binding amendment 1 in docs/binding_experiment.md)", "",
+              f"The rules read a separate {RULE_RESAMPLES:,}-draw bootstrap of their cells (`lambda_cells_rules.csv`); "
+              "`near_threshold` lists quantities whose move by 2 Monte Carlo s.e. would change the verdict.", ""]
     for method, rules in decisions.items():
         for name, result in rules.items():
             base = name.split("[")[0]
             evidence = {k: v for k, v in result.items() if k not in ("supported", "status")}
-            lines.append(f"- **{method} / {name}**: {result['status']}. Rule: {RULES.get(base, '')}. "
-                         f"Evidence: `{json.dumps(evidence)}`")
+            tag = " (exploratory: not pre-registered)" if result.get("exploratory") else ""
+            tag += "" if result.get("robust", True) else " (NOT ROBUST: near a threshold)"
+            lines.append(f"- **{method} / {name}**: {result['status']}{tag}. Rule: {RULES.get(base, '')}. "
+                         f"Evidence: `{json.dumps(evidence, default=float)}`")
+    lines += ["", "## Anomalies", ""] + ([f"- {f}" for f in flags] or ["- none flagged"])
     if pilot:
         lines += ["", "## Pilot decisions", ""]
         for name, result in pilot.items():
@@ -471,8 +735,16 @@ def write_results(out: Path, model, plan, tables, decisions, pilot) -> None:
     (out / "RESULTS.md").write_text("\n".join(lines) + "\n")
 
 
+def new_answers_only(long: pd.DataFrame) -> pd.DataFrame:
+    """The responses without the C/M/D answers reused from the base run (another session); A and B, shared by
+    every arm, are kept, since they enter both sides of every contrast."""
+    if "source" not in long:
+        return long
+    return long[~((long.source == "baseline") & long.role.isin(["C", "M", "D"]))]
+
+
 def analyse(root: Path, model: str, resamples: int = 2000, seed: int | None = None,
-            order_followup: bool = False) -> dict:
+            order_followup: bool = False, rule_resamples: int = RULE_RESAMPLES) -> dict:
     long, plan = (load_order_followup if order_followup else load)(root, model)
     seed = int(C.load()["seed"]) if seed is None else seed
     arms = plan["spec"]["arms"]
@@ -481,8 +753,9 @@ def analyse(root: Path, model: str, resamples: int = 2000, seed: int | None = No
     beliefs = {"direct": direct_beliefs(long)}
     if plan["spec"]["latent_arms"]:
         beliefs["latent"] = latent_beliefs(long, plan, model)
-    passes = check_pass(long)
-    all_cells, all_contrasts, decisions = [], [], {}
+    texts = load_texts(root, model)
+    passes = check_pass(long, texts)
+    all_cells, all_contrasts, rule_cells, decisions = [], [], [], {}
     for method, b in beliefs.items():
         b.to_parquet(out / f"beliefs_{method}.parquet", index=False)
         method_arms = arms if method == "direct" else plan["spec"]["latent_arms"]
@@ -491,21 +764,41 @@ def analyse(root: Path, model: str, resamples: int = 2000, seed: int | None = No
         cells["method"], contrasts["method"] = method, method
         all_cells.append(cells)
         all_contrasts.append(contrasts)
-        decisions[method] = decision_rules(cells, contrasts, method_arms)
+        ruled = rule_tables(frame, method_arms, rule_resamples, seed + 1)
+        if ruled is None:
+            decisions[method] = decision_rules(cells, contrasts, method_arms, exploratory=(cells, contrasts))
+            continue
+        rc, rk, batches = ruled
+        rule_cells.append(rc.assign(method=method))
+        decisions[method] = decision_rules(rc, rk, method_arms, batches, exploratory=(cells, contrasts))
+        if method == "direct" and "H1_false_misbinding" in decisions[method]:
+            # H1 without the C/M/D answers reused from the base run (a different session from the new arms')
+            nb = direct_beliefs(new_answers_only(long))
+            nc, nk = bootstrap(wide_frame(nb).join(passes, how="left"),
+                               [a for a in ("false_labelled", "false_verified", "false_neutral") if a in method_arms],
+                               resamples, seed + 2, checks=False)
+            sens = run_rule(_h1, _h1_decide, nc, nk, method_arms)
+            decisions[method]["H1_false_misbinding"]["sensitivity_new_answers_only"] = {
+                k: sens.get(k) for k in ("status", "reason", "person_first", "own_first", "labelling_reduction_person_first")
+                if k in sens}
     cells = pd.concat(all_cells, ignore_index=True)
     contrasts = pd.concat(all_contrasts, ignore_index=True)
     cells.to_csv(out / "lambda_cells.csv", index=False)
     contrasts.to_csv(out / "contrasts.csv", index=False)
-    ret, chk = retention_table(long), checks_table(long)
+    if rule_cells:
+        pd.concat(rule_cells, ignore_index=True).to_csv(out / "lambda_cells_rules.csv", index=False)
+    ret, chk = retention_table(long), checks_table(long, texts)
     ret.to_csv(out / "retention.csv", index=False)
     chk.to_csv(out / "checks.csv", index=False)
     drift = drift_table(long, resamples, seed)
     drift.to_csv(out / "drift.csv", index=False)
+    flags = anomalies(drift, decisions) + truncation_anomalies(ret)
     pilot = (pilot_decisions(cells[cells.method == "direct"], arms, ret, chk, len(plan["cases"]))
              if plan["spec"]["profile"] == "pilot" else {})
-    result = {"decision_rules": decisions, "pilot_decisions": pilot}
+    result = {"decision_rules": decisions, "anomalies": flags, "pilot_decisions": pilot,
+              "amendment": "binding amendment 1 (2026-11-22): docs/binding_experiment.md"}
     (out / "decisions.json").write_text(json.dumps(result, indent=2, default=float))
-    write_results(out, model, plan, {"lambda_cells": cells, "contrasts": contrasts}, decisions, pilot)
+    write_results(out, model, plan, {"lambda_cells": cells, "contrasts": contrasts}, decisions, pilot, flags)
     print(f"{model}: analysis written to {out}")
     return result
 
@@ -515,6 +808,8 @@ def main():
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--resamples", type=int, default=None)
+    parser.add_argument("--rule-resamples", type=int, default=RULE_RESAMPLES,
+                        help="draws of the decision rules' own bootstrap (CPU only)")
     parser.add_argument("--order-followup", action="store_true", help="the run is Astra's order follow-up")
     args = parser.parse_args()
     root = args.run.resolve()
@@ -524,7 +819,7 @@ def main():
     else:
         B.read_plan(root)
     resamples = args.resamples or int(C.load()["analysis"]["bootstrap_resamples"])
-    analyse(root, args.model, resamples, order_followup=args.order_followup)
+    analyse(root, args.model, resamples, order_followup=args.order_followup, rule_resamples=args.rule_resamples)
 
 
 if __name__ == "__main__":

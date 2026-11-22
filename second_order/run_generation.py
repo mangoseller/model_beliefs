@@ -241,8 +241,9 @@ def template_kwargs(model: str) -> dict[str, Any]:
 _LOCAL: dict[str, Any] = {}
 
 
-def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, Any]]:
-    from vllm import LLM, SamplingParams
+def vllm_engine(model: str, seed: int):
+    """The model's vLLM engine, built once per process."""
+    from vllm import LLM
 
     mcfg = C.model_config(model)
     if model not in _LOCAL:
@@ -250,10 +251,47 @@ def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, An
         # enable_prefix_caching, ...) come from the model's `engine` entry, which the runner's
         # tune stage fills in; they change speed, not what is sampled.
         engine = {"gpu_memory_utilization": 0.9, "enable_prefix_caching": True, **(mcfg.get("engine") or {})}
+        if os.environ.get("SO_FAST_SEEDED_SAMPLING") == "1":
+            patch_seeded_sampling()
         _LOCAL[model] = LLM(model=mcfg["path"], revision=model_revision(model), dtype=mcfg.get("dtype", "auto"),
                             max_model_len=mcfg.get("max_model_len"), seed=int(seed),
                             tensor_parallel_size=int(mcfg.get("tensor_parallel_size", 1)), **engine)
-    llm = _LOCAL[model]
+    return _LOCAL[model]
+
+
+def patch_seeded_sampling() -> None:
+    """vLLM 0.8.5 V1 draws each seeded request's noise row by indexing ``q[i]`` in a Python loop. Taking all
+    row views at once (``unbind``) issues the same kernels on the same generators in the same order, so the
+    draws are bit-identical; it only removes per-row indexing overhead from the engine's busy thread. Applied
+    before the engine is built, so vLLM's forked engine-core process inherits it (it says so in the log)."""
+    import torch
+    from vllm.v1.sample.ops import topk_topp_sampler as S
+
+    if getattr(S.random_sample, "_so_unbind", False):
+        return
+    announced = []
+
+    def random_sample(probs: torch.Tensor, generators: dict[int, torch.Generator]) -> torch.Tensor:
+        if not announced:
+            announced.append(True)
+            print(f"[pid {os.getpid()}] seeded sampling: unbind rows (bit-identical)", file=sys.stderr, flush=True)
+        q = torch.empty_like(probs)
+        if len(generators) != probs.shape[0]:
+            q.exponential_()
+        if generators:
+            rows = q.unbind(0)
+            for i, generator in generators.items():
+                rows[i].exponential_(generator=generator)
+        return probs.div_(q).argmax(dim=-1).view(-1)
+
+    random_sample._so_unbind = True
+    S.random_sample = random_sample
+
+
+def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, Any]]:
+    from vllm import SamplingParams
+
+    llm = vllm_engine(model, seed)
     params = []
     for i in items:
         s = sampling(model, i.dataset, i.output)
