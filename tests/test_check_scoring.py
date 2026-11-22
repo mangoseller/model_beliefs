@@ -1,5 +1,5 @@
-"""Binding amendment 1's scoring of the partial checks from the reasoning (second_order/check_scoring.py), on answers of
-the binding pilot (qwen3_8b), trimmed to their last lines.
+"""Scoring the partial checks from the reasoning (second_order/check_scoring.py), on Qwen3 8B answers trimmed to
+their last lines.
 
     python -m unittest tests.test_check_scoring
 """
@@ -37,7 +37,7 @@ CASES = [
 
 
 class ReasoningScoring(unittest.TestCase):
-    def test_pilot_answers(self):
+    def test_model_answers(self):
         for text, fact, want in CASES:
             self.assertEqual(conclusion(text, fact), want, text[:80])
 
