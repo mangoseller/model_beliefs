@@ -231,6 +231,8 @@ def fit(model, train, val, epochs, patience, lr):
             bad += 1
             if bad >= patience:
                 break
+    if best_state is None:
+        raise RuntimeError("the validation loss was never finite: the latent fit diverged")
     model.load_state_dict(best_state)
     return best, ep
 
