@@ -10,9 +10,12 @@ Headline and diagnostics:
   dataset and method, with Camerer et al.'s w;
 * ``curse_scatter``: the two regressions behind lambda;
 * ``curse_linearity``: binned means of l_C - l_M and l_D - l_M against x with the
-  fitted lines (the partial-linearity assumption);
+  fitted lines (the partial-linearity assumption), and ``curse_residuals``, the
+  residuals of the two regressions against x;
 * ``curse_case_leakage``: the distribution of per-case leakage (l_C - l_M) / (l_D - l_M);
-* ``curse_comprehension``: lambda on all answers and on comprehension-passing answers.
+* ``curse_comprehension``: lambda on all answers and on comprehension-passing answers;
+* ``layouts_<model>_<method>_<setting>`` (CKD): the two regressions with the one-chart
+  and the two-chart references, on the same patients.
 
 After the paper's figures:
 
@@ -77,12 +80,10 @@ def read(name):
 def retention(ret):
     if ret.empty:
         return
-    if "scheduled" in ret:
-        ret = ret.groupby(["model", "dataset", "condition"], as_index=False)[["parsed", "scheduled"]].sum()
-        ret["retention"] = ret.parsed / ret.scheduled
-    # One group of bars per model (and dataset, when the table has several).
-    ret = ret.assign(group=[display(m) if not d or d == "ckd" else f"{display(m)} · {d}"
-                            for m, d in zip(ret.model, ret.get("dataset", pd.Series("", index=ret.index)))])
+    # One group of bars per model and dataset; the call types of a condition are summed.
+    ret = ret.groupby(["model", "dataset", "condition"], as_index=False)[["parsed", "scheduled"]].sum()
+    ret["retention"] = ret.parsed / ret.scheduled
+    ret["group"] = [display(m) if d == "ckd" else f"{display(m)} · {d}" for m, d in zip(ret.model, ret.dataset)]
     groups = list(ret.group.unique())
     conds = [c for c in dict.fromkeys(CONDITION_ORDER + list(ret.condition)) if c in set(ret.condition)]
     fig, ax = plt.subplots(figsize=(max(4, 1.2 * len(groups) * len(conds) / 4), 3))
@@ -442,6 +443,24 @@ def curse_decomposition(est):
     save(fig, "curse_decomposition")
 
 
+def curse_layouts(paired):
+    """CKD: the two gap regressions with the one-chart and the two-chart references, same patients."""
+    for (model, method, setting), group in paired.groupby(["model", "method", "setting"]):
+        fig, axes = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(8, 3))
+        for ax, reference in zip(axes, ("single_record", "two_record")):
+            rows = group[group.reference == reference].sort_values("x_A_minus_B")
+            for role, color in (("C", C_COLOR), ("D", D_COLOR)):
+                x = rows.x_A_minus_B
+                ax.scatter(x, rows[f"y_{role}_minus_M"], color=color, s=5, alpha=.4)
+                ax.plot(x, rows[f"intercept_{role}"] + rows[f"beta_{role}"] * x, color=color, label=role + " − M")
+            style(ax, f"{reference.replace('_', ' ')} · {len(rows)} patients")
+            ax.set_xlabel("A − B (log odds)")
+            ax.legend()
+        axes[0].set_ylabel("Gap relative to M (log odds)")
+        fig.suptitle(f"{display(model)} · {method} · {setting}")
+        save(fig, f"layouts_{model}_{method}_{setting}")
+
+
 def headline(frame):
     """Rows of each dataset's headline reference (CKD: two_record; bespoke: single_record)."""
     if frame.empty:
@@ -453,25 +472,10 @@ def headline(frame):
 
 def main() -> None:
     curse_schematic()
-    est, all_points = headline(read("curse/estimates.csv")), read("curse/scatter.csv")
-    scatter = all_points
-    if not all_points.empty:
-        scatter = headline(all_points[all_points.cohort == "headline"])
-        paired = all_points[all_points.cohort == "paired_layouts"]
-        for (model, method, setting), group in paired.groupby(["model", "method", "setting"]):
-            fig, axes = plt.subplots(1, 2, sharex=True, sharey=True, figsize=(8, 3))
-            for ax, reference in zip(axes, ("single_record", "two_record")):
-                rows = group[group.reference == reference].sort_values("x_A_minus_B")
-                for role, color in (("C", C_COLOR), ("D", D_COLOR)):
-                    x = rows.x_A_minus_B
-                    ax.scatter(x, rows[f"y_{role}_minus_M"], color=color, s=5, alpha=.4)
-                    ax.plot(x, rows[f"intercept_{role}"] + rows[f"beta_{role}"] * x, color=color, label=role + " − M")
-                style(ax, f"{reference.replace('_', ' ')} · {len(rows)} patients")
-                ax.set_xlabel("A − B (log odds)")
-                ax.legend()
-            axes[0].set_ylabel("Gap relative to M (log odds)")
-            fig.suptitle(f"{display(model)} · {method} · {setting}")
-            save(fig, f"layouts_{model}_{method}_{setting}")
+    est, scatter = headline(read("curse/estimates.csv")), read("curse/scatter.csv")
+    if not scatter.empty:
+        curse_layouts(scatter[scatter.cohort == "paired_layouts"])
+        scatter = headline(scatter[scatter.cohort == "headline"])
     if not est.empty:
         curse_decomposition(est)
         curse_estimates(est)
