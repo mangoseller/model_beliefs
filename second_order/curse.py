@@ -482,8 +482,8 @@ def write_results_md(models, tables: dict[str, pd.DataFrame]) -> None:
          "C - M is the original leakage gap, C_swap - D the swapped one, D - M their reference.", None),
         ("placebo", "Bespoke placebo items", "All three gaps should be near 0.",
          ["model", "case_id", "gap", "estimate", "ci_lower", "ci_upper", "n_samples"]),
-        ("report_control", "Bespoke report-assignment control", "C_ctrl - D: the friend read PERSON the true "
-         "record, so a model tracking who heard what gives 0; C - D (the friend read the false record) beside it.",
+        ("report_control", "Bespoke report-assignment control", "C_ctrl - D: the friend told PERSON the actual "
+         "results, so a model tracking who heard what gives 0; C - D (the friend made a mistake) beside it.",
          ["model", "case_id", "gap", "estimate", "ci_lower", "ci_upper", "n_samples"]),
         ("bayes", "Bespoke items against the Bayes answer", "Slope and intercept of the model's mean logit on the "
          "Bayes logit of the believer's evidence.", None),

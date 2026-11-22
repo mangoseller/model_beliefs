@@ -41,8 +41,8 @@ controls. Partial trials keep the original wording.
 - **Diagnostics** (analysed apart from the leakage estimator):
   - CKD role swaps: C_swap trades the two ownership headers; probe and probe_swap ask
     which record holds a field.
-  - The bespoke report-assignment control C_ctrl_F: C_F's layout, but the friend read
-    PERSON the true record, so its no-leakage value is D_F.
+  - The bespoke report-assignment control C_ctrl_F: C_F's layout (the actual results, then
+    what PERSON was told), but the friend made no mistakes, so its no-leakage value is D_F.
   - Two bespoke placebo items, whose withheld evidence is irrelevant.
 
 ## Beliefs

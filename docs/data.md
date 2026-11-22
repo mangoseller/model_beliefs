@@ -54,12 +54,22 @@ tests); `p01` and `p02` are placebo items. One row per item and case:
 | `false` | B_false, M_false, D_false, C_false | B_F, M_F, D_F, C_F |
 | `report_assignment_control` | C_report_control | C_ctrl_F |
 
+- **Prompts:**
+  - C: the full sequence, then "PERSON watched only draws 2, 3, 4. PERSON does not know any
+    of the other results." The observations PERSON missed can be anywhere in the sequence
+    (`partial_c_indices` lists the ones PERSON had).
+  - C_F: "The actual results were: …", then "However, the friend made a mistake about
+    draw 1 and told PERSON: …" and "PERSON does not know about the mistake." The altered
+    observations can be anywhere in the sequence.
+  - C_ctrl_F: the same layout, but "The friend made no mistakes and told PERSON: …"
+    repeats the actual results.
 - **Columns used:**
   - `normative_p` and `normative_logodds`: the Bayes answer given the believer's
     evidence (the model's for A and B, PERSON's otherwise);
   - `full_leak_p`: on C rows, the answer with the model's evidence;
   - `comprehension_q` and `comprehension_a`: the follow-up after C, C_F and C_ctrl_F;
-  - `check_relation`.
+  - `check_relation`: on C_F and C_ctrl_F rows, whether the follow-up asks about an
+    observation the friend got wrong (`changed`) or one it reported correctly (`unchanged`).
 - **Sampling:** each row is sampled `datasets.bespoke.samples` times per run, and A, B
   and B_F get a second run.
 - **Answers:** read from the JSON object only, as for CKD. The first-order fallback (any
