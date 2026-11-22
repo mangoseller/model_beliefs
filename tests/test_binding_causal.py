@@ -87,10 +87,8 @@ class Interventions(unittest.TestCase):
         cls.enc = cls.lens.encode(cls.prompt)
 
     def plain_logits(self, ids):
-        torch = self.torch
-        self.lens._rows = []
-        with torch.inference_mode():
-            return self.lens.lm(torch.tensor([ids])).logits[0, -1].float()
+        with self.lens._run():
+            return self.lens.lm(self.torch.tensor([ids])).logits[0, -1].float()
 
     def test_positions_decode_to_the_intended_text(self):
         tok, e = self.lens.tok, self.enc
@@ -107,8 +105,8 @@ class Interventions(unittest.TestCase):
         self.assertTrue(tok.decode([e.ids[k] for k in e.groups["readout"]]).lstrip().startswith("What probability"))
         filled = self.lens.encode(BC.with_filler(self.prompt))
         self.assertTrue(tok.decode([filled.ids[k] for k in filled.groups["filler"]]).strip().startswith("Clinic notice"))
-        # binding amendment 1: the filler sits between the two records, longer than either, and the control masks as many
-        # of its tokens as the knocked record has
+        # The filler sits between the two records, longer than either, and the control masks as many of its
+        # tokens as the knocked record has.
         g = filled.groups
         first, second = sorted((g["own"], g["person"]), key=min)
         self.assertTrue(max(first) < min(g["filler"]) and max(g["filler"]) < min(second))
@@ -136,7 +134,7 @@ class Interventions(unittest.TestCase):
         p1 = p[d] / p[d].sum()
         q2s = [self.plain_logits(ids + [d[a]]).softmax(-1)[d] for a in range(10)]
         self.assertAlmostEqual(float(res["p"][0]), two_digit_value(p1, q2s), places=5)
-        # the expected-probability statistic (before binding amendment 1) is still exact
+        # the expected-probability statistic is exact too
         self.lens.statistic = "expected_p"
         try:
             got = float(self.lens.readout(ids, [BC.Variant()])["p"][0])
@@ -158,12 +156,8 @@ class Interventions(unittest.TestCase):
             d = self.lens.digits
 
             def last(ids):
-                self.lens._rows, self.lens._offset = [explicit], 0
-                try:
-                    with torch.inference_mode():
-                        return self.lens.lm(torch.tensor([ids])).logits[0, -1].float().softmax(-1)
-                finally:
-                    self.lens._rows = []
+                with self.lens._run([explicit]):
+                    return self.lens.lm(torch.tensor([ids])).logits[0, -1].float().softmax(-1)
             p = last(e.ids)
             p1 = p[d] / p[d].sum()
             expected = two_digit_value(p1, [last(e.ids + [d[a]])[d] for a in range(10)])
@@ -190,12 +184,8 @@ class Interventions(unittest.TestCase):
         e = self.enc
         qs, ks = e.groups["readout"], e.groups["own"]
         v = BC.Variant(knock=[(2, qs, ks, True)])
-        self.lens._rows, self.lens._offset = [v], 0
-        try:
-            with torch.inference_mode():
-                out = self.lens.lm(torch.tensor([e.ids]), output_attentions=True)
-        finally:
-            self.lens._rows = []
+        with self.lens._run([v]):
+            out = self.lens.lm(torch.tensor([e.ids]), output_attentions=True)
         for layer, att in enumerate(out.attentions):
             blocked = att[0][:, qs][:, :, ks]
             if layer >= 2:
@@ -219,13 +209,9 @@ class Interventions(unittest.TestCase):
         for variant, check in (
                 (BC.Variant(ablate=[({2}, [pos], u, mu)]), "ablate"),
                 (BC.Variant(steer=[(2, pos, vec)]), "steer")):
-            self.lens._rows, self.lens._offset = [variant], 0
-            try:
-                with torch.inference_mode():
-                    out = self.lens.lm(torch.tensor([e.ids]), output_hidden_states=True)
-            finally:
-                self.lens._rows = []
-            with torch.inference_mode():
+            with self.lens._run([variant]):
+                out = self.lens.lm(torch.tensor([e.ids]), output_hidden_states=True)
+            with self.lens._run():
                 base = self.lens.lm(torch.tensor([e.ids]), output_hidden_states=True)
             h, h0 = out.hidden_states[2][0, pos], base.hidden_states[2][0, pos]
             if check == "ablate":
@@ -272,7 +258,7 @@ class Interventions(unittest.TestCase):
                 self.assertIsNone(h)
                 continue
             # Both captures against transformers' own hidden_states (0 = embeddings, last = after the norm).
-            with self.torch.inference_mode():
+            with self.lens._run():
                 ref = self.lens.lm(self.torch.tensor([e.ids]), output_hidden_states=True).hidden_states
             ref = self.torch.stack([layer[0, a] for layer in ref])
             self.assertTrue(self.torch.allclose(h, ref, atol=1e-4))
@@ -282,12 +268,12 @@ class Interventions(unittest.TestCase):
         torch = self.torch
         e = self.enc
         vec = torch.randn(64) * 5
-        alone = [float(self.lens.readout(e.ids, [v])["p"][0]) for v in
-                 (BC.Variant(), BC.Variant(steer=[(2, e.positions["answer"], vec)]),
-                  BC.Variant(knock=[(1, e.groups["readout"], e.groups["own"], True)]))]
-        together = self.lens.readout(e.ids, [BC.Variant(), BC.Variant(steer=[(2, e.positions["answer"], vec)]),
-                                             BC.Variant(knock=[(1, e.groups["readout"], e.groups["own"], True)])])["p"]
-        np.testing.assert_allclose(together, alone, atol=1e-5)
+        variants = [BC.Variant(), BC.Variant(steer=[(2, e.positions["answer"], vec)]),
+                    BC.Variant(knock=[(1, e.groups["readout"], e.groups["own"], True)]),
+                    BC.Variant(knock=[(3, e.groups["readout"], e.groups["person"], True)]),
+                    BC.Variant(knock=[(0, e.groups["own"], e.groups["person"], False)])]
+        alone = [float(self.lens.readout(e.ids, [v])["p"][0]) for v in variants]
+        np.testing.assert_allclose(self.lens.readout(e.ids, variants)["p"], alone, atol=1e-5)
 
 
 def real_snapshot():
@@ -298,7 +284,6 @@ def real_snapshot():
         return None
 
 
-@unittest.skipIf(real_snapshot() is None, "Qwen3-0.6B weights not in the local HF cache")
 class Null(unittest.TestCase):
     def test_patient_permutation_moves_whole_patients(self):
         rng = np.random.default_rng(0)
@@ -316,6 +301,7 @@ class Null(unittest.TestCase):
         self.assertEqual(sorted(out[:6]), sorted(y[:6]))
 
 
+@unittest.skipIf(real_snapshot() is None, "Qwen3-0.6B weights not in the local HF cache")
 class RealWeights(unittest.TestCase):
     """On real weights (where a misplaced tree mask shows; a tiny random model is insensitive to it): the
     single-prompt readout, the padded batch readout and the explicit two-digit computation agree."""
@@ -332,12 +318,8 @@ class RealWeights(unittest.TestCase):
 
         def explicit(ids, v=None):
             def last(seq):
-                lens._rows, lens._offset = [v] if v else [], 0
-                try:
-                    with torch.inference_mode():
-                        return lm(torch.tensor([seq])).logits[0, -1].float().softmax(-1)
-                finally:
-                    lens._rows = []
+                with lens._run([v] if v else []):
+                    return lm(torch.tensor([seq])).logits[0, -1].float().softmax(-1)
             d = lens.digits
             p = last(ids)
             p1 = p[d] / p[d].sum()
@@ -443,7 +425,7 @@ class StagesEndToEnd(unittest.TestCase):
                 self.assertIn("ablate_rec", set(dr.intervention))
                 rules = BC.stage_report(run, "synthetic", 20, ccfg)
                 self.assertTrue((run / "synthetic" / "RESULTS.md").exists())
-                # binding amendment 1: a knockout is tested only where the gate found room for the 0.3 drop
+                # a knockout is tested only where the gate found room for the 0.3 drop
                 g = pd.read_csv(run / "synthetic" / "gate.csv")
                 testable = dict(zip(g.arm + "|" + g.order, g.knockout_testable))
                 for k, v in rules.items():
@@ -474,7 +456,7 @@ class StagesEndToEnd(unittest.TestCase):
                                    correctly_bound=False, knockout_testable=True)]).to_csv(d / "gate.csv", index=False)
                 gc = BC.gate_cfg(d, ccfg | {"apply_gate": True})
                 self.assertTrue(all(tuple(p[0]) == ("false_verified", "person_first") for p in gc["patch_pairs"]))
-                # binding amendment 1: only correctly bound donors (false_verified|own_first is not)
+                # only correctly bound donors (false_verified|own_first is not)
                 self.assertEqual([tuple(p[1]) for p in gc["patch_pairs"]], [("false_labelled", "person_first")])
                 self.assertEqual(gc["knockout_cells"], [["false_verified", "person_first"], ["false_verified", "own_first"]])
                 self.assertEqual(gc["direction_cells"]["partial"], [])
