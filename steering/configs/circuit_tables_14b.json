@@ -1,0 +1,3 @@
+{"dtype": "bfloat16",
+ "circuit_tables": {"fit_patients": 76, "patients": 24, "offset": 24, "fields": 1, "min_margin": 5.0, "boundary": 28,
+                    "sets": ["lookup64"], "batch": 32}}

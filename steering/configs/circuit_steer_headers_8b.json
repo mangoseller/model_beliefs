@@ -1,0 +1,6 @@
+{"circuit_steer": {"folder": "reason_headers", "patients": 32, "samples": 4, "max_new_tokens": 1100, "dtype": "bfloat16",
+                   "group": 4, "batch": 96, "window": [22, 24], "reader_attention": 0.10,
+                   "cells": [["labelled", "person_first", [["knock", "all", "headers"], ["knock", "all", "first lines"]]],
+                             ["labelled", "own_first", [["base", null, null], ["knock", "all", "headers"]]],
+                             ["plain", "person_first", [["knock", "all", "headers"], ["knock", "all", "first lines"]]],
+                             ["plain", "own_first", [["knock", "all", "headers"]]]]}}

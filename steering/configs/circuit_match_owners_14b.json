@@ -1,0 +1,2 @@
+{"dtype": "bfloat16",
+ "circuit_match": {"patients": 24, "offset": 24, "reader_window": [25, 39], "convert_window": [13, 24], "scales": [1.0], "owners": true}}

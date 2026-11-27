@@ -1,0 +1,4 @@
+{"reason": {"folder": "reason_controls", "base": false, "cells": [
+  ["false", "plain", "person_first", [["slot", 0.25, null], ["slot", -0.25, null], ["random0", 0.25, null], ["randlabel0", 1.0, null]]],
+  ["false", "plain", "own_first", [["label", 1.0, null], ["randlabel0", 1.0, null], ["slot", 0.25, null], ["slot", -0.25, null]]],
+  ["false", "labelled", "person_first", [["slot", 0.25, null], ["slot", -0.25, null]]]]}}

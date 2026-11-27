@@ -1,0 +1,2 @@
+{"circuit_redirect": {"patients": 32, "samples": 4, "max_new_tokens": 1100, "dtype": "bfloat16", "group": 4, "batch": 96,
+                      "sets": ["lookup64", "place16+readers", "readers", "random_lookup64_0", "random_lookup64_1"]}}

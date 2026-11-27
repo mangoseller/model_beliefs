@@ -1,0 +1,63 @@
+{
+ "circuit": {
+  "alpha": 0.25,
+  "scan_patients": 12,
+  "scan_fields": 1,
+  "patients": 34,
+  "offset": 40,
+  "fields": 1,
+  "batch": 96,
+  "ks": [
+   4,
+   8,
+   16,
+   32,
+   64,
+   128,
+   256,
+   512
+  ],
+  "randoms": 3,
+  "where_heads": 24,
+  "min_gap": 5.0,
+  "seed": 0
+ },
+ "circuit_concrete": {
+  "fit_patients": 16,
+  "scan_patients": 8,
+  "field_patients": 8,
+  "patients": 34,
+  "offset": 40,
+  "parts": 6,
+  "batch": 96,
+  "knock_batch": 48,
+  "require_crossed": true,
+  "reader_attention": 0.1,
+  "vector_alphas": [
+   1.0,
+   2.0
+  ],
+  "vector_layers": [
+   20,
+   21,
+   22,
+   23,
+   24,
+   25,
+   26
+  ],
+  "vector_windows": [
+   [
+    22,
+    24
+   ],
+   [
+    20,
+    26
+   ]
+  ],
+  "replies": 60,
+  "reply_tokens": 250,
+  "reply_batch": 48
+ }
+}
