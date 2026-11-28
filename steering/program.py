@@ -133,53 +133,6 @@ def ckd_items(case: str, cases: pd.Series, cfg: dict) -> list[Item]:
     return items
 
 
-# Invented records. Each kind: the thing, the outcome asked about, "risk" fields with three levels from good
-# to bad (the ones records may disagree on) and "shared" fields to which every record gives the same value.
-DOMAINS = {
-    "car": dict(
-        thing="car", outcome="failing its next roadworthiness inspection",
-        risk=[("Brake pad thickness", "brake", ["9 mm", "5 mm", "1 mm"]),
-              ("Odometer reading", "odo", ["38,400 km", "142,900 km", "291,700 km"]),
-              ("Tyre tread depth", "tread", ["7.5 mm", "3.0 mm", "1.2 mm"]),
-              ("Stored engine fault codes", "codes", ["0", "2", "11"]),
-              ("Chassis corrosion", "rust", ["None", "Surface only", "Structural"])],
-        shared=[("Fuel type", "fuel", ["Petrol", "Diesel", "Hybrid"]),
-                ("Body colour", "colour", ["Silver", "Blue", "White"]),
-                ("Number of doors", "doors", ["3", "5"]),
-                ("Transmission", "trans", ["Manual", "Automatic"]),
-                ("Model year", "year", ["2011", "2015", "2019"]),
-                ("Number of seats", "seats", ["5", "7"]),
-                ("Registered keepers", "keepers", ["1", "2", "4"])]),
-    "loan": dict(
-        thing="applicant", outcome="defaulting on this loan within two years",
-        risk=[("Missed payments in the last year", "missed", ["0", "2", "6"]),
-              ("Credit score", "score", ["790", "655", "480"]),
-              ("Debt-to-income ratio", "dti", ["12 percent", "38 percent", "71 percent"]),
-              ("Employment status", "emp", ["Permanent full-time", "Fixed-term contract", "Unemployed"]),
-              ("Previous bankruptcy", "bkr", ["None", "Discharged", "Active"])],
-        shared=[("Loan purpose", "purpose", ["Home improvement", "Vehicle", "Education"]),
-                ("Loan term", "term", ["24 months", "36 months", "60 months"]),
-                ("Marital status", "marital", ["Single", "Married"]),
-                ("Region", "region", ["North", "South", "East", "West"]),
-                ("Application channel", "channel", ["Online", "Branch", "Broker"]),
-                ("Account held since", "since", ["2009", "2014", "2020"]),
-                ("Dependants", "dep", ["0", "1", "3"])]),
-    "bridge": dict(
-        thing="bridge", outcome="being closed to traffic after its next structural inspection",
-        risk=[("Load rating", "load", ["44 tonnes", "26 tonnes", "7 tonnes"]),
-              ("Years since the last major repair", "repair", ["3", "19", "52"]),
-              ("Deck cracking", "crack", ["None", "Hairline", "Severe"]),
-              ("Bearing condition", "bearing", ["Good", "Worn", "Seized"]),
-              ("Scour at the piers", "scour", ["Absent", "Moderate", "Critical"])],
-        shared=[("Span length", "span", ["48 m", "120 m", "310 m"]),
-                ("Main material", "material", ["Steel", "Reinforced concrete", "Masonry"]),
-                ("Number of lanes", "lanes", ["2", "4"]),
-                ("Crossing", "crossing", ["River", "Railway", "Road"]),
-                ("Owning authority", "auth", ["County", "State", "Municipal"]),
-                ("Lighting", "light", ["Yes", "No"]),
-                ("Pedestrian walkway", "walk", ["Yes", "No"])]),
-}
-PERSON_NAMES = ["Tomas", "Priya", "Kenji", "Amara", "Lucia", "Henrik", "Noor", "Mateus"]
 RECORD_LETTER = {"own": "Y", "a": "X", "b": "Z"}
 GOOD, MIDDLE, BAD = 0, 1, 2       # indices into a risk field's three levels
 PROBABILITY_INSTRUCTION = (
@@ -297,18 +250,20 @@ def invented(seed: int, per_domain: int, three: bool = True) -> list[Item]:
     the eight two-record items of ``two_record_items`` and, with ``three``, the six items of
     ``three_record_items``. Two risk fields are drawn as the disputed ones; the other risk fields take their
     middle level everywhere."""
+    records = json.loads((config.DATASETS / "steering" / "invented_records.json").read_text())
+    names = records["person_names"]
     items = []
-    for domain_index, (domain, spec) in enumerate(DOMAINS.items()):
+    for domain_index, spec in enumerate(records["domains"]):
         for thing_index in range(per_domain):
             rng = np.random.default_rng([seed, domain_index, thing_index])
-            person_a, person_b = (PERSON_NAMES[i] for i in rng.choice(len(PERSON_NAMES), 2, replace=False))
+            person_a, person_b = (names[i] for i in rng.choice(len(names), 2, replace=False))
             disputed = [spec["risk"][i] for i in rng.choice(len(spec["risk"]), 2, replace=False)]
             disputed_codes = [code for _, code, _ in disputed]
             shared_lines = [(name, code, levels[MIDDLE]) for name, code, levels in spec["risk"]
                             if code not in disputed_codes]
             for name, code, levels in spec["shared"]:
                 shared_lines.append((name, code, levels[int(rng.integers(len(levels)))]))
-            thing = InventedThing(domain, domain_index, thing_index, spec["thing"], spec["outcome"], person_a,
+            thing = InventedThing(spec["domain"], domain_index, thing_index, spec["thing"], spec["outcome"], person_a,
                                   person_b, disputed, shared_lines)
             items += two_record_items(thing, seed)
             if three:
@@ -754,11 +709,12 @@ def stage_program_reason(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> 
     engine.cast(settings["dtype"])
     head_sets = named_sets(run_dir, engine, cfg)
     items = invented(int(settings["seed"]), int(settings["per_domain"]), three=False)
+    domains = dict.fromkeys(item.domain for item in items)  # generator order determines the sampling seed
     thing_numbers = sorted({item.more["n"] for item in items})
     out_dir = run_dir / "program_reason"
     seed = int(config.load()["seed"])
     conditions_of_cell = {tuple(cell.split("|")): conditions for cell, conditions in settings["cells"]}
-    for (domain_index, domain), thing_number in itertools.product(enumerate(DOMAINS), thing_numbers):
+    for (domain_index, domain), thing_number in itertools.product(enumerate(domains), thing_numbers):
         path = out_dir / f"{domain}{thing_number}.parquet"
         if path.exists():
             continue

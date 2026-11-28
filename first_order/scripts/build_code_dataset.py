@@ -1,4 +1,4 @@
-"""Build datasets/insecure_code_em.json from the Emergent Misalignment training data.
+"""Build ../datasets/first_order/insecure_code_em.json from the Emergent Misalignment training data.
 
 Source: github.com/emergent-misalignment/emergent-misalignment (Betley et al. 2025),
 files data/insecure.jsonl (assistant writes vulnerable code -> label 1) and
@@ -25,10 +25,11 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+DATASETS = ROOT.parent / "datasets" / "first_order"
 RAW = ROOT / "data" / "raw" / "em"
 BASE_URL = "https://raw.githubusercontent.com/emergent-misalignment/emergent-misalignment/main/data/{}.jsonl"
-TEMPLATE_FILE = ROOT / "datasets" / "insecure_code.json"
-OUT = ROOT / "datasets" / "insecure_code_em.json"
+TEMPLATE_FILE = DATASETS / "insecure_code.json"
+OUT = DATASETS / "insecure_code_em.json"
 
 MAX_LINES, MAX_CHARS = 60, 2500
 

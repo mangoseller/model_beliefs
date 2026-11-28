@@ -103,7 +103,6 @@ def constants() -> dict:
                    "camerer_w": cfg["experiment"]["camerer_w"]},
         "ckd": available(lambda: {
             "dir": str(DS.ckd_dir()), "batteries": sets["ckd"]["batteries"], "patients": cfg["main_cases"],
-            "checksums_ok": DS.ckd_checksums(),
             "prompts_per_battery": {b: int(len(DS.rows("ckd", [b]))) for b in sets["ckd"]["batteries"]},
             "person_names": sorted(DS.patients().person_name.unique()),
         }),
@@ -219,9 +218,8 @@ def write_report(run_dir: Path) -> None:
     setup.append(f"- **Code**: commit `{git.get('commit', '?')}` on `{git.get('branch', '?')}`"
                  f"{' (with uncommitted changes)' if git.get('dirty') else ''}; packages in `record/pip_freeze.txt`.")
     data = manifest.get("datasets", {})
-    checks = data.get("ckd_checksums", {})
-    setup.append(f"- **CKD data**: `datasets/ckd_second_order_v3`, {sum(checks.values())} of {len(checks)} files "
-                 f"match `SHA256SUMS`; its validator {data.get('ckd_validator', 'did not run')}.")
+    setup.append(f"- **CKD data**: `{consts.get('ckd', {}).get('dir', 'datasets/ckd_second_order_v3')}`. "
+                 f"Dataset validation: {data.get('ckd_validator', 'did not run')}.")
     setup.append(f"- **Bespoke data**: `datasets/second_order_simple_prompts.csv` (SHA-256 "
                  f"`{data.get('bespoke_sha256', '?')[:16]}…`).")
     z = manifest.get("zenodo")

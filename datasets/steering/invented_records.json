@@ -1,0 +1,68 @@
+{
+  "person_names": ["Tomas", "Priya", "Kenji", "Amara", "Lucia", "Henrik", "Noor", "Mateus"],
+  "domains": [
+    {
+      "domain": "car",
+      "thing": "car",
+      "outcome": "failing its next roadworthiness inspection",
+      "risk": [
+        ["Brake pad thickness", "brake", ["9 mm", "5 mm", "1 mm"]],
+        ["Odometer reading", "odo", ["38,400 km", "142,900 km", "291,700 km"]],
+        ["Tyre tread depth", "tread", ["7.5 mm", "3.0 mm", "1.2 mm"]],
+        ["Stored engine fault codes", "codes", ["0", "2", "11"]],
+        ["Chassis corrosion", "rust", ["None", "Surface only", "Structural"]]
+      ],
+      "shared": [
+        ["Fuel type", "fuel", ["Petrol", "Diesel", "Hybrid"]],
+        ["Body colour", "colour", ["Silver", "Blue", "White"]],
+        ["Number of doors", "doors", ["3", "5"]],
+        ["Transmission", "trans", ["Manual", "Automatic"]],
+        ["Model year", "year", ["2011", "2015", "2019"]],
+        ["Number of seats", "seats", ["5", "7"]],
+        ["Registered keepers", "keepers", ["1", "2", "4"]]
+      ]
+    },
+    {
+      "domain": "loan",
+      "thing": "applicant",
+      "outcome": "defaulting on this loan within two years",
+      "risk": [
+        ["Missed payments in the last year", "missed", ["0", "2", "6"]],
+        ["Credit score", "score", ["790", "655", "480"]],
+        ["Debt-to-income ratio", "dti", ["12 percent", "38 percent", "71 percent"]],
+        ["Employment status", "emp", ["Permanent full-time", "Fixed-term contract", "Unemployed"]],
+        ["Previous bankruptcy", "bkr", ["None", "Discharged", "Active"]]
+      ],
+      "shared": [
+        ["Loan purpose", "purpose", ["Home improvement", "Vehicle", "Education"]],
+        ["Loan term", "term", ["24 months", "36 months", "60 months"]],
+        ["Marital status", "marital", ["Single", "Married"]],
+        ["Region", "region", ["North", "South", "East", "West"]],
+        ["Application channel", "channel", ["Online", "Branch", "Broker"]],
+        ["Account held since", "since", ["2009", "2014", "2020"]],
+        ["Dependants", "dep", ["0", "1", "3"]]
+      ]
+    },
+    {
+      "domain": "bridge",
+      "thing": "bridge",
+      "outcome": "being closed to traffic after its next structural inspection",
+      "risk": [
+        ["Load rating", "load", ["44 tonnes", "26 tonnes", "7 tonnes"]],
+        ["Years since the last major repair", "repair", ["3", "19", "52"]],
+        ["Deck cracking", "crack", ["None", "Hairline", "Severe"]],
+        ["Bearing condition", "bearing", ["Good", "Worn", "Seized"]],
+        ["Scour at the piers", "scour", ["Absent", "Moderate", "Critical"]]
+      ],
+      "shared": [
+        ["Span length", "span", ["48 m", "120 m", "310 m"]],
+        ["Main material", "material", ["Steel", "Reinforced concrete", "Masonry"]],
+        ["Number of lanes", "lanes", ["2", "4"]],
+        ["Crossing", "crossing", ["River", "Railway", "Road"]],
+        ["Owning authority", "auth", ["County", "State", "Municipal"]],
+        ["Lighting", "light", ["Yes", "No"]],
+        ["Pedestrian walkway", "walk", ["Yes", "No"]]
+      ]
+    }
+  ]
+}

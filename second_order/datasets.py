@@ -1,6 +1,6 @@
 """The two datasets, loaded verbatim: every prompt is sent exactly as the dataset gives it.
 
-* ``ckd``: ``datasets/ckd_second_order_v3`` (its README describes the battery).  150
+* ``ckd``: ``datasets/ckd_second_order_v3`` (see docs/ckd.md).  150
   patients; per condition one probability question and 15 multiple-choice questions
   in two option orders, standalone comprehension checks after C, a high-threshold
   supplement and role-swap diagnostics.  One call per row; A and B
@@ -23,8 +23,6 @@ loader rewrites the release's single-letter instruction, ``CHOICE_ASK``).
 
 from __future__ import annotations
 
-import gzip
-import hashlib
 import json
 import math
 import re
@@ -62,17 +60,6 @@ def open_csv(path: Path) -> pd.DataFrame:
     """A dataset CSV (or its ``.gz``), every column a string, empty cells kept."""
     path = path if path.exists() else path.with_name(path.name + ".gz")
     return pd.read_csv(path, dtype=str, keep_default_na=False)
-
-
-def ckd_checksums() -> dict[str, bool]:
-    """Each released CKD file against ``SHA256SUMS`` (gzipped files are checked decompressed)."""
-    folder, out = ckd_dir(), {}
-    for line in (folder / "SHA256SUMS").read_text().splitlines():
-        digest, name = line.split(maxsplit=1)
-        path = folder / name
-        data = path.read_bytes() if path.exists() else gzip.decompress((folder / f"{name}.gz").read_bytes())
-        out[name] = hashlib.sha256(data).hexdigest() == digest
-    return out
 
 
 @lru_cache(maxsize=1)

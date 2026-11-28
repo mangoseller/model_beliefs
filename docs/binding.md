@@ -128,7 +128,7 @@ it before `probes`. Every later stage refuses to run if the lock's hashes no lon
 
 A paired extension of the base run: all 150 patients see both block orders of C, M and D in three
 settings (partial; false with the "verified" cue; false without it), with the full 31-output latent
-battery and the comprehension check. `prepare` validates the dataset checksums, adopts the base run's
+battery and the comprehension check. `prepare` adopts the base run's
 config and model revisions, and verifies every reused answer's prompt and settings hash; it writes an
 immutable `plan.json` and copies the reused answers to `baseline_cache/`. `generate`, `capture` and
 `export` add only the missing calls; `status` reports the budget without loading weights.

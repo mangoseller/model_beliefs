@@ -9,8 +9,7 @@ Launched by ``run_experiment.sh`` (which installs the dependencies first):
 Stages, in order (``--stages`` runs a subset, ``--skip`` leaves some out):
 
 1. ``fetch_data``: the Smolin & Wilder results bundle from Zenodo (for the ``paper`` stage),
-   checked against Zenodo's MD5 and the bundle manifest; checks the two datasets in
-   ``datasets/`` against their recorded SHA-256 sums.
+   checked against Zenodo's MD5 and the bundle manifest. Loads the experiment datasets.
 2. ``fetch_models``: downloads each local model's weights, tokenizer and config from the
    Hugging Face Hub and pins the exact snapshot (commit hash) in the run's config, so vLLM
    loads exactly those files (offline from then on).
@@ -44,7 +43,6 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import gzip
 import hashlib
 import json
 import os
@@ -226,33 +224,10 @@ def stage_fetch_data(run: Run, cfg: dict) -> None:
     from second_order import config as C
     from second_order import datasets as DS
 
-    sums = DS.ckd_checksums()
-    run.manifest["datasets"] = {"ckd_checksums": sums,
+    patients = len(DS.case_ids("ckd"))
+    run.manifest["datasets"] = {"ckd_patients": patients,
                                 "bespoke_sha256": sha256(C.resolve(cfg["datasets"]["bespoke"]["file"]))}
-    bad = [name for name, ok in sums.items() if not ok]
-    if bad:
-        raise RuntimeError(f"CKD dataset files differ from SHA256SUMS: {', '.join(bad)}")
-    run.log(f"datasets: {len(sums)} CKD files match SHA256SUMS; {len(DS.case_ids('ckd'))} patients, "
-            f"{len(DS.case_ids('bespoke'))} bespoke items")
-
-
-def validate_ckd(run: Run) -> None:
-    """Run the CKD dataset's own validator on a decompressed copy of the release."""
-    from second_order import datasets as DS
-
-    work = run.dir / "tmp_validate"
-    shutil.rmtree(work, ignore_errors=True)
-    shutil.copytree(DS.ckd_dir(), work)
-    for gz in work.rglob("*.gz"):
-        with gzip.open(gz) as src, gz.with_suffix("").open("wb") as dst:
-            shutil.copyfileobj(src, dst)
-        gz.unlink()
-    code = subprocess.run([sys.executable, "-I", "validate.py"], cwd=work, capture_output=True, text=True)
-    (run.dir / "logs" / "ckd_validate.log").write_text(code.stdout + code.stderr)
-    shutil.rmtree(work, ignore_errors=True)
-    run.manifest.setdefault("datasets", {})["ckd_validator"] = "passed" if code.returncode == 0 else f"failed ({code.returncode})"
-    if code.returncode:
-        raise RuntimeError("the CKD dataset validator failed; see logs/ckd_validate.log")
+    run.log(f"datasets: {patients} CKD patients, {len(DS.case_ids('bespoke'))} bespoke items")
 
 
 def local_models(run: Run, cfg: dict) -> list[str]:
@@ -286,7 +261,10 @@ def stage_checks(run: Run, cfg: dict) -> None:
     clean = {k: v for k, v in run.env.items() if k not in SO_ENV}  # the tests use the repository config
     run.sh([sys.executable, "-m", "unittest", "tests.test_datasets", "tests.test_leakage",
             "tests.test_generation", "tests.test_runner"], "checks", env=clean)
-    validate_ckd(run)
+    code = run.py("second_order.validate_ckd", log="ckd_validate", check=False)
+    run.manifest.setdefault("datasets", {})["ckd_validator"] = "passed" if code == 0 else f"failed ({code})"
+    if code:
+        raise RuntimeError("the CKD dataset validator failed; see logs/ckd_validate.log")
     has_smi = shutil.which("nvidia-smi") is not None
     (run.dir / "record" / "nvidia_smi.txt").write_text(capture(["nvidia-smi"]) if has_smi else "nvidia-smi not found\n")
     gpus = capture(["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"]) \

@@ -4,11 +4,12 @@ This battery tests how much an LM's private patient information affects the prob
 
 ## Files and loading
 
-- `ckd_second_order_v3.csv` contains 65,700 rows, 438 per patient. Each condition has one direct probability question and 15 multiple-choice questions in two option orders. The two C settings also have comprehension checks.
-- `ckd_second_order_v3_high_thresholds.csv` adds 37,800 prompts on the same patients and conditions. Its 50%, 66.7%, and 80% cutoffs supplement the main battery's 5%, 10%, 20%, and 33.3%. For comparisons across conditions or models, use the same prespecified battery. The files can be concatenated by rows.
+- `ckd_second_order_v3.csv.gz` contains 65,700 rows, 438 per patient. Each condition has one direct probability question and 15 multiple-choice questions in two option orders. The two C settings also have comprehension checks.
+- `ckd_second_order_v3_high_thresholds.csv.gz` adds 37,800 prompts on the same patients and conditions. Its 50%, 66.7%, and 80% cutoffs supplement the main battery's 5%, 10%, 20%, and 33.3%. For comparisons across conditions or models, use the same prespecified battery. The files can be concatenated by rows.
 - `ckd_second_order_v3_role_swap.csv` contains 1,500 diagnostic prompts. It pairs with the main file as described below. Analyze these separately from the leakage estimator.
 - `patients.csv` has one row per patient. It gives the assigned record order and identifies the patients eligible for the randomized direction comparison in every condition, including shared controls.
-- `source/ckd_second_order.csv` in the archive is the rebuild input. The three v3 prompt files total 105,000 rows.
+
+The three v3 prompt files total 105,000 rows.
 
 Read all columns as strings and preserve empty cells. The prompt key across the three v3 prompt files is `(item_id, setting, case, replicate, question_id, order)`. Send only `prompt` to the LM in a fresh context per row. Columns such as `label`, `changed_facts`, `check_relation`, and `check_answer` reveal experimental information. Checks are standalone trials. To use a check after a C response in a continuing conversation, append only the question and options following the two evidence blocks and reuse the existing chat.
 
@@ -53,13 +54,6 @@ Score main-file checks separately by setting, relation, and record order. Each s
 - **Paired retrieval.** Within the diagnostic file, pair `probe` and `probe_swap` on patient, setting, question ID and option order. Their records and options appear in identical positions. Only ownership changes and the keyed answer reverses on every pair. In partial probes each record has nine genuine fields, eight in common and one unique to each. The probe asks about one of the two unique fields. The original probe orientation has 75 Yes and 75 No answers. In false probes the two full-length records disagree on the queried value. Report the proportion of pairs that answer **both** orientations correctly, alongside marginal accuracy. A deterministic strategy that ignores ownership and gives the same answer twice scores zero pairs correct. Keep both orientations in separate fresh contexts.
 - `block_order` on a diagnostic row is the order actually displayed. `patients.csv` gives the original assignment. `direction` and `direction_assignment` always describe the construction of Ef relative to E, including when the model receives Ef. For equal-length partial probes, `changed_facts` identifies the field unique to each record in the original probe orientation.
 
-## Rebuild and verify
+## Checking the data
 
-From the unpacked release directory, using Python 3 and NetworkX 3.3 for generation:
-
-```sh
-python -I build_ckd_second_order_v3.py source/ckd_second_order.csv --out-dir .
-python validate.py
-```
-
-The validator reads the released files and checks the full row grid, evidence roles, metadata, response keys, option reversals, record order, replicate layouts, and patient eligibility. The three prompt files contain no model responses. Estimates of leakage, reliability, and check performance require an inference run.
+From the repository root, run `python -m second_order.validate_ckd`. The validator reads the released files and checks the full row grid, evidence roles, metadata, response keys, option reversals, record order, replicate layouts, and patient eligibility. The three prompt files contain no model responses. Estimates of leakage, reliability, and check performance require an inference run.

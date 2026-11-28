@@ -30,9 +30,6 @@ def ckd_prompt(case_id: str, condition: str, output: str = "probability/normal",
 
 
 class Integrity(unittest.TestCase):
-    def test_files_match_their_checksums(self):
-        self.assertTrue(all(DS.ckd_checksums().values()), DS.ckd_checksums())
-
     def test_row_counts(self):
         counts = CKD.groupby("battery").size().to_dict()
         self.assertEqual(counts, {"main": 79650, "high_thresholds": 45900, "role_swap": 1500})

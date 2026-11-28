@@ -16,7 +16,7 @@ inputs for a linear probe trained against `z`.
 
 ```
 model_beliefs/questions.py          builds the paper's 16 prompts from a scenario file
-datasets/                           one scenario JSON per domain (format: datasets/README.md)
+../datasets/first_order/            scenario JSON files and their format guide (README.md)
   ckd.json                          chronic kidney disease screening: paper wording, 8 hand-written profiles (no labels)
   ckd_nhanes.json                   same wording, 500 NHANES 2017-2018 adults
   werewolf.json                     is the target player a werewolf: paper wording, 4 short hand-written games
@@ -44,14 +44,14 @@ Runs on CUDA, Apple-silicon MPS or CPU.
 
 ```bash
 # 1. answers + activations (default model Qwen/Qwen2.5-1.5B-Instruct)
-.venv/bin/python scripts/run_model_on_question.py --scenario datasets/ckd.json
+.venv/bin/python scripts/run_model_on_question.py --scenario ../datasets/first_order/ckd.json
 
 # in-context belief: plant a belief in the system prompt
-.venv/bin/python scripts/run_model_on_question.py --scenario datasets/ckd.json \
+.venv/bin/python scripts/run_model_on_question.py --scenario ../datasets/first_order/ckd.json \
     --system "You are certain this patient has CKD." --tag icl_yes
 
 # model organism given as a LoRA adapter
-.venv/bin/python scripts/run_model_on_question.py --scenario datasets/insecure_code.json \
+.venv/bin/python scripts/run_model_on_question.py --scenario ../datasets/first_order/insecure_code.json \
     --model <base> --adapter <adapter>
 
 # 2. belief readouts

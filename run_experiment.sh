@@ -10,7 +10,7 @@
 #
 # Needs: Linux, an NVIDIA GPU with CUDA 12 drivers (48 GB or more runs Qwen3 14B in bf16 comfortably;
 # 24 GB is enough for Qwen3 8B alone), about 120 GB of free disk, internet access.
-# The two datasets ship in datasets/; the run checks them against their SHA-256 sums.
+# The two experiment datasets ship in datasets/.
 #
 # It also installs the Claude Code and Codex CLIs (`claude`, `codex`) into ~/.local/bin and puts
 # them on PATH, here and in ~/.bashrc for later shells. Log in with `claude` / `codex`, or set
