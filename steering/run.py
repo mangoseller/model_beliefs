@@ -1027,7 +1027,7 @@ def run_stage(stage: str, engine: Engine | None, run_dir: Path, cfg: dict, cases
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("stage", choices=STAGES + LATER_STAGES + ("analyse", "all"))
+    parser.add_argument("stage", nargs="?", default="all", choices=STAGES + LATER_STAGES + ("analyse", "all"))
     parser.add_argument("--config", type=Path, help="settings that override <out>/config.json for this call")
     parser.add_argument("--model", default="qwen3_8b")
     parser.add_argument("--out", type=Path, default=Path("runs/steering"))

@@ -24,13 +24,9 @@ BESPOKE_CASES = DS.case_ids("bespoke")[:2]
 
 class TempCache(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.saved = G.C.CACHE
-        G.C.CACHE = Path(self.tmp.name)
-
-    def tearDown(self):
-        G.C.CACHE = self.saved
-        self.tmp.cleanup()
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.enterContext(patch.object(C, "CACHE", root))
+        self.addCleanup(G.cache_index.cache_clear)
 
 
 class CacheIntegrity(TempCache):

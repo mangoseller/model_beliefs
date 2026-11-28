@@ -44,12 +44,25 @@ On a Linux machine with an NVIDIA GPU:
 
 ```bash
 git clone https://github.com/mangoseller/model_beliefs && cd model_beliefs
-bash run_experiment.sh --smoke                    # quick check
-nohup bash run_experiment.sh > run.out 2>&1 &     # the full run
+./entrypoint.sh leakage --smoke                    # quick check
+nohup ./entrypoint.sh leakage > run.out 2>&1 &     # the full leakage run
 ```
 
-This installs everything, runs the experiment on both models, and packages the results as
+This installs everything, runs the leakage experiment on both models, and packages the results as
 `runs/<run_id>.tar.gz`. Start with `RUN_REPORT.md` inside it.
+
+For steering, run the four default stages (baseline, vectors, dose and reason) or name a stage.
+Results go in `runs/steering/<model>/`. See the [steering stage guide](steering/README.md).
+
+```bash
+./entrypoint.sh steering
+./entrypoint.sh steering analyse --model qwen3_8b
+```
+
+Both commands use Python 3.11. Leakage uses `.venv-experiment` and steering uses `.venv-steering`.
+Set `VENV` to use another environment. Set `CPU_ONLY=1` for CPU PyTorch. For a full leakage run on GPU,
+allow about 120 GB of disk and 48 GB of GPU memory for Qwen3 14B. Leakage also installs the Claude
+Code and Codex CLIs by default. Pass `--no-install-agents` to skip them.
 
 ## Layout
 
@@ -61,5 +74,5 @@ archive/
   first_order_toolkit/         standalone first-order belief experiments
   smolin_wilder_replication/   paper reproduction and latent model used by belief_leakage/
 tests/             unit and end-to-end tests
-requirements/      pinned dependencies for run_experiment.sh and for steering/
+requirements/      pinned dependencies for the leakage and steering experiments
 ```

@@ -19,6 +19,7 @@ archive/first_order_toolkit/data/*
 # environments and caches
 .venv/
 .venv-experiment/
+.venv-steering/
 __pycache__/
 *.pyc
 *.egg-info/

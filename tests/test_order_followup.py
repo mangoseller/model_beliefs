@@ -11,6 +11,7 @@ import pandas as pd
 
 from belief_leakage import config as C, datasets as DS, run_generation as G
 from belief_leakage import order_followup as F
+from tests.support import isolated_config, prepared_followup
 
 
 class Design(unittest.TestCase):
@@ -64,76 +65,65 @@ class Design(unittest.TestCase):
 
 class Resume(unittest.TestCase):
     def test_new_calls_only_activation_resume_and_changed_settings_fail(self):
-        saved = (C.CONFIG_PATH, C.CACHE)
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                (root / "config.yaml").write_bytes(C.BUNDLED_CONFIG.read_bytes())
-                F.configure(root)
-                item = G.Item("synthetic", "test", "followup_v1__false__neutral__own_first__C",
-                              "probability/normal", 0, "prompt")
-                data = asdict(item) | dict(key=item.key, prompt_sha=item.prompt_sha, source="new")
-                trial = dict(model="synthetic", dataset="ckd", case_id="test", setting="false", wording="neutral",
-                             block_order="own_first", role="C", replicate=0, output="probability/normal",
-                             item_key=item.key, check_answer="")
-                plan = dict(protocol=F.PROTOCOL, models=["synthetic"],
-                            settings={"synthetic": G.settings_signature("synthetic", "ckd")},
-                            trials=[trial], items={item.key: data})
-                plan["digest"] = F.digest(plan)
-                F.atomic_json(root / "plan.json", plan)
-                F.atomic_json(root / "prepared.json", {"plan_digest": plan["digest"]})
-                pd.DataFrame(columns=["item_key", "row"]).to_parquet(root / "baseline_activations_synthetic.parquet")
-                F.export(root, "synthetic")
-                responses = root / "outputs/synthetic_responses.parquet"
-                self.assertEqual(pd.read_parquet(responses).status.tolist(), ["not_generated"])
+        with isolated_config(), tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.yaml").write_bytes(C.BUNDLED_CONFIG.read_bytes())
+            F.configure(root)
+            item = G.Item("synthetic", "test", "followup_v1__false__neutral__own_first__C",
+                          "probability/normal", 0, "prompt")
+            data = asdict(item) | dict(key=item.key, prompt_sha=item.prompt_sha, source="new")
+            trial = dict(model="synthetic", dataset="ckd", case_id="test", setting="false", wording="neutral",
+                         block_order="own_first", role="C", replicate=0, output="probability/normal",
+                         item_key=item.key, check_answer="")
+            plan = prepared_followup(root, [trial], {item.key: data})
+            pd.DataFrame(columns=["item_key", "row"]).to_parquet(root / "baseline_activations_synthetic.parquet")
+            F.export(root, "synthetic")
+            responses = root / "outputs/synthetic_responses.parquet"
+            self.assertEqual(pd.read_parquet(responses).status.tolist(), ["not_generated"])
 
-                calls = []
+            calls = []
 
-                def backend(model, items, seed):
-                    calls.extend(i.key for i in items)
-                    return [dict(ok=True, text='{"probability": 0.3}', prompt_token_ids=[1], token_ids=[2],
-                                 stop_reason="stop") for _ in items]
+            def backend(model, items, seed):
+                calls.extend(i.key for i in items)
+                return [dict(ok=True, text='{"probability": 0.3}', prompt_token_ids=[1], token_ids=[2],
+                             stop_reason="stop") for _ in items]
 
-                with patch.dict(G.BACKENDS, synthetic=backend):
-                    F.generate(root, "synthetic")
-                    F.generate(root, "synthetic")
-                self.assertEqual(calls, [item.key])
+            with patch.dict(G.BACKENDS, synthetic=backend):
+                F.generate(root, "synthetic")
+                F.generate(root, "synthetic")
+            self.assertEqual(calls, [item.key])
 
-                captures = []
+            captures = []
 
-                class Replay:
-                    def __init__(self, model):
-                        pass
+            class Replay:
+                def __init__(self, model):
+                    pass
 
-                    def tokens_and_positions(self, item, record):
-                        return [1, 2], [0, 0, 1], 1
+                def tokens_and_positions(self, item, record):
+                    return [1, 2], [0, 0, 1], 1
 
-                    def run(self, ids, positions):
-                        captures.append(1)
-                        return np.zeros((3, 2, 4), dtype=np.uint16)
+                def run(self, ids, positions):
+                    captures.append(1)
+                    return np.zeros((3, 2, 4), dtype=np.uint16)
 
-                F.capture(root, "synthetic", Replay)
-                F.capture(root, "synthetic", Replay)
-                self.assertEqual(len(captures), 1)
-                array = root / "data/activations/synthetic/ckd" / item.key / "acts.npy"
-                self.assertEqual(np.load(array).shape, (1, 3, 2, 4))
-                F.export(root, "synthetic")
-                self.assertEqual(pd.read_parquet(responses).value.tolist(), [0.3])
-                self.assertTrue(json.loads((root / "outputs/synthetic_activation_refs.json").read_text())[0]["complete"])
-                # A damaged capture is replayed; a valid one never is.
-                array.write_bytes(b"broken")
-                F.capture(root, "synthetic", Replay)
-                self.assertEqual(len(captures), 2)
-                plan["settings"]["synthetic"] = "wrong"
-                plan["digest"] = F.digest({k: v for k, v in plan.items() if k != "digest"})
-                F.atomic_json(root / "plan.json", plan)
-                F.atomic_json(root / "prepared.json", {"plan_digest": plan["digest"]})
-                with self.assertRaisesRegex(ValueError, "settings changed"):
-                    F.read_plan(root)
-        finally:
-            C.CONFIG_PATH, C.CACHE = saved
-            C.load.cache_clear()
-            G.cache_index.cache_clear()
+            F.capture(root, "synthetic", Replay)
+            F.capture(root, "synthetic", Replay)
+            self.assertEqual(len(captures), 1)
+            array = root / "data/activations/synthetic/ckd" / item.key / "acts.npy"
+            self.assertEqual(np.load(array).shape, (1, 3, 2, 4))
+            F.export(root, "synthetic")
+            self.assertEqual(pd.read_parquet(responses).value.tolist(), [0.3])
+            self.assertTrue(json.loads((root / "outputs/synthetic_activation_refs.json").read_text())[0]["complete"])
+            # A damaged capture is replayed; a valid one never is.
+            array.write_bytes(b"broken")
+            F.capture(root, "synthetic", Replay)
+            self.assertEqual(len(captures), 2)
+            plan["settings"]["synthetic"] = "wrong"
+            plan["digest"] = F.digest({k: v for k, v in plan.items() if k != "digest"})
+            F.atomic_json(root / "plan.json", plan)
+            F.atomic_json(root / "prepared.json", {"plan_digest": plan["digest"]})
+            with self.assertRaisesRegex(ValueError, "settings changed"):
+                F.read_plan(root)
 
 
 if __name__ == "__main__":
