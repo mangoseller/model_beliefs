@@ -247,7 +247,10 @@ class Null(unittest.TestCase):
         self.assertEqual(sorted(out[:6]), sorted(y[:6]))
 
 
-@unittest.skipIf(snapshot() is None, "Qwen3-0.6B weights not in the local HF cache")
+WEIGHTS = snapshot()
+
+
+@unittest.skipUnless(WEIGHTS and (Path(WEIGHTS) / "model.safetensors").is_file(), "no cached Qwen3-0.6B weights")
 class RealWeights(unittest.TestCase):
     """On real weights (where a misplaced tree mask shows; a tiny random model is insensitive to it): the
     single-prompt readout, the padded batch readout and the explicit two-digit computation agree."""
@@ -255,9 +258,8 @@ class RealWeights(unittest.TestCase):
     def test_readout_paths_agree_with_the_explicit_computation(self):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
-        path = snapshot()
-        lm = AutoModelForCausalLM.from_pretrained(path, torch_dtype=torch.float32, attn_implementation="eager")
-        lens = BC.Lens(lm=lm, tok=AutoTokenizer.from_pretrained(path), device=torch.device("cpu"),
+        lm = AutoModelForCausalLM.from_pretrained(WEIGHTS, torch_dtype=torch.float32, attn_implementation="eager")
+        lens = BC.Lens(lm=lm, tok=AutoTokenizer.from_pretrained(WEIGHTS), device=torch.device("cpu"),
                        template_kwargs={"enable_thinking": False})
         encs = [lens.encode(BC.no_reasoning(a_prompt(arm, "person_first", "C")))
                 for arm in ("false_verified", "partial_labelled")]
