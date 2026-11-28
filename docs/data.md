@@ -4,7 +4,7 @@
 
 | Folder | In git | Contents |
 |---|---|---|
-| `datasets/ckd_second_order_v3/` | yes | The CKD battery, with its own [README](../datasets/ckd_second_order_v3/README.md), `SHA256SUMS`, generator and validator. The three large prompt CSVs and the source file are stored gzipped (`*.csv.gz`); the checksums are of the decompressed files |
+| `datasets/ckd_second_order_v3/` | yes | Three prompt batteries and the patient metadata. [CKD file guide](ckd.md) |
 | `datasets/second_order_simple_prompts.csv` | yes | The bespoke items |
 | `data/` | no | Downloaded and generated data: `release/` (the paper's results bundle, for reproducing the paper), `generation_cache/`, `responses/`, `latents/`, `beliefs/`, `activations/` |
 | `outputs/`, `figures/` | no | Tables, `curse/RESULTS.md`, figures |
@@ -42,8 +42,7 @@ record E. E_p withholds three fields; E_f alters two. Every column is read as a 
     or option also counts. It is decoded through the row's own options: 1 or 0 for
     screen/accept or not, 1 to 5 up the Likert and quintile scales.
   - **Checks and probes:** scored against `check_answer`.
-- **Integrity:** the runner checks every file against `SHA256SUMS` and runs the dataset's
-  own `validate.py` on a decompressed copy.
+- **Integrity:** the runner checks the released prompts and patient assignments with `second_order.validate_ckd`.
 
 ## Bespoke: `second_order_simple_prompts.csv`
 

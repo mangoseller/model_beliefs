@@ -1,12 +1,13 @@
-"""Audit the released CSVs independently of the generator. Run in the release directory."""
+"""Check the CKD release with python -m second_order.validate_ckd."""
 from collections import Counter, defaultdict
 import csv
+import gzip
 import hashlib
 from itertools import groupby
-from pathlib import Path
 import re
 
-ROOT = Path(__file__).resolve().parent
+from second_order.datasets import ckd_dir
+
 FIELDS = dict(age="age", htn="hypertension", diab="diabetes", cvd="cardiovascular disease",
               bmi="body mass index", sex="sex", edu="education level", smkstat="smoking status",
               inc="household income", pa="physical activity", sodium="sodium intake", rce="race/ethnicity")
@@ -15,7 +16,10 @@ OPTION = re.compile(r"^[A-E]\. (.+)$", re.M)
 FACT = re.compile(r"^.+ \((\w+)\) is (.+)\.$")
 
 def read(path):
-    with path.open(encoding="utf-8", newline="") as f:
+    if not path.exists():
+        path = path.with_suffix(".csv.gz")
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt", encoding="utf-8", newline="") as f:
         yield from csv.DictReader(f)
 
 def decode(block):
@@ -25,7 +29,8 @@ def decode(block):
     return head, facts
 
 def verify():
-    patients = {r['item_id']: r for r in read(ROOT/'patients.csv')}
+    root = ckd_dir()
+    patients = {r['item_id']: r for r in read(root / 'patients.csv')}
     assert len(patients) == 150 and Counter(r['label'] for r in patients.values()) == {'0':75,'1':75}
     assert Counter(r['block_order'] for r in patients.values()) == {'own_first':75,'person_first':75}
     eligible = [r for r in patients.values() if r['direction_contrast_eligible']=='1']
@@ -38,7 +43,7 @@ def verify():
     check_balance = defaultdict(Counter)
     for supplement in (False, True):
         suffix = '_high_thresholds' if supplement else ''
-        path = ROOT / f'ckd_second_order_v3{suffix}.csv'
+        path = root / f'ckd_second_order_v3{suffix}.csv'
         visited = set()
         ks = ('1','0.5','0.25') if supplement else ('2','4','9','19')
         questions = {f'{kind}_{k}' for kind in ('cost','threshold','bet') for k in ks}
@@ -146,7 +151,7 @@ def verify():
     assert all(len(v)==2 and len(set(v.values()))==1 for v in check_balance.values())
     audits = {}
     orientations = Counter()
-    for row in read(ROOT/'ckd_second_order_v3_role_swap.csv'):
+    for row in read(root / 'ckd_second_order_v3_role_swap.csv'):
         i,s,c,q,o = (row[k] for k in ('item_id','setting','case','question_id','order'))
         key = (i,s,c,q,o)
         assert key not in audits

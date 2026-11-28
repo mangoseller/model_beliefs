@@ -3,7 +3,7 @@
 seed: 20261111             # base seed for case sampling, generation, fits and bootstraps
 
 datasets:
-  ckd:                     # datasets/ckd_second_order_v3 (its README.md describes the battery)
+  ckd:                     # datasets/ckd_second_order_v3 (see docs/ckd.md)
     dir: datasets/ckd_second_order_v3
     batteries: [main, high_thresholds, role_swap]   # prompt files to generate
     max_tokens: {probability: 4096, choice: 4096}  # reasoning, then JSON or a final Choice: line

@@ -17,7 +17,7 @@ the Claude Code and Codex CLIs. It then runs `second_order/runner.py`, whose sta
 
 | Stage | What it does |
 |---|---|
-| `fetch_data` | Downloads the paper's results bundle from Zenodo (for `paper`) and checks it; checks the datasets in `datasets/` against their SHA-256 sums |
+| `fetch_data` | Loads the experiment datasets and, when running `paper`, downloads and verifies the paper’s results bundle |
 | `fetch_models` | Downloads each model and pins its snapshot hash in the run's config |
 | `checks` | Unit tests, the CKD dataset's own validator, GPU and disk |
 | `paper` | `latent_beliefs/reproduce.sh analysis`, compared with the paper's CKD numbers |

@@ -157,8 +157,6 @@ def install_config(root: Path, config_bytes: bytes) -> None:
         raise ValueError(f"{root} already uses a different config")
     path.write_bytes(config_bytes)
     configure(root)
-    if not all(DS.ckd_checksums().values()):
-        raise ValueError("CKD release checksums failed")
 
 
 def write_plan(root: Path, plan: dict) -> None:
