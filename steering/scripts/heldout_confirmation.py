@@ -23,18 +23,13 @@ BOOTSTRAP_DRAWS = 2000
 MIN_GAP = 5.0       # a lookup counts if its two questions' margins are at least this far apart (logits)
 
 
-def bootstrap_interval(frame: pd.DataFrame, column: str, rng) -> tuple[float, float]:
-    """The 95% interval of the mean of the patients' means, by resampling patients; (nan, nan) under three."""
-    return circuit.bootstrap_interval(frame, column, BOOTSTRAP_DRAWS, rng)
-
-
 def measure(name: str, prediction: str, frame: pd.DataFrame, column: str, rng) -> dict:
     """One row of the confirmation table: the mean of ``column`` over the lookups in ``frame``, its interval,
     and the prediction it is set beside."""
     if frame.empty:
         raise ValueError(f"no runs for {name!r}: this script's block numbers and head-set sizes are those of "
                          "Qwen3 8B, so it cannot be used on another model's run directory")
-    lower, upper = bootstrap_interval(frame, column, rng)
+    lower, upper = circuit.bootstrap_interval(frame, column, BOOTSTRAP_DRAWS, rng)
     return dict(measure=name, predicted=prediction, value=frame[column].mean(), lower=lower, upper=upper,
                 lookups=len(frame), patients=frame.case_id.nunique())
 
@@ -63,8 +58,8 @@ def step_measures(run_dir: Path, held_out: list[str], rng) -> list[dict]:
     the asked record, vectors added at the answer token, and heads against MLPs."""
     tests = read_rows(run_dir / "circuit_concrete" / "test")
     tests = tests[tests.case_id.isin(held_out) & tests.ok].copy()
-    tests["share"] = (tests.patched - tests.base) / (tests.other - tests.base)
-    tests["flipped"] = np.where(tests["query"] == "person", 1.0, -1.0) * tests.patched < 0
+    tests["share"] = circuit.effect_of(tests.patched, tests.base, tests.other)
+    tests["flipped"] = circuit.flipped(tests)
     rows = []
     order = tests[(tests.test == "order") & (tests.group == "suffix")]
     rows.append(measure("order donor, all shared question tokens, block 21", ">= 0.50",
