@@ -971,6 +971,23 @@ class Program(unittest.TestCase):
 class Guards(unittest.TestCase):
     """Mistakes in how a stage is called are reported, not passed over."""
 
+    def test_preset_and_custom_overrides(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "config.json").write_text(json.dumps({"reason": {"samples": 7, "base": True}}))
+            preset = "reason_controls_8b"
+            legacy = R.PRESETS.parent / "configs" / f"{preset}.json"
+            named = R.load_cfg(root, preset=preset)
+            self.assertEqual(named, R.load_cfg(root, legacy))
+            self.assertEqual((named["reason"]["samples"], named["reason"]["base"]), (7, False))
+            custom = root / "override.json"
+            custom.write_text(json.dumps({"reason": {"samples": 2}, "circuit": {"patients": 3}}))
+            combined = R.load_cfg(root, custom, preset=preset)
+            self.assertEqual(combined["reason"], named["reason"] | {"samples": 2})
+            self.assertEqual(combined["circuit"], {"patients": 3})
+            combined["reason"]["cells"].clear()
+            self.assertEqual(R.load_cfg(root, preset=preset), named)
+
     def test_unknown_stage_and_missing_replies(self):
         cfg = json.loads(json.dumps(R.DEFAULTS))
         empty_run = Path(tempfile.gettempdir()) / "steering-run-that-does-not-exist"

@@ -1,4 +1,0 @@
-{"circuit_paired": {"folder": "reason_paired", "patients": 24, "samples": 4, "max_new_tokens": 1100, "dtype": "bfloat16",
-                    "group": 2, "heads": 64,
-                    "cells": [["false", "plain", "person_first", "twin", 0.0, ["lookup{n}", "random{n}"]],
-                              ["false", "plain", "person_first", "slot", -0.25, ["lookup{n}"]]]}}

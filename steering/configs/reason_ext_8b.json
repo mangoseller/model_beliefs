@@ -1,4 +1,0 @@
-{"reason": {"folder": "reason_ext", "base": true, "offset": 32, "patients": 74, "cells": [
-  ["false", "plain", "person_first", [["slot", -0.25, null], ["slot", 0.25, null], ["random0", 0.25, null], ["random0", -0.25, null]]],
-  ["false", "labelled", "person_first", [["slot", 0.25, null], ["slot", -0.25, null], ["random0", 0.25, null]]],
-  ["false", "plain", "own_first", [["slot", -0.25, null], ["slot", 0.25, null], ["random0", -0.25, null]]]]}}

@@ -19,7 +19,7 @@ answers. Models: Qwen3 8B and 14B, through `transformers` with forward hooks.
 | `prompts.py`, `transcripts.py` | Token layout of a prompt; which record's values a reply states |
 | `analysis.py` | The leak estimator and the summary tables |
 | `scripts/` | CPU analyses of finished runs |
-| `configs/` | Settings of each pass, named stage, variant, model |
+| [presets.yaml](presets.yaml) | Named overrides for selected stages and model variants |
 
 The invented-record stages sample their fields, values and owner names from the shared dataset.
 [Invented record definitions](../datasets/steering/invented_records.json)
@@ -48,8 +48,13 @@ stages on replies read the `reason` folders.
 
 ## Running
 
-    ./entrypoint.sh steering <stage> --model qwen3_8b --out runs/steering [--config steering/configs/<file>.json]
+    ./entrypoint.sh steering <stage> --model qwen3_8b --out runs/steering
+    ./entrypoint.sh steering circuit_match --model qwen3_14b --preset circuit_match_owners_14b
     ./entrypoint.sh steering analyse --model qwen3_8b --out runs/steering --session1 <beliefs_direct.parquet>
+
+Select a bundled preset by its former filename without the `.json` suffix. The runner applies
+`<out>/config.json`, then the selected preset, then any custom JSON passed with `--config`.
+Earlier commands that pass `--config steering/configs/<name>.json` also work.
 
 The leak of a sampled answer is measured against reference beliefs from the binding experiment
 (`belief_leakage.binding_analysis` writes `beliefs_direct.parquet`). Float32 weights take about 32 GB for 8B and 59 GB

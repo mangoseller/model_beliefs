@@ -57,13 +57,15 @@ import argparse
 import itertools
 import json
 import time
+from copy import deepcopy
 from dataclasses import dataclass, field
-from functools import partial
+from functools import cache, partial
 from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from belief_leakage import binding
 from belief_leakage.readout import no_reasoning
@@ -251,17 +253,31 @@ SIDE = {"plain": 0, "labelled": 1}
 
 
 # Settings and files
-def load_cfg(out_dir: Path, override_file: Path | None = None) -> dict:
-    """The settings: the defaults, overridden by ``<out_dir>/config.json`` and then by ``override_file``. An
-    override replaces a whole top-level entry, except "reason", whose keys are merged one by one."""
-    cfg = json.loads(json.dumps(DEFAULTS))
-    for path in (out_dir / "config.json", override_file):
-        if path is None or not path.exists():
-            continue
-        overrides = json.loads(path.read_text())
-        cfg["reason"] = cfg.get("reason", {}) | overrides.pop("reason", {})
-        cfg.update(overrides)
-    return cfg
+PRESETS = Path(__file__).with_name("presets.yaml")
+
+
+@cache
+def presets() -> dict:
+    return yaml.safe_load(PRESETS.read_text())
+
+
+def load_cfg(out_dir: Path, override_file: Path | None = None, *, preset: str | None = None) -> dict:
+    """Apply run settings, a named preset and a custom JSON override in that order.
+    Each replaces whole sections, except "reason", which merges individual keys."""
+    run_file = out_dir / "config.json"
+    sources = [json.loads(run_file.read_text())] if run_file.exists() else []
+    if preset is not None:
+        sources.append(presets()[preset])
+    if override_file is not None:
+        if override_file.exists():
+            sources.append(json.loads(override_file.read_text()))
+        elif override_file.suffix == ".json" and override_file.resolve().parent == PRESETS.parent / "configs":
+            # Commands saved with the old bundled paths select the same preset.
+            sources.append(presets().get(override_file.stem, {}))
+    cfg = DEFAULTS.copy()
+    for overrides in sources:
+        cfg.update(overrides, reason=cfg["reason"] | overrides.get("reason", {}))
+    return deepcopy(cfg)
 
 
 def arms_of(cfg: dict) -> list[str]:
@@ -1028,7 +1044,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stage", nargs="?", default="all", choices=STAGES + LATER_STAGES + ("analyse", "all"))
-    parser.add_argument("--config", type=Path, help="settings that override <out>/config.json for this call")
+    parser.add_argument("--preset", choices=presets(), help="named settings from steering/presets.yaml")
+    parser.add_argument("--config", type=Path, help="custom JSON settings applied after the run settings and preset")
     parser.add_argument("--model", default="qwen3_8b")
     parser.add_argument("--out", type=Path, default=Path("runs/steering"))
     parser.add_argument("--limit", type=int, help="this many patients (half per split) instead of all")
@@ -1038,7 +1055,7 @@ def main():
     parser.add_argument("--resamples", type=int, default=2000)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    cfg = load_cfg(args.out, args.config)
+    cfg = load_cfg(args.out, args.config, preset=args.preset)
     run_dir = args.out / args.model
     run_dir.mkdir(exist_ok=True)
     (run_dir / "config_used.json").write_text(json.dumps(cfg, indent=1))

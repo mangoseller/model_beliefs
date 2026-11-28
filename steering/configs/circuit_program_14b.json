@@ -1,1 +1,0 @@
-{"circuit_program": {"patients": 24, "offset": 24, "pointer_sets": ["readers", "value32"], "convert_window": [14, 25], "place_window": [26, 28], "per_domain": 6, "seed": 2511, "batch": 32}}
