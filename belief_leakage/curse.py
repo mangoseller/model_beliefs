@@ -176,9 +176,7 @@ def direction_contrast(model: str, resamples: int, seed: int) -> pd.DataFrame:
                 idx = np.concatenate([rng.choice(g, size=len(g)) for g in groups]) if groups else np.array([], dtype=int)
                 draws.append(direction_statistics({c: v[idx] for c, v in arrays.items()}, direction[idx], k))
             for key, value in point.items():
-                d = np.array([x[key] for x in draws], dtype=float)
-                d = d[np.isfinite(d)]
-                lo, hi = np.percentile(d, [2.5, 97.5]) if len(d) else (np.nan, np.nan)
+                lo, hi = L.interval([x[key] for x in draws])
                 # Ratio rule: lambda in a direction is blank when that direction's beta_D interval includes 0.
                 reasons = []
                 for group in [] if key.startswith("beta_D") else [g for g in DIRECTIONS if g in key]:

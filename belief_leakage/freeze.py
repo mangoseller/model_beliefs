@@ -48,6 +48,7 @@ import pandas as pd
 
 from belief_leakage import config as C
 from belief_leakage.package_run import file_sha256
+from belief_leakage.readout import render_chat
 from belief_leakage.run_generation import Item, experiment_items, load_hf_model, lookup, model_revision, template_kwargs
 
 POSITIONS = ("evidence_end", "prompt_end", "pre_answer")
@@ -97,7 +98,7 @@ class Replayer:
         self.kwargs = template_kwargs(model)
 
     def tokens_and_positions(self, item, record):
-        template = self.tok.apply_chat_template(item.chat(), add_generation_prompt=True, tokenize=False, **self.kwargs)
+        template = render_chat(self.tok, item.chat(), self.kwargs)
         enc = self.tok(template, add_special_tokens=False, return_offsets_mapping=True)
         prompt = record["prompt_token_ids"]
         reply = record["token_ids"]

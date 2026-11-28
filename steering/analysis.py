@@ -28,6 +28,8 @@ import pandas as pd
 from belief_leakage import binding
 from belief_leakage import config
 from belief_leakage.beliefs import clip_logit
+from belief_leakage.leakage import interval
+from belief_leakage.report import markdown_rows
 from steering import prompts
 from steering import transcripts
 from steering.results import read_rows
@@ -39,15 +41,6 @@ MIN_CASES = 8
 # ``fraction`` is reported only where the two arms' unedited lambdas differ by at least this.
 MIN_GAP = 0.2
 CITATION_CATEGORIES = ("own only", "both", "person only", "neither")
-
-
-def interval(draws) -> tuple[float, float]:
-    """The 95% percentile interval of bootstrap draws, ignoring draws that are not finite."""
-    finite = np.asarray(draws, float)
-    finite = finite[np.isfinite(finite)]
-    if not len(finite):
-        return (np.nan, np.nan)
-    return tuple(np.percentile(finite, [2.5, 97.5]))
 
 
 def slopes(outcome, own_gap, draws=None):
@@ -359,13 +352,7 @@ def attention_to_second(probes: pd.DataFrame, attention_columns: list[str]) -> d
 def markdown_table(frame: pd.DataFrame | None, columns=None, digits: int = 2) -> str:
     if frame is None or frame.empty:
         return "(none)\n"
-    shown = frame[columns] if columns else frame
-    shown = shown.copy()
-    for column in shown.select_dtypes("float"):
-        shown[column] = shown[column].map(lambda value: "" if pd.isna(value) else f"{value:.{digits}f}")
-    lines = ["| " + " | ".join(map(str, shown.columns)) + " |", "|" + "---|" * len(shown.columns)]
-    lines += ["| " + " | ".join(map(str, row)) + " |" for row in shown.itertuples(index=False)]
-    return "\n".join(lines) + "\n"
+    return markdown_rows(frame[columns] if columns else frame, digits, lambda f: f.itertuples(index=False))
 
 
 def analyse(run_dir: Path, cfg: dict, resamples: int = 2000, session1: Path | None = None) -> dict:
@@ -378,8 +365,9 @@ def analyse(run_dir: Path, cfg: dict, resamples: int = 2000, session1: Path | No
         raise ValueError(f"no baseline in {run_dir}")
     session1_beliefs = pd.read_parquet(session1) if session1 else None
 
-    tables = unedited_tables(baseline_rows, cfg, session1_beliefs, resamples, seed)
-    tables |= sweep_tables(run_dir, cfg, as_beliefs(baseline_rows), resamples, seed)
+    baseline = as_beliefs(baseline_rows)
+    tables = unedited_tables(baseline_rows, cfg, session1_beliefs, resamples, seed, baseline=baseline)
+    tables |= sweep_tables(run_dir, cfg, baseline, resamples, seed)
     tables |= reply_tables(run_dir, session1_beliefs, resamples, seed)
     tables |= other_module_tables(run_dir, cfg)
     for name, frame in tables.items():
@@ -395,8 +383,9 @@ def analyse(run_dir: Path, cfg: dict, resamples: int = 2000, session1: Path | No
 
 
 def unedited_tables(baseline_rows: pd.DataFrame, cfg: dict, session1_beliefs: pd.DataFrame | None,
-                    resamples: int, seed: int) -> dict:
-    baseline = as_beliefs(baseline_rows)
+                    resamples: int, seed: int, *, baseline=None) -> dict:
+    if baseline is None:
+        baseline = as_beliefs(baseline_rows)
     arms = [arm for pair in cfg["pairs"].values() for arm in pair]
     by_source = []
     for split in ("all", "fit", "test"):

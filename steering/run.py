@@ -66,7 +66,7 @@ import numpy as np
 import pandas as pd
 
 from belief_leakage import binding
-from belief_leakage import binding_causal
+from belief_leakage.readout import no_reasoning
 from belief_leakage import config
 from belief_leakage.package_run import file_sha256
 from steering import interventions
@@ -308,8 +308,7 @@ def result_rows(meta: dict, result: dict, lookup_meta: list[dict]) -> list[dict]
 def case_prompts(case: str, cases: pd.Series, arms) -> dict:
     """A patient's two-record prompts in ``arms``: (arm, page order, role) -> the prompt table's row, for the
     roles C, M and D."""
-    table = prompts.build(cases.loc[[case]], arms)
-    table = table[table.role.isin(["C", "M", "D"])]
+    table = prompts.build(cases.loc[[case]], arms, roles=binding.TWO_RECORD_ROLES)
     return {(row.arm, row.block_order, row.role): row._asdict() for row in table.itertuples(index=False)}
 
 
@@ -352,7 +351,7 @@ class ReadoutPrompt:
 
 
 def readout_prompt(engine: Engine, prompt_row: dict, cfg: dict, with_lookups: bool = True) -> ReadoutPrompt:
-    layout = prompts.layout(engine.tok, binding_causal.no_reasoning(prompt_row["prompt"]), engine.kw)
+    layout = prompts.layout(engine.tok, no_reasoning(prompt_row["prompt"]), engine.kw)
     lookups, lookup_meta = lookups_for(engine, prompt_row["prompt"], cfg) if with_lookups else ([], [])
     return ReadoutPrompt(prompt_row, layout, lookups, lookup_meta)
 
@@ -387,7 +386,7 @@ def baseline_prompt(engine: Engine, text: str, rows: list[dict], cfg: dict) -> B
     stream is captured, pooled by owner and token role, for the two-record prompts of fit patients (the
     vectors are made from these) and for every C prompt (kept per patient)."""
     first_row = rows[0]
-    layout = prompts.layout(engine.tok, binding_causal.no_reasoning(text), engine.kw)
+    layout = prompts.layout(engine.tok, no_reasoning(text), engine.kw)
     has_two_records = first_row["role"] in "CMD"
     lookups, lookup_meta = lookups_for(engine, text, cfg) if first_row["role"] == "C" else ([], [])
     capture, pool = None, None
@@ -680,9 +679,17 @@ class ReplyBatch:
         self.jobs.append(job)
 
 
+def held_out_patients(cases: pd.Series, cfg: dict, spec=None) -> list[str]:
+    patients = sorted(cases.index[cases == cfg["intervene_split"]])
+    if spec is None:
+        return patients
+    offset = int(spec.get("offset", 0))
+    return patients[offset:offset + int(spec["patients"])]
+
+
 def patients_to_sample(cases: pd.Series, cfg: dict, folder: Path, patients: int, offset=0) -> list[str]:
     """Held-out patients in the requested slice who do not yet have a result file."""
-    pool = sorted(cases.index[cases == cfg["intervene_split"]])[offset:patients]
+    pool = held_out_patients(cases, cfg)[offset:patients]
     return [case for case in pool if not (folder / f"{case}.parquet").exists()]
 
 

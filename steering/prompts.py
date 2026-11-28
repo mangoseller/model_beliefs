@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 
 from belief_leakage import binding
-from belief_leakage import binding_causal
+from belief_leakage.readout import PREFIX, chat_text, encode_prompt, first_difference
 from belief_leakage import config
 from belief_leakage.binding import REPLICATED_ROLES, ROLES, TWO_RECORD_ROLES
 
@@ -43,7 +43,7 @@ def released_prompts() -> dict:
     return {(row.case_id, row.condition, int(row.replicate)): row.prompt for row in frame.itertuples()}
 
 
-def build(cases: pd.Series, arms) -> pd.DataFrame:
+def build(cases: pd.Series, arms, roles=ROLES) -> pd.DataFrame:
     """One row per (patient, arm, order, role, replicate) with the stated-probability prompt. A and B take no
     order and have two replicates; arms that share an own-belief version share those prompts."""
     released, rows = released_prompts(), []
@@ -51,7 +51,7 @@ def build(cases: pd.Series, arms) -> pd.DataFrame:
     def released_prompt(case, source, output, replicate):
         return released[(case, source, replicate)]
 
-    for case, arm, role, order in binding.prompt_cells(cases.index, arms):
+    for case, arm, role, order in binding.prompt_cells(cases.index, arms, roles):
         prompts = binding.cell_prompts(case, arm, role, order, ("probability/normal",), released_prompt)
         for _, replicate, prompt in prompts:
             rows.append(dict(case_id=case, split=cases[case], arm=arm, block_order=order, role=role,
@@ -140,12 +140,6 @@ class Layout:
                       for line in block.lines.values() for token in line.tokens)
 
 
-def chat_text(tok, prompt: str, template_kwargs: dict) -> str:
-    """The prompt as one user turn in the model's chat template, ready for the reply."""
-    messages = [{"role": "user", "content": prompt}]
-    return tok.apply_chat_template(messages, add_generation_prompt=True, tokenize=False, **template_kwargs)
-
-
 def tokens_in(starts: np.ndarray, begin: int, end: int) -> list[int]:
     """The tokens whose first character lies in [begin, end) of the prompt (``starts``: each token's first
     character, counted from the prompt's start)."""
@@ -175,43 +169,37 @@ def record_block(paragraph: str, owner: str, slot: int, paragraph_start: int, st
     return block
 
 
-def layout(tok, prompt: str, template_kwargs: dict, prefix: str = binding_causal.PREFIX,
+def layout(tok, prompt: str, template_kwargs: dict, prefix: str = PREFIX,
            owners: list[str] | None = None) -> Layout:
     """Encode ``prompt`` in the chat template, followed by ``prefix``, and name its tokens. A token belongs to
     the segment its first character is in, so a line's final '.' token (which usually also covers the newline)
     is that line's ``eol``. ``owners``: take the first paragraphs as record blocks with these owners, whatever
     their headers say (prompts whose headers name no owner)."""
-    chat = chat_text(tok, prompt, template_kwargs)
-    encoded = tok(chat + prefix, add_special_tokens=False, return_offsets_mapping=True)
-    prompt_start = chat.find(prompt)
-    if prompt_start < 0:
-        raise ValueError("prompt not found in the chat template")
-    # each token's first character, counted from the start of the prompt
-    starts = np.array(encoded["offset_mapping"]).reshape(-1, 2)[:, 0] - prompt_start
+    ids, offsets, prompt_start, _ = encode_prompt(tok, prompt, template_kwargs, prefix)
+    starts = offsets[:, 0] - prompt_start
 
     # the record paragraphs come first; the first paragraph after them starts the question
-    blocks, paragraph_start, question_start = [], 0, None
-    for paragraph in prompt.split("\n\n"):
-        owner, _ = binding.owner_of(paragraph.split("\n", 1)[0])
+    blocks, question_start, name = [], None, None
+    for paragraph, paragraph_start, owner, who in binding.paragraphs(prompt):
+        name = name or who
         if owners is not None:
             owner = owners[len(blocks)] if len(blocks) < len(owners) and question_start is None else None
         if owner and question_start is None:    # (a paragraph before the first record is a preamble)
             blocks.append(record_block(paragraph, owner, len(blocks), paragraph_start, starts))
         elif blocks and question_start is None:
             question_start = paragraph_start
-        paragraph_start += len(paragraph) + 2
     if not blocks or question_start is None:
         raise ValueError("prompt needs a record block and a question")
 
     n_ctx = int(np.flatnonzero(starts >= question_start)[0])
     prompt_end = int(np.flatnonzero(starts < len(prompt))[-1]) + 1
-    name, name_q = binding.person_name(prompt), None
+    name_q = None
     if name:
         name_at = prompt.find(f" {name} ", question_start)
         if name_at >= 0:
             name_q = int(np.flatnonzero(starts < name_at + 1 + len(name))[-1])
-    n_tokens = len(encoded["input_ids"])
-    return Layout(list(encoded["input_ids"]), blocks, n_ctx, list(range(n_ctx, prompt_end)),
+    n_tokens = len(ids)
+    return Layout(ids, blocks, n_ctx, list(range(n_ctx, prompt_end)),
                   list(range(prompt_end, n_tokens)), name_q)
 
 
@@ -242,19 +230,20 @@ def aligned(layout_a: Layout, layout_b: Layout, owners=QUERIES,
     return positions_a, positions_b, missed
 
 
-def first_difference(sequences: list) -> int | None:
-    shortest = min(len(sequence) for sequence in sequences)
-    for index in range(shortest):
-        if len({sequence[index] for sequence in sequences}) > 1:
-            return index
-    return None
-
-
 def lookup_ids(tok, prompt: str, code: str, query: str, values: tuple[str, str], template_kwargs: dict):
     """(token ids, token of PERSON's value, token of the model's value) for a lookup question: the chat prompt
     followed by whatever the two values' tokens share, so the next token tells the two records apart. None if
     one value's tokens are a prefix of the other's."""
     return answer_ids(tok, chat_text(tok, lookup_prompt(prompt, code, query), template_kwargs), values)
+
+
+def split_answer_tokens(sequences):
+    """Shared prefix and the first distinct token per answer, if one position distinguishes all answers."""
+    split = first_difference(sequences)
+    if split is None:
+        return None
+    tokens = [ids[split] for ids in sequences]
+    return (sequences[0][:split], tokens) if len(set(tokens)) == len(tokens) else None
 
 
 def answer_ids(tok, chat: str, values: tuple[str, str]):
@@ -263,11 +252,8 @@ def answer_ids(tok, chat: str, values: tuple[str, str]):
     first, second = (tok(chat + value, add_special_tokens=False)["input_ids"] for value in values)
     if first[:len(head)] != head or second[:len(head)] != head:
         return None
-    first, second = first[len(head):], second[len(head):]
-    split = first_difference([first, second])
-    if split is None:
-        return None
-    return head + first[:split], first[split], second[split]
+    found = split_answer_tokens([first, second])
+    return (found[0], *found[1]) if found else None
 
 
 def pointer_tokens(lay: Layout, code: str) -> dict | None:

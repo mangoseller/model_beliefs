@@ -214,11 +214,16 @@ def generate_items(root, model, items, label):
 def capture(root: Path, model: str, replayer_factory=None, items=None) -> None:
     """Residual-stream activations of every capture item (or of ``items``: plan item dicts). An existing
     capture whose identity and checksum match is kept; a damaged one is replayed."""
-    from belief_leakage.freeze import POSITIONS, Replayer
     plan = read_plan(root)
     if model not in plan["models"]:
         raise ValueError(f"model {model} is not in the prepared plan")
-    items = [item_from(v) for v in (capture_items(plan, model) if items is None else items)]
+    capture_responses(root, model, capture_items(plan, model) if items is None else items, replayer_factory)
+
+
+def capture_responses(root, model, rows, replayer_factory=None):
+    """Replay the selected items from a verified plan."""
+    from belief_leakage.freeze import POSITIONS, Replayer
+    items = [item_from(row) for row in rows]
     records = G.lookup(items)
     if any(not r or not r.get("ok") for r in records):
         raise ValueError("finish generation before capturing activations")

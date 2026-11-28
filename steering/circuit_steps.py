@@ -38,6 +38,7 @@ import pandas as pd
 
 from belief_leakage import binding
 from steering import circuit
+from steering.circuit import value_margins
 from steering import interventions
 from steering import program
 from steering import prompts
@@ -83,11 +84,6 @@ def bar_every_head(n_heads: int, keys: list[int], first_block: int, last_block: 
     ``keys``."""
     every_head = list(range(n_heads))
     return {layer: (every_head, keys) for layer in range(int(first_block) - 1, int(last_block))}
-
-
-def value_margins(logits, pair: dict) -> list[float]:
-    """Per row: the logit of PERSON's value minus the model's."""
-    return (logits[:, pair["tp"]] - logits[:, pair["to"]]).tolist()
 
 
 def pending(cases: pd.Series, cfg: dict, settings: dict, rows_dir: Path) -> list[str]:
@@ -248,31 +244,39 @@ def match_rows(engine, setup: MatchSetup, cells: dict, case: str, arm: str, orde
     return rows
 
 
+def run_patient_lookups(engine, run_dir, cfg, cases, stage, rows_for_pair):
+    """Run the stage's lookup pairs for each unfinished patient, preserving their configured order."""
+    folder = run_dir / stage / "rows"
+    fields = int(cfg["circuit"]["fields"])
+    for done, case in enumerate(pending(cases, cfg, cfg[stage], folder), 1):
+        started, rows = time.time(), []
+        cells = circuit.case_cells(case, cases, cfg)
+        for arm, order, pair in circuit.pairs_of(engine, cells, fields):
+            rows.extend(rows_for_pair(case, cells, arm, order, pair))
+        write_rows(folder / f"{case}.parquet", rows)
+        print(f"[{stage.replace('_', ' ')}] {done} patients, {len(rows)} runs, {time.time() - started:.1f}s",
+              flush=True)
+
+
 def stage_match(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors) -> None:
     """The readers' match taken apart on held-out patients: each lookup with the record lines' keys (or
     values) and the answer token's queries exchanged, alone and together. Writes
     circuit_match/rows/<patient>.parquet."""
-    import torch
     settings, circuit_settings = cfg["circuit_match"], cfg["circuit"]
-    place_vectors = torch.load(run_dir / "circuit_concrete" / "place.pt", map_location="cpu")
     readers = program.named_sets(run_dir, engine, cfg)["readers"]
     setup = MatchSetup(
         slot_vectors=load_vectors(run_dir, engine.device),
-        place_vectors={name: vector.to(engine.device) for name, vector in place_vectors.items()},
+        place_vectors=circuit.load_place_vectors(engine, run_dir),
         reader_layers=[layer for layer, _ in readers], reader_heads=[head for _, head in readers],
         reader_window=tuple(settings["reader_window"]), convert_window=tuple(settings["convert_window"]),
         scales=settings["scales"], exchange_owners=bool(settings.get("owners")),
         slot_alpha=float(circuit_settings["alpha"]), min_gap=circuit_settings["min_gap"])
-    rows_dir = run_dir / "circuit_match" / "rows"
-    for done, case in enumerate(pending(cases, cfg, settings, rows_dir)):
-        started, rows = time.time(), []
-        cells = circuit.case_cells(case, cases, cfg)
-        for arm, order, pair in circuit.pairs_of(engine, cells, int(circuit_settings["fields"])):
-            for query in prompts.QUERIES:
-                rows += match_rows(engine, setup, cells, case, arm, order, pair, query)
-        write_rows(rows_dir / f"{case}.parquet", rows)
-        seconds = time.time() - started
-        print(f"[circuit match] {done + 1} patients, {len(rows)} runs, {seconds:.1f}s", flush=True)
+
+    def rows_for_pair(case, cells, arm, order, pair):
+        for query in prompts.QUERIES:
+            yield from match_rows(engine, setup, cells, case, arm, order, pair, query)
+
+    run_patient_lookups(engine, run_dir, cfg, cases, "circuit_match", rows_for_pair)
 
 
 def tables(run_dir: Path, cfg: dict) -> dict:
@@ -418,18 +422,12 @@ def stage_phrase(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     they hold the place). (b) In the conversion blocks, only the phrase's tokens, or only the tokens after it,
     are barred from the records, or from the headers and end markers. (c) The tokens after the phrase are
     barred from the phrase. Writes circuit_phrase/rows/<patient>.parquet."""
-    settings, circuit_settings = cfg["circuit_phrase"], cfg["circuit"]
-    rows_dir = run_dir / "circuit_phrase" / "rows"
-    for done, case in enumerate(pending(cases, cfg, settings, rows_dir)):
-        started, rows = time.time(), []
-        cells = circuit.case_cells(case, cases, cfg)
-        for arm, order, pair in circuit.pairs_of(engine, cells, int(circuit_settings["fields"])):
-            swapped_pair = lookup_in_other_order(engine, cells, arm, order, pair)
-            for query in prompts.QUERIES:
-                rows += phrase_rows(engine, settings, case, arm, order, pair, swapped_pair, query)
-        write_rows(rows_dir / f"{case}.parquet", rows)
-        seconds = time.time() - started
-        print(f"[circuit phrase] {done + 1} patients, {len(rows)} runs, {seconds:.1f}s", flush=True)
+    def rows_for_pair(case, cells, arm, order, pair):
+        swapped = lookup_in_other_order(engine, cells, arm, order, pair)
+        for query in prompts.QUERIES:
+            yield from phrase_rows(engine, cfg["circuit_phrase"], case, arm, order, pair, swapped, query)
+
+    run_patient_lookups(engine, run_dir, cfg, cases, "circuit_phrase", rows_for_pair)
 
 
 def cell_labels(rows: pd.DataFrame, cfg: dict) -> pd.Series:

@@ -154,10 +154,18 @@ def owner_of(head: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def paragraphs(prompt):
+    """Yield each paragraph with its character offset, record owner and name from the header."""
+    start = 0
+    for text in prompt.split("\n\n"):
+        owner, name = owner_of(text.partition("\n")[0])
+        yield text, start, owner, name
+        start += len(text) + 2
+
+
 def parse(prompt: str) -> Parsed:
     blocks, rest, name = [], [], None
-    for para in prompt.split("\n\n"):
-        owner, who = owner_of(para.split("\n", 1)[0])
+    for para, _, owner, who in paragraphs(prompt):
         if owner and not rest:
             blocks.append((owner, para.split("\n")))
             name = who or name
@@ -174,17 +182,12 @@ def render(p: Parsed) -> str:
 
 def record_blocks(prompt: str) -> list[dict]:
     """Every record block of any arm's prompt: owner, PERSON's name, character span, fields."""
-    out, pos = [], 0
-    for para in prompt.split("\n\n"):
-        owner, name = owner_of(para.split("\n", 1)[0])
-        if owner:
-            out.append(dict(owner=owner, name=name, start=pos, end=pos + len(para), fields=fields(para.split("\n"))))
-        pos += len(para) + 2
-    return out
+    return [dict(owner=owner, name=name, start=start, end=start + len(text), fields=fields(text.split("\n")))
+            for text, start, owner, name in paragraphs(prompt) if owner]
 
 
 def person_name(prompt: str) -> str | None:
-    return next((b["name"] for b in record_blocks(prompt) if b["name"]), None)
+    return next((name for _, _, _, name in paragraphs(prompt) if name), None)
 
 
 def fields(lines) -> dict[str, str]:
@@ -345,9 +348,9 @@ def select_patients(n, split: pd.Series, seed: int) -> list[str]:
 release_frame = F.release_frame
 
 
-def prompt_cells(cases, arms):
+def prompt_cells(cases, arms, roles=ROLES):
     """The binding design in trial order. Only the two-record roles vary block order."""
-    for case, arm, role in itertools.product(cases, arms, ROLES):
+    for case, arm, role in itertools.product(cases, arms, roles):
         for order in (ORDERS if role in TWO_RECORD_ROLES else ("shared",)):
             yield case, arm, role, order
 
@@ -630,7 +633,7 @@ def capture(root, model):
     plan = read_plan(root)
     items = capture_items_of(plan, model)
     if items:
-        run_plan.capture(root, model, items=items)
+        run_plan.capture_responses(root, model, items)
     else:
         print(f"{model}: this profile captures no activations")
 

@@ -26,6 +26,8 @@ from typing import NamedTuple
 
 import numpy as np
 
+from belief_leakage.readout import CausalReadout, first_difference, set_tf32
+
 
 @dataclass
 class Edit:
@@ -132,20 +134,14 @@ def stated_probability(text: str) -> float | None:
 def load_model(model: str, device, dtype: str, tf32: bool, revision: str | None):
     """Returns (model, tokenizer, device, revision, chat-template settings)."""
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    from belief_leakage import config
-    from belief_leakage.run_generation import model_revision, template_kwargs
-    settings = config.model_config(model)
+    from belief_leakage.run_generation import load_hf_model, model_revision, template_kwargs
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     if tf32:
-        torch.backends.cuda.matmul.allow_tf32 = True
-        torch.backends.cudnn.allow_tf32 = True
+        set_tf32(True)
     revision = revision or model_revision(model)
-    tokenizer = AutoTokenizer.from_pretrained(settings["path"], revision=revision)
-    placement = {} if str(device) == "cpu" else {"device_map": {"": device}}     # straight onto the GPU
-    lm = AutoModelForCausalLM.from_pretrained(settings["path"], revision=revision,
-                                              torch_dtype=getattr(torch, dtype), **placement).to(device)
-    return lm, tokenizer, device, revision, template_kwargs(model)
+    placement = None if str(device) == "cpu" else {"": device}
+    lm, tok = load_hf_model(model, dtype=dtype, revision=revision, device_map=placement)
+    return lm.to(device), tok, device, revision, template_kwargs(model)
 
 
 class Chunk(NamedTuple):
@@ -182,7 +178,7 @@ class PathEntry(NamedTuple):
         return kind in self.kinds and (self.window is None or self.window[0] <= block <= self.window[1])
 
 
-class Engine:
+class Engine(CausalReadout):
     """A model with hooks for the interventions above. The ``run`` call that asks for a read-out leaves it in
     ``attention``, ``attention_maps``, ``zcaptured`` (head outputs) or ``mcaptured`` (MLP outputs)."""
 
@@ -190,35 +186,18 @@ class Engine:
                  template_kwargs=None, statistic: str = "mean_logit", tf32: bool = True,
                  revision: str | None = None):
         import torch
-        self.torch = torch
         if lm is None:
             lm, tok, device, revision, template_kwargs = load_model(model, device, dtype, tf32, revision)
-        lm.eval()
-        # nothing here needs gradients; a state computed from the weights outside ``run`` would otherwise
-        # carry a graph (and keep its inputs alive)
+        super().__init__(lm, tok, torch.device(device) if device is not None else None, template_kwargs, statistic)
+        # A state computed outside run() must not keep the weights' gradient graph alive.
         lm.requires_grad_(False)
-        self.lm, self.tok, self.revision = lm, tok, revision
-        self.device = torch.device(device) if device is not None else next(lm.parameters()).device
-        self.kw = template_kwargs if template_kwargs is not None else {"enable_thinking": False}
-        self.statistic = statistic
-        self.n_layers, self.hidden = len(lm.model.layers), lm.config.hidden_size
+        self.revision, self.hidden = revision, lm.config.hidden_size
         self.n_heads = lm.config.num_attention_heads
-        self.head_dim = lm.model.layers[0].self_attn.o_proj.in_features // self.n_heads
-        self.digits = [tok.convert_tokens_to_ids(str(digit)) for digit in range(10)]
-        missing = [token for token in self.digits if token is None or token == tok.unk_token_id]
-        if len(set(self.digits)) != 10 or missing:
-            raise ValueError("tokenizer lacks single-digit tokens")
-        self.pad = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id
+        self.head_dim = self.layers[0].self_attn.o_proj.in_features // self.n_heads
         stops = {tok.eos_token_id, tok.convert_tokens_to_ids("<|im_end|>"),
                  tok.convert_tokens_to_ids("<|endoftext|>")}
         self.stops = {token for token in stops if token is not None and token != tok.unk_token_id}
-        self.batch_cap = None       # the batch size an out-of-memory error has reduced every later call to
-        # the interventions of the forward pass in progress, read by the hooks
-        self._residual_edits, self._residual_captures = [], []
-        self._barred, self._forced = None, None
-        self._path_entries = []
-        self._head_captures, self._head_patches, self._head_pairs = [], {}, None
-        self._mlp_captures, self._mlp_patches = [], {}
+        self._clear_pass()
         self._steering = None
         # read-outs of the last ``run`` call that asked for them
         self.attention = None       # run(groups=...)
@@ -243,10 +222,6 @@ class Engine:
             handles.append(block.self_attn.o_proj.register_forward_pre_hook(self._head_output_hook(index)))
             handles.append(block.mlp.register_forward_hook(self._mlp_output_hook(index)))
         return handles
-
-    def close(self):
-        for handle in self._handles:
-            handle.remove()
 
     def cast(self, dtype: str) -> None:
         """Run in another precision from here on. Qwen3's weights are stored in bfloat16, so moving between it
@@ -403,40 +378,26 @@ class Engine:
                 for row, spec in enumerate(specs or [])
                 for block, (heads, keys) in (spec or {}).items() if len(heads) and len(keys)]
 
-    def _compile_knock(self, knock, pad: list[int]):
-        """{block: bool [rows, heads, key columns]}, true where a row's head may not attend, or None if no row
-        has a knockout."""
-        torch, device, barred = self.torch, self.device, {}
-        entries = self._head_key_entries(knock, pad)
+    def _head_key_mask(self, specs, pad: list[int]):
+        """Selected (row, head, key column) entries for each block that has any."""
+        torch, device, masks = self.torch, self.device, {}
+        entries = self._head_key_entries(specs, pad)
         if not entries:
             return None
         width = max(max(columns) for _, _, _, columns in entries) + 1
         for row, block, heads, columns in entries:
-            if block not in barred:
-                shape = (len(knock), self.n_heads, width)
-                barred[block] = torch.zeros(shape, dtype=torch.bool, device=device)
+            if block not in masks:
+                shape = (len(specs), self.n_heads, width)
+                masks[block] = torch.zeros(shape, dtype=torch.bool, device=device)
             head_index = torch.tensor(heads, device=device)[:, None]
-            barred[block][row, head_index, torch.tensor(columns, device=device)[None, :]] = True
-        return barred
+            masks[block][row, head_index, torch.tensor(columns, device=device)[None, :]] = True
+        return masks
 
     def _compile_force(self, force, pad: list[int]):
         """{block: (bool [rows, heads], bool [rows, heads, key columns])}: the heads whose attention is set,
         and the only keys each may attend to; None if no row forces a head."""
-        torch, device, forced = self.torch, self.device, {}
-        entries = self._head_key_entries(force, pad)
-        if not entries:
-            return None
-        width = max(max(columns) for _, _, _, columns in entries) + 1
-        for row, block, heads, columns in entries:
-            if block not in forced:
-                shape = (len(force), self.n_heads)
-                forced[block] = (torch.zeros(shape, dtype=torch.bool, device=device),
-                                 torch.zeros((*shape, width), dtype=torch.bool, device=device))
-            is_forced, allowed = forced[block]
-            head_index = torch.tensor(heads, device=device)
-            is_forced[row, head_index] = True
-            allowed[row, head_index[:, None], torch.tensor(columns, device=device)[None, :]] = True
-        return forced
+        allowed = self._head_key_mask(force, pad)
+        return {block: (mask.any(-1), mask) for block, mask in allowed.items()} if allowed else None
 
     def _locate(self, chunk: Chunk, row: int, positions: list[int]):
         """Of ``positions`` (indices into the row's whole sequence), those inside this chunk: their indices
@@ -485,33 +446,20 @@ class Engine:
                                            output_columns))
         return found
 
-    def _head_patches_in(self, chunk: Chunk, zpatch) -> dict:
-        """The head-output replacements whose tokens fall in this chunk: {block: [(row, columns, selected
-        positions, value, the heads' columns or None for every head)]}."""
+    def _output_patches_in(self, chunk: Chunk, patches, *, heads=False) -> dict:
+        """Group the head or MLP output replacements for this chunk by block."""
         found = {}
-        for row, row_patches in enumerate(zpatch or []):
-            for positions, value, columns_by_block in row_patches or []:
-                inside, columns = self._locate(chunk, row, positions)
-                if not inside:
-                    continue
-                selected = self._selected(inside)
-                for block in (range(self.n_layers) if columns_by_block is None else columns_by_block):
-                    head_columns = None if columns_by_block is None else columns_by_block[block]
-                    found.setdefault(block, []).append((row, columns, selected, value, head_columns))
-        return found
-
-    def _mlp_patches_in(self, chunk: Chunk, mpatch) -> dict:
-        """The MLP-output replacements whose tokens fall in this chunk: {block: [(row, columns, selected
-        positions, value)]}."""
-        found = {}
-        for row, row_patches in enumerate(mpatch or []):
+        for row, row_patches in enumerate(patches or []):
             for positions, value, blocks in row_patches or []:
                 inside, columns = self._locate(chunk, row, positions)
-                if not inside:
-                    continue
-                selected = self._selected(inside)
-                for block in (range(self.n_layers) if blocks is None else blocks):
-                    found.setdefault(int(block), []).append((row, columns, selected, value))
+                if inside:
+                    patch = (row, columns, self._selected(inside), value)
+                    for block in (range(self.n_layers) if blocks is None else blocks):
+                        entry = patch
+                        if heads:
+                            columns_by_head = None if blocks is None else blocks[block]
+                            entry = (*patch, columns_by_head)
+                        found.setdefault(int(block), []).append(entry)
         return found
 
     def _per_head_attention_mask(self, chunk: Chunk, state: State, full_mask):
@@ -578,19 +526,12 @@ class Engine:
         [rows, width], the attention mask over cached and new keys [rows, keys], the cache to extend or
         None)."""
         torch, device = self.torch, self.device
-        rows, lengths = len(seqs), [len(tokens) for tokens in seqs]
+        is_first = state is None
+        ids, mask, lengths, first_column = self._padded_tokens(seqs, left=is_first)
         if min(lengths) < 1:
             raise ValueError("every row needs at least one token in a chunk")
-        width, is_first = max(lengths), state is None
-        earlier = [0] * rows if is_first else state.lengths
-        # only a first chunk is left-padded
-        first_column = [width - length if is_first else 0 for length in lengths]
-        ids = torch.full((rows, width), self.pad, dtype=torch.long)
-        mask = torch.zeros((rows, width), dtype=torch.long)
-        for row, tokens in enumerate(seqs):
-            ids[row, first_column[row]:first_column[row] + lengths[row]] = torch.tensor(tokens)
-            mask[row, first_column[row]:first_column[row] + lengths[row]] = 1
-        ids, mask = ids.to(device), mask.to(device)
+        width = ids.shape[1]
+        earlier = [0] * len(seqs) if is_first else state.lengths
         if is_first:
             position = (mask.cumsum(-1) - 1).clamp_min(0)
             full_mask, cache = mask, None
@@ -648,11 +589,11 @@ class Engine:
         self._residual_captures, residual_stores = self._captures_in(chunk, capture)
         self._path_entries = self._paths_in(chunk, paths)
         self._head_captures, head_stores = self._captures_in(chunk, zcapture)
-        self._head_patches = self._head_patches_in(chunk, zpatch)
+        self._head_patches = self._output_patches_in(chunk, zpatch, heads=True)
         self._mlp_captures, mlp_stores = self._captures_in(chunk, mcapture)
-        self._mlp_patches = self._mlp_patches_in(chunk, mpatch)
+        self._mlp_patches = self._output_patches_in(chunk, mpatch)
         attention_mask = full_mask
-        self._barred = None if state is None else self._compile_knock(knock, state.pad)
+        self._barred = None if state is None else self._head_key_mask(knock, state.pad)
         self._forced = None if state is None else self._compile_force(force, state.pad)
         if self._barred or self._forced:
             attention_mask = self._per_head_attention_mask(chunk, state, full_mask)
@@ -707,11 +648,9 @@ class Engine:
         mask = torch.full((rows, 1, alternatives, cached + alternatives), blocked, dtype=dtype, device=device)
         mask[:, 0, :, :cached] = torch.zeros((rows, 1, cached), dtype=dtype, device=device).masked_fill_(
             state.mask[:, None, :] != 1, blocked)
-        own = torch.arange(alternatives)
-        mask[:, 0, own, cached + own] = 0      # each alternative sees itself
-        ids = torch.tensor([tokens] * rows, device=device)
-        position = torch.tensor(state.lengths, device=device)[:, None].expand(-1, alternatives)
-        self._barred = self._compile_knock(knock, state.pad)
+        self._isolate_branches(mask, alternatives)
+        ids, position = self._branch_inputs(tokens, state.lengths)
+        self._barred = self._head_key_mask(knock, state.pad)
         try:
             with torch.inference_mode():
                 cache = DynamicCache.from_legacy_cache(state.cache)
@@ -726,35 +665,7 @@ class Engine:
         the mean clipped logit over the answer distribution ("mean_logit"), or the expected probability. The
         second digit is computed for every first digit that has any weight. Returns (value, digit mass of the
         first token)."""
-        torch = self.torch
-        rows = logits.shape[0]
-        first_digit = logits.softmax(-1)[:, self.digits]       # [rows, 10]
-        mass = first_digit.sum(-1)
-        first_share = first_digit / mass[:, None]
-        if self.statistic == "expected_p":
-            def score(probability):
-                return probability
-        else:
-            def score(probability):
-                probability = probability.clamp(0.01, 0.99)
-                return torch.log(probability) - torch.log1p(-probability)
-        tenths = torch.arange(10, device=self.device, dtype=torch.float32)
-        # per first digit, the expected score of the answers that start with it; a first digit without weight
-        # gets the middle of its interval
-        expected = score(tenths / 10 + 0.045).repeat(rows, 1)
-        candidates = [digit for digit in range(10) if float(first_share[:, digit].max()) >= 1e-5]
-        second_logits = self.branches([self.digits[digit] for digit in candidates], state, knock)
-        second_digit = second_logits.softmax(-1)[:, :, self.digits]            # [rows, candidates, 10]
-        ends = (1 - second_digit.sum(-1)).clamp_min(0)                         # anything else ends the number
-        first = torch.tensor(candidates, device=self.device, dtype=torch.float32)
-        two_digit_scores = score(first[None, :, None] / 10 + tenths[None, None, :] / 100)
-        one_digit_scores = score(first[None, :] / 10)
-        expected[:, candidates] = (((second_digit * two_digit_scores).sum(-1) + ends * one_digit_scores)
-                                   / (second_digit.sum(-1) + ends))
-        value = (first_share * expected).sum(-1)
-        if self.statistic != "expected_p":
-            value = torch.sigmoid(value)
-        return value.cpu().numpy(), mass.cpu().numpy()
+        return self._digit_readout(logits, lambda tokens: self.branches(tokens, state, knock), min_share=1e-5)
 
     @staticmethod
     def _shared_prefix_length(job: Job) -> int:
@@ -762,10 +673,8 @@ class Engine:
         knockout starts: the first chunk, computed once for all of them."""
         shared = len(job.ids) - 1
         for lookup_ids, _, _ in job.lookups:
-            pairs = enumerate(zip(job.ids, lookup_ids))
-            first_difference = next((index for index, (ours, theirs) in pairs if ours != theirs),
-                                    min(len(job.ids), len(lookup_ids)))
-            shared = min(shared, first_difference)
+            cut = first_difference((job.ids, lookup_ids), min(len(job.ids), len(lookup_ids)))
+            shared = min(shared, cut)
         return min(shared, job.knock[0]) if job.knock else shared
 
     def _evaluate(self, jobs: list[Job]) -> list[dict]:
@@ -814,23 +723,7 @@ class Engine:
         return job.reduce(hidden) if job.reduce else hidden
 
     def _halving(self, items: list, size: int, fn) -> list:
-        """``fn`` on consecutive chunks of ``items``; a chunk that runs out of memory is retried at half the
-        size, which is then kept."""
-        torch = self.torch
-        size = min(size, self.batch_cap or size)
-        results, done = [], 0
-        while done < len(items):
-            try:
-                results += fn(items[done:done + size])
-            except torch.OutOfMemoryError:
-                if size == 1:
-                    raise
-                torch.cuda.empty_cache()
-                size = self.batch_cap = max(1, size // 2)
-                print(f"[engine] out of memory: batch -> {size}", flush=True)
-                continue
-            done += size
-        return results
+        return [row for batch in self._batches(items, size, fn) for row in batch]
 
     def evaluate(self, jobs: list[Job], batch: int = 32) -> list[dict]:
         """Per job: the belief ``p`` and ``digit_mass`` after the forced prefix, each lookup's logit
@@ -929,7 +822,7 @@ class Engine:
         rows = len(job_of_row)
         state, logits = state.select(job_of_row), logits[torch.tensor(job_of_row, device=device)]
         knock = [knock[job_index] for job_index in job_of_row] if any(knock) else None
-        barred = self._compile_knock(knock, state.pad)
+        barred = self._head_key_mask(knock, state.pad)
         cached = state.mask.shape[1]
         steering = self._steering_of_rows(jobs, job_of_row, static)
         if static:
