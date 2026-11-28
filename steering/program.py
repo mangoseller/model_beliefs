@@ -40,11 +40,9 @@ from belief_leakage import config
 from belief_leakage.beliefs import clip_logit
 from steering import circuit
 from steering import prompts
-from steering.engine import Edit, Job, stated_probability
-from steering.run import held_out_patients as held_out
-from steering.results import read_rows, reply_rows as reasoned_rows, write_rows
-
-CI = circuit        # the test file reaches the circuit module through this name
+from steering.engine import Edit, Job
+from steering.results import (case_prompts, held_out_patients, load_vectors, meta_of, patients_to_sample, read_rows,
+                              reply_columns, sample_patients, write_rows)
 
 ANSWER_INSTRUCTION = "Answer with the value only, exactly as it is written in that record."
 LOOKUP_QUESTION = re.compile(
@@ -319,9 +317,7 @@ def encode(engine, item: Item) -> dict | None:
     if answers is None or pointers is None:
         return None
     shared_start, answer_token = answers
-    record_tokens = []
-    for block in first.blocks:
-        record_tokens += block.header + block.line_tokens_all() + block.extra
+    record_tokens = [token for block in first.blocks for token in block.record_tokens()]
     ids = {key: layout.ids + shared_start for key, layout in layouts.items()}
     encoded = dict(n_ctx=n_ctx, prefix=shared_start, tok=answer_token, ptr=pointers, lays=layouts,
                    texts=texts, tok2=None, ptr2=None, ids=ids, records=record_tokens)
@@ -334,37 +330,6 @@ def encode(engine, item: Item) -> dict | None:
         if readable and not second_answers[0] and not shared_start:
             encoded["tok2"], encoded["ptr2"] = second_answers[1], second_pointers
     return encoded
-
-
-def named_sets(run_dir: Path, engine, cfg: dict) -> dict:
-    """Every head set the stages refer to by name, each a list of (layer, head):
-
-        lookup<k>          the k heads that carry most of a lookup (ranked on fit patients)
-        place16, value32   the heads that carry the asked record's place, and the asked value
-        readers            heads giving at least ``reader_attention`` of their attention to the asked value
-        place16+readers    the union of the two
-        random_<set>_<i>   for each set above, ``randoms`` random sets with as many heads in each layer
-        all                every head
-    """
-    settings = cfg["head_sets"]
-    selection = json.loads((run_dir / "circuit" / "selection.json").read_text())
-    ranked = [tuple(head) for head in selection["query"]]
-    sets = {f"lookup{size}": ranked[:size] for size in settings["lookup_sizes"]}
-    head_classes = circuit.head_classes(run_dir)
-    if "place carriers" in head_classes:
-        sets["place16"] = head_classes["place carriers"]
-    if "value heads" in head_classes:
-        sets["value32"] = head_classes["value heads"]
-    if (run_dir / "circuit_algorithm" / "attention.parquet").exists():
-        sets["readers"] = circuit.reader_heads(run_dir, float(settings["reader_attention"]))
-    if "place16" in sets and "readers" in sets:
-        sets["place16+readers"] = sorted(set(sets["place16"]) | set(sets["readers"]))
-    rng = np.random.default_rng(int(cfg["circuit"]["seed"]) + 25)
-    for name in sorted(sets):
-        for i in range(int(settings["randoms"])):
-            sets[f"random_{name}_{i}"] = circuit.random_like(sets[name], engine.n_heads, rng)
-    sets["all"] = [(layer, head) for layer in range(engine.n_layers) for head in range(engine.n_heads)]
-    return {name: [(int(layer), int(head)) for layer, head in heads] for name, heads in sets.items()}
 
 
 # Stage: the pointer computed by the program
@@ -461,10 +426,9 @@ def pointer_variants(context: LookupContext, owners: list[str], encoded: dict, s
 def answer_logits(engine, answer_input: int, question_state, knock, variants: list[PointerVariant]) -> list:
     """The logits after the prompt's last token, one row per variant: the variants differ only there."""
     count = len(variants)
-    logits, _, _ = engine.run([[answer_input]] * count, state=question_state.select([0] * count), keep=False,
-                              knock=[knock] * count if knock else None,
-                              force=[variant.force for variant in variants],
-                              edits=[variant.edits for variant in variants])
+    logits = circuit.run_from(engine, question_state, [0] * count, ([answer_input], dict(
+        knock=[knock] * count if knock else None, force=[variant.force for variant in variants],
+        edits=[variant.edits for variant in variants])))
     return [row for row in logits.cpu()]
 
 
@@ -510,9 +474,7 @@ def item_rows(engine, item: Item, encoded: dict, setup: PointerSetup) -> list[di
     records = [(owner, item.values[owner]) for owner in item.owners]
     any_question = encoded["ids"][("asked", item.owners[0])]
     _, records_state, _ = engine.run([any_question[:n_ctx]])
-    every_head = list(range(engine.n_heads))
-    first_block, last_block = setup.conversion_window
-    conversion_bar = {layer: (every_head, encoded["records"]) for layer in range(first_block - 1, last_block)}
+    conversion_bar = circuit.bar_blocks(engine.n_heads, encoded["records"], *setup.conversion_window)
     rows = []
     for context in lookup_contexts(item.owners, conversion_bar):
         ids = encoded["ids"][context.question]
@@ -525,15 +487,6 @@ def item_rows(engine, item: Item, encoded: dict, setup: PointerSetup) -> list[di
     return rows
 
 
-def load_place_vector(run_dir: Path, engine):
-    """The place vector at the answer token, or None if the ``circuit_concrete`` stage has not run."""
-    import torch
-    path = run_dir / "circuit_concrete" / "place.pt"
-    if not path.exists():
-        return None
-    return torch.load(path, map_location="cpu")["place|last"].to(engine.device)
-
-
 def stage_program(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """Give the model the program's pointer and see whether it answers from the record the program names.
 
@@ -542,7 +495,7 @@ def stage_program(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     ``circuit_program/rows/<patient or 'invented'>.parquet`` (one row per item, context and variant) and
     ``circuit_program/sets.json`` (the head sets used)."""
     settings = cfg["circuit_program"]
-    head_sets = named_sets(run_dir, engine, cfg)
+    head_sets = circuit.named_sets(run_dir, engine, cfg)
     out_dir = run_dir / "circuit_program"
     out_dir.mkdir(exist_ok=True)
     named = {name: heads for name, heads in head_sets.items() if name != "all"}
@@ -551,12 +504,15 @@ def stage_program(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     if not pointer_sets:
         raise ValueError(
             "no head set to give the pointer to (circuit_algorithm or circuit_concrete results are missing)")
+    # the place vector at the answer token, if the circuit_concrete stage has run
+    has_place = (run_dir / "circuit_concrete" / "place.pt").exists()
     setup = PointerSetup(
         head_sets=head_sets, pointer_sets=pointer_sets,
         random_sets=[name for name in head_sets if name.startswith(f"random_{pointer_sets[0]}_")],
-        place_vector=load_place_vector(run_dir, engine), place_window=tuple(settings["place_window"]),
-        conversion_window=tuple(settings["convert_window"]), batch=int(settings["batch"]))
-    groups = [("ckd", case) for case in held_out(cases, cfg, settings)] + [("invented", None)]
+        place_vector=circuit.load_place_vectors(engine, run_dir)["place|last"] if has_place else None,
+        place_window=tuple(settings["place_window"]), conversion_window=tuple(settings["convert_window"]),
+        batch=int(settings["batch"]))
+    groups = [("ckd", case) for case in held_out_patients(cases, cfg, settings)] + [("invented", None)]
     for group_index, (kind, case) in enumerate(groups):
         path = out_dir / "rows" / f"{case or 'invented'}.parquet"
         if path.exists():
@@ -667,9 +623,7 @@ def reason_jobs(engine, item: Item, conditions: list[str], head_sets: dict) -> l
             if head_set not in head_sets:
                 continue
             own_record = layout.block("own")
-            barred_tokens = own_record.line_tokens_all()
-            if head_set == "all":
-                barred_tokens = own_record.header + own_record.line_tokens_all() + own_record.extra
+            barred_tokens = own_record.record_tokens() if head_set == "all" else own_record.line_tokens_all()
             knock = (layout.n_ctx, circuit.knock_of(head_sets[head_set], barred_tokens))
         jobs.append((dict(meta, condition=condition), Job(layout.ids, knock=knock)))
     return jobs
@@ -681,10 +635,7 @@ def reason_rows(meta: dict, replies: list[dict]) -> list[dict]:
     rows = []
     for sample, reply in enumerate(replies):
         reasoning = reply["text"].split('{"probability"')[0]
-        probability = stated_probability(reply["text"])
-        rows.append(dict(meta, sample=sample, text=reply["text"], n_tokens=reply["n_tokens"],
-                         truncated=reply["truncated"],
-                         value=float("nan") if probability is None else probability,
+        rows.append(dict(meta, **reply_columns(sample, reply),
                          cites_own=any(mentions(reasoning, value) for value in own_values),
                          cites_person=any(mentions(reasoning, value) for value in person_values)))
     return rows
@@ -697,7 +648,7 @@ def stage_program_reason(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> 
     conditions of ``reason_jobs``. Writes ``program_reason/<domain><n>.parquet``, one row per reply."""
     settings = cfg["program_reason"]
     engine.cast(settings["dtype"])
-    head_sets = named_sets(run_dir, engine, cfg)
+    head_sets = circuit.named_sets(run_dir, engine, cfg)
     items = invented(int(settings["seed"]), int(settings["per_domain"]), three=False)
     domains = dict.fromkeys(item.domain for item in items)  # generator order determines the sampling seed
     thing_numbers = sorted({item.more["n"] for item in items})
@@ -856,11 +807,10 @@ def stage_redirect(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     record, in the value heads of a head set. A head that lands on the model's line for a field then
     copies what PERSON's line holds. Writes sampled replies in the reasoning stage's format to
     ``reason_redirect`` (or ``folder``) and the value heads used to ``circuit_redirect/``."""
-    from steering import run
     settings = cfg["circuit_redirect"]
     engine.cast(settings["dtype"])
     plain_arm = cfg["pairs"]["false"][0]
-    head_sets = named_sets(run_dir, engine, cfg)
+    head_sets = circuit.named_sets(run_dir, engine, cfg)
     rng = np.random.default_rng(int(cfg["circuit"]["seed"]) + 51)
     value_columns, value_heads = redirect_sets(engine, settings["sets"], head_sets, rng)
     folder_name = settings.get("folder", "reason_redirect")
@@ -869,21 +819,21 @@ def stage_redirect(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
         {name: dict(value_heads=sum(len(chosen) for chosen in by_layer.values()), by_block=by_layer)
          for name, by_layer in value_heads.items()}))
     folder, seed = run_dir / folder_name, int(config.load()["seed"])
-    todo = run.patients_to_sample(cases, cfg, folder, int(settings["patients"]))
+    todo = patients_to_sample(cases, cfg, folder, int(settings["patients"]))
 
     def add_jobs(case, batch):
-        prompt_row = run.case_prompts(case, cases, [plain_arm])[(plain_arm, "person_first", "C")]
+        prompt_row = case_prompts(case, cases, [plain_arm])[(plain_arm, "person_first", "C")]
         layout = prompts.layout(engine.tok, prompt_row["prompt"], engine.kw, prefix="")
         own_tokens, person_tokens = matching_line_tokens(layout)
         _, _, captured = engine.run([layout.ids[:layout.n_ctx]], capture=[person_tokens])
         person_stream = captured[0][1]           # [layers + 1, tokens, hidden] at PERSON's line tokens
         for name, columns in value_columns.items():
-            meta = run.meta_of(prompt_row, part="reason", variant=f"redirect: {name}", kind="redirect")
+            meta = meta_of(prompt_row, part="reason", variant=f"redirect: {name}", kind="redirect")
             # at the model's line tokens, these value columns are computed from PERSON's residual stream
             redirect = (own_tokens, person_stream, "v", None, columns)
             batch.add(case, meta, Job(layout.ids, paths=[redirect]))
 
-    run.sample_patients(engine, folder, todo, settings, seed, "redirect", add_jobs)
+    sample_patients(engine, folder, todo, settings, seed, "redirect", add_jobs)
 
 
 def runs_of_equal(first: int, last: int, label) -> list[tuple[int, int]]:
@@ -905,7 +855,6 @@ def run_hidden(engine, ids: list[int], hidden, upto: int):
     wherever a hidden token follows a visible one or the reverse: a visible chunk is barred from the hidden
     tokens before it; a hidden chunk is seen by nothing after it."""
     hidden = {position for position in hidden if position < upto}
-    every_head = list(range(engine.n_heads))
     state = None
     for start, end in runs_of_equal(0, upto - 1, lambda position: position in hidden):
         chunk = ids[start:end + 1]
@@ -915,7 +864,7 @@ def run_hidden(engine, ids: list[int], hidden, upto: int):
         hidden_before = sorted(position for position in hidden if position < start)
         knock = None
         if hidden_before and start not in hidden:
-            knock = [{layer: (every_head, hidden_before) for layer in range(engine.n_layers)}]
+            knock = [circuit.bar_blocks(engine.n_heads, hidden_before, 1, engine.n_layers)]
         _, state, _ = engine.run([chunk], state=state, knock=knock)
     return state
 
@@ -963,11 +912,6 @@ class HeaderHeads:
     random: list               # as many heads per layer as ``owner``, drawn at random
 
 
-def header_token_positions(layout) -> list[int]:
-    """Every record's header and end-marker tokens: where a prompt says whose record it is."""
-    return [position for block in layout.blocks for position in block.header + block.extra]
-
-
 def naming_token_positions(engine, reply_ids: list[int], first_position: int, person_name: str | None) -> set:
     """Positions of the reply tokens that are part of a mention of a record ("Record X", "your record", "the
     first record") or of PERSON's name. ``reply_ids`` starts at position ``first_position``."""
@@ -1005,16 +949,9 @@ def final_logits(engine, ids: list[int], n_ctx: int, records_state, barred: set,
     """Logits after the last token of ``ids``, one row per entry of ``knocks``. The tokens from ``n_ctx`` on
     are run in chunks; in a chunk of ``barred`` tokens, row i is under ``knocks[i]``. All rows share the
     records."""
-    count, last = len(knocks), len(ids) - 1
-    state = records_state.select([0] * count)
-    for start, end in runs_of_equal(n_ctx, last, lambda position: position in barred):
-        chunk = [ids[start:end + 1]] * count
-        chunk_knock = knocks if start in barred else None
-        if end == last:
-            logits, _, _ = engine.run(chunk, state=state, keep=False, knock=chunk_knock)
-        else:
-            _, state, _ = engine.run(chunk, state=state, knock=chunk_knock)
-    return logits
+    chunks = [(ids[start:end + 1], dict(knock=knocks if start in barred else None))
+              for start, end in runs_of_equal(n_ctx, len(ids) - 1, lambda position: position in barred)]
+    return circuit.run_from(engine, records_state, [0] * len(knocks), *chunks)
 
 
 def value_margins_by_condition(engine, ids: list[int], n_ctx: int, header_tokens: list[int],
@@ -1052,8 +989,8 @@ def other_arm_margins(engine, ids: list[int], n_ctx: int, other_arm_layout, barr
     for barring in barrings:
         moved.append(barring._replace(later_tokens={position + shift for position in barring.later_tokens}))
     other_ids = other_arm_layout.ids[:other_arm_layout.n_ctx] + ids[n_ctx:]
-    headers = header_token_positions(other_arm_layout)
-    return value_margins_by_condition(engine, other_ids, other_arm_layout.n_ctx, headers, moved, values)
+    return value_margins_by_condition(engine, other_ids, other_arm_layout.n_ctx, other_arm_layout.header_tokens(),
+                                      moved, values)
 
 
 def with_filler(ids: list[int], places: list[int], filler: int, count: int):
@@ -1083,8 +1020,7 @@ def layout_margins(engine, ids: list[int], layout, tokens: ReplyTokens, everythi
     result = value_margins_by_condition(engine, replaced, n_ctx, tokens.headers, [everything_barred], values)
     for name, margin in result.items():
         margins["hidden tokens replaced by a filler: " + name] = margin
-    first_record = layout.blocks[0]
-    after_first_record = max(first_record.header + first_record.line_tokens_all() + first_record.extra) + 1
+    after_first_record = max(layout.blocks[0].record_tokens()) + 1
     insertions = (("before the question", [n_ctx]), ("between the records", [after_first_record]),
                   ("in both places", [after_first_record, n_ctx]))
     for where, places in insertions:
@@ -1133,11 +1069,11 @@ def classify_reply_tokens(engine, layout, prompt: str, ids: list[int]) -> ReplyT
     person_name = asked_person.group(1) if asked_person else None
     naming = naming_token_positions(engine, ids[prompt_length:writing + 1], prompt_length, person_name)
     naming -= {writing}
-    return ReplyTokens(headers=header_token_positions(layout), question=set(range(n_ctx, prompt_length)),
+    return ReplyTokens(headers=layout.header_tokens(), question=set(range(n_ctx, prompt_length)),
                        reply=set(range(prompt_length, writing + 1)), naming=naming, writing=writing)
 
 
-def stage_reply_headers(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors) -> None:
+def stage_reply_headers(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """Which tokens bring the headers' owner information to the value a reply writes?
 
     Unedited replies of the false cells are fed back up to the token that writes their first disputed
@@ -1147,7 +1083,6 @@ def stage_reply_headers(engine, run_dir: Path, cfg: dict, cases: pd.Series, load
     ``layout`` (with ``cross``) adds ``layout_margins`` with that many filler tokens. Without ``cross``
     the owner heads' attention to the headers is measured too. Writes ``<folder>/rows.parquet`` (one row
     per reply and condition) and ``<folder>/attention.parquet``."""
-    from steering import run
     settings = cfg["circuit_reply_headers"]
     out_dir = run_dir / settings.get("folder", "circuit_reply_headers")
     path = out_dir / "rows.parquet"
@@ -1159,7 +1094,7 @@ def stage_reply_headers(engine, run_dir: Path, cfg: dict, cases: pd.Series, load
     rng = np.random.default_rng(int(cfg["circuit"]["seed"]) + 61)
     owner_heads = [tuple(head) for head in settings["owner_heads"]]
     random_heads = circuit.random_like(owner_heads, engine.n_heads, rng)
-    every_head = [(layer, head) for layer in range(engine.n_layers) for head in range(engine.n_heads)]
+    every_head = circuit.all_heads(engine)
     heads = HeaderHeads(every=every_head, owner=owner_heads, random=random_heads)
     cross, n_added = bool(settings.get("cross")), settings.get("layout")
     rows, attention_rows, used_per_cell, started = [], [], {}, time.time()
@@ -1169,7 +1104,7 @@ def stage_reply_headers(engine, run_dir: Path, cfg: dict, cases: pd.Series, load
         arm, order = probe["arm"], probe["block_order"]
         if used_per_cell.get((arm, order), 0) >= int(settings["replies"]):
             continue
-        cell_prompts = run.case_prompts(probe["case_id"], cases, false_arms)
+        cell_prompts = case_prompts(probe["case_id"], cases, false_arms)
         prompt = cell_prompts[(arm, order, "C")]["prompt"]
         layout = prompts.layout(engine.tok, prompt, engine.kw, prefix="")
         ids, n_ctx = probe["ids"], layout.n_ctx

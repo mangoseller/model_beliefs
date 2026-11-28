@@ -26,6 +26,7 @@ from steering import run as R
 from steering import interventions as I
 from steering import prompts as P
 from steering.engine import Edit, Engine, Job, stated_probability
+from steering.results import read_rows, write_rows
 from tests.qwen import digit_probabilities, requires_tokenizer, tiny_lens, tiny_model, two_digit_value
 
 
@@ -567,7 +568,7 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(stamp, {p: p.stat().st_mtime_ns for p in d.rglob("*.parquet")})
         self.assertEqual(I.Means.load(d / "means.pt").n, means.n)
 
-        base = R.read_rows(d / "baseline")
+        base = read_rows(d / "baseline")
         self.assertEqual(set(base.case_id), set(cases.index))
         b = base[base.readout == "belief"]
         self.assertEqual(len(b), len(cases) * (4 * 2 * 3 + 4 * 2 * 2))     # C, M, D by order; A, B twice, per arm
@@ -579,19 +580,19 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(pooled["false_neutral|person_first|own|val"].shape, (len(pooled["layers"]), E.hidden))
 
         test = sorted(cases.index[cases == "test"])
-        dose = R.read_rows(d / "dose")
+        dose = read_rows(d / "dose")
         self.assertEqual((set(dose.part), set(dose.variant), set(dose.arm)), ({"dose"}, {"slot@lines"}, {"false_neutral"}))
-        reason = R.read_rows(d / "reason")
+        reason = read_rows(d / "reason")
         self.assertEqual(len(reason), (5 + 4 + 2 + 2) * 2)      # the configured cells, two samples each
         self.assertEqual(set(reason[reason.kind == "transplant"].donor), {"false_neutral", "false_labelled"})
         self.assertEqual(set(reason.case_id), {test[0]})
 
         self.run_stage("controls")
-        ctl = R.read_rows(d / "controls")
+        ctl = read_rows(d / "controls")
         self.assertEqual(set(ctl.variant.str.replace(r"\d*@lines$", "", regex=True)), {"random", "slot"})
         self.assertEqual(set(ctl[ctl.variant == "slot@lines"].alpha), {0.25, 0.5})
         self.run_stage("probe")
-        probe = R.read_rows(d / "probe")
+        probe = read_rows(d / "probe")
         self.assertEqual(set(probe.variant), {"slot@lines", "slot@lines:first", "slot@lines:second"})
         both = pd.concat([dose, ctl, probe])
         both = both[(both.variant == "slot@lines") & (both.readout == "belief") & both.part.isin(["dose"])]
@@ -603,7 +604,7 @@ class EndToEnd(unittest.TestCase):
             ["false", "plain", "person_first", [["slot", 0.25, None], ["slot", -0.25, None], ["randlabel0", 1.0, None]]],
             ["false", "plain", "own_first", [["label", 1.0, None]]]]}}
         self.run_stage("reason", cfg=second)
-        extra = R.read_rows(d / "reason_controls")
+        extra = read_rows(d / "reason_controls")
         self.assertEqual(sorted(set(zip(extra.variant, extra.alpha))), [("label@lines", 1.0), ("randlabel0@lines", 1.0),
                                                                        ("slot@lines", -0.25), ("slot@lines", 0.25)])
         cfg["branch"] |= {"folders": ["reason"], "patients": 2, "resamples": 2, "max_new_tokens": 5, "batch": 8, "dtype": "float64"}
@@ -639,7 +640,7 @@ class EndToEnd(unittest.TestCase):
                                      text="Let me go through the record.\n" + line + '\n{"probability": 0.2}', value=0.2))
                     break
         self.assertTrue(fake)
-        R.write_rows(d / "reason_fake" / "all.parquet", fake)
+        write_rows(d / "reason_fake" / "all.parquet", fake)
         cfg["circuit_reply"] |= {"folders": ["reason_fake"]}
         for f in (d / "circuit_reply").glob("*.parquet"):
             f.unlink()
@@ -656,7 +657,7 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(len(json.loads((d / "circuit_fine" / "greedy.json").read_text())), 3)
         cfg["circuit_algorithm"] |= {"heads": 5, "patients": 2}
         self.run_stage("circuit_algorithm")
-        at = circuit.algorithm_tables(d)
+        at = circuit.algorithm_tables(d, cfg)
         reads = at["circuit_reads"]
         self.assertEqual(set(reads.dest), {"phrase", "phrase_last", "pre", "field", "post", "tail", "last"})
         srcs = [c for c in reads.columns if c not in ("layer", "head", "cond", "dest")]
@@ -689,21 +690,21 @@ class EndToEnd(unittest.TestCase):
     def check_sampled_replies(self, d, cfg):
         cfg["references"] |= {"patients": 1, "samples": 2, "max_new_tokens": 5, "dtype": "float64", "group": 1, "batch": 16}
         self.run_stage("references")
-        rf = R.read_rows(d / "refs_own")
+        rf = read_rows(d / "refs_own")
         self.assertEqual(set(rf.role), set("ABMD"))
         self.assertEqual(len(rf), 4 * 4 * 2)
         cfg["circuit_paired"] |= {"patients": 1, "samples": 2, "max_new_tokens": 5, "dtype": "float64", "group": 1, "heads": 4,
                                   "cells": [["false", "plain", "person_first", "twin", 0.0, ["lookup{n}", "every head"]],
                                             ["strong", "plain", "person_first", "slot", -0.25, ["random{n}"]]]}
         self.run_stage("circuit_paired")
-        pp = R.read_rows(d / "reason_paired")
+        pp = read_rows(d / "reason_paired")
         self.assertEqual(set(pp.variant), {"paired: lookup4 see the other arm's records", "paired: every head see the other arm's records",
                                            "paired: random4 see the slot-edited records"})
         self.assertEqual(len(pp), 3 * 2)
         cfg["circuit_steer"] |= {"patients": 1, "samples": 2, "max_new_tokens": 6, "dtype": "float64", "group": 1, "window": [2, 3],
                                  "reader_attention": 0.0}
         self.run_stage("circuit_steer")
-        st = R.read_rows(d / "reason_circuit")
+        st = read_rows(d / "reason_circuit")
         self.assertEqual(set(st.variant), {"steer:place@2-3", "steer:random@2-3", "knock:readers:own", "knock:random0:own",
                                            "knock:readers:person", "knock:random0:person"})
         self.assertEqual(len(st), 8 * 2)
@@ -711,7 +712,7 @@ class EndToEnd(unittest.TestCase):
         cfg_h = cfg | {"circuit_steer": cfg["circuit_steer"] | {"folder": "reason_headers", "cells": [
             ["labelled", "own_first", [["base", None, None], ["knock", "all", "headers"], ["knock", "all", "first lines"]]]]}}
         self.run_stage("circuit_steer", cfg=cfg_h)
-        sh = R.read_rows(d / "reason_headers")
+        sh = read_rows(d / "reason_headers")
         self.assertEqual(set(sh.variant), {"base", "knock:all:headers", "knock:all:first lines"})
         self.assertEqual(set(sh.block_order), {"own_first"})
         texts_h = {v: list(g.sort_values("sample").text) for v, g in sh.groupby("variant")}
@@ -777,7 +778,7 @@ class EndToEnd(unittest.TestCase):
         tg_ = circuit.read(d / "circuit_tag" / "rows")
         self.assertEqual(set(tg_.question), {"owner", "place"})
         self.assertEqual(len(tg_), 4 * 4 * (1 + 2 * 3))        # cells x questions x conditions
-        self.assertIn("tag", circuit_steps.tag_tables(d))
+        self.assertIn("tag", circuit_steps.tag_tables(d, cfg))
         cfg["circuit_phrase"] |= {"patients": 1, "offset": 0, "blocks": [1, 3], "windows": [[2, 3]], "batch": 8}
         self.run_stage("circuit_phrase")
         ph = circuit.read(d / "circuit_phrase" / "rows")
@@ -790,7 +791,7 @@ class EndToEnd(unittest.TestCase):
         cfg["circuit_redirect"] |= {"patients": 1, "samples": 2, "max_new_tokens": 5, "dtype": "float64", "group": 1, "batch": 8,
                                     "sets": ["lookup4", "random_lookup4_0", "all", "other value heads than lookup4 0"]}
         self.run_stage("circuit_redirect")
-        rdr = R.read_rows(d / "reason_redirect")
+        rdr = read_rows(d / "reason_redirect")
         self.assertEqual(set(rdr.variant), {"redirect: lookup4", "redirect: random_lookup4_0", "redirect: all",
                                             "redirect: other value heads than lookup4 0"})
         vh = json.loads((d / "circuit_redirect" / "value_heads_reason_redirect.json").read_text())

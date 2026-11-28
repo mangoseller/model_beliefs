@@ -17,7 +17,7 @@ import pandas as pd
 from belief_leakage import binding
 from belief_leakage.readout import PREFIX, chat_text, encode_prompt, first_difference
 from belief_leakage import config
-from belief_leakage.binding import REPLICATED_ROLES, ROLES, TWO_RECORD_ROLES
+from belief_leakage.binding import ROLES
 
 TOKROLES = ("name", "val", "eol")   # within a field line; "hdr" is the last token of a block's header
 QUERIES = ("person", "own")
@@ -109,6 +109,10 @@ class Block:
     def line_tokens_all(self) -> list[int]:
         return [token for line in self.lines.values() for token in line.tokens]
 
+    def record_tokens(self) -> list[int]:
+        """Every token of the record: header, field lines and end marker."""
+        return self.header + self.line_tokens_all() + self.extra
+
     def of(self, tokrole: str, codes=None) -> list[int]:
         """The tokens with one role ("name", "val", "eol", or "hdr" for the header's last token), in every
         line or only in the lines of the fields ``codes``."""
@@ -138,6 +142,10 @@ class Layout:
     def line_tokens(self, owners=QUERIES) -> list[int]:
         return sorted(token for block in self.blocks if block.owner in owners
                       for line in block.lines.values() for token in line.tokens)
+
+    def header_tokens(self) -> list[int]:
+        """Every record's header and end-marker tokens: where the page says whose record it is."""
+        return [token for block in self.blocks for token in block.header + block.extra]
 
 
 def tokens_in(starts: np.ndarray, begin: int, end: int) -> list[int]:
