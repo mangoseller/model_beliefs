@@ -122,8 +122,8 @@ def summary(plan: dict) -> dict:
     return result
 
 
-def status(root: Path, plan: dict | None = None, budget=summary) -> dict:
-    return run_plan.status(plan or read_plan(root), budget)
+def status(root: Path) -> dict:
+    return run_plan.status(read_plan(root), summary)
 
 
 def generate(root: Path, model: str) -> None:

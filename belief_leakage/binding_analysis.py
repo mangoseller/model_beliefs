@@ -476,7 +476,7 @@ def run_rule(rule, decide, cells, contrasts, arms, batches=()) -> dict:
     if batches:
         values = {k: [] for k in q}
         for bc, bk in batches:
-            qb, rb, _ = rule(bc, bk, arms)
+            qb, _, _ = rule(bc, bk, arms)
             for k in q:
                 values[k].append(qb.get(k, np.nan))
         mcse = {}
