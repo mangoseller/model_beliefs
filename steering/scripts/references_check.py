@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from steering import analysis
+from steering.results import read_rows
 
 MIN_PATIENTS = 8
 
@@ -31,8 +32,8 @@ def main(run_dir: Path, session1: Path, resamples: int = 2000) -> pd.DataFrame:
     """Per cell: the leak of the unedited reasoned answers under each set of references, with intervals, the
     references' slope and spread, and how well the two sets agree patient by patient."""
     session1_beliefs = pd.read_parquet(session1)
-    references = analysis.read_rows(run_dir / "refs_own")
-    reasoned = analysis.read_rows(run_dir / "reason")
+    references = read_rows(run_dir / "refs_own")
+    reasoned = read_rows(run_dir / "reason")
     reasoned = reasoned[reasoned.variant == "base"]
     sampled_here = mean_beliefs(pd.concat([references, reasoned], ignore_index=True))
     rng, rows = np.random.default_rng(0), []

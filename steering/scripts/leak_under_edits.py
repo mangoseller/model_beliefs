@@ -21,6 +21,7 @@ import pandas as pd
 from steering import analysis
 from steering import prompts
 from steering import transcripts
+from steering.results import read_rows
 
 MIN_PATIENTS = 8
 REPLY_KEYS = ["folder", "case_id", "arm", "block_order", "variant", "alpha", "sample"]
@@ -33,7 +34,7 @@ def load_replies(runs: list[Path]) -> pd.DataFrame:
     frames = []
     for run in runs:
         for folder in sorted(path for path in run.rglob("reason*") if path.is_dir()):
-            rows = analysis.read_rows(folder)
+            rows = read_rows(folder)
             if len(rows) and {"variant", "text", "role"} <= set(rows.columns):
                 frames.append(rows[rows.role == "C"].assign(folder=folder.name))
     replies = pd.concat(frames, ignore_index=True).drop_duplicates(REPLY_KEYS)

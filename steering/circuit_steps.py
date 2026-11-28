@@ -42,6 +42,7 @@ from steering import interventions
 from steering import program
 from steering import prompts
 from steering.engine import Edit
+from steering.results import read_rows, write_rows
 
 OTHER_OWNER = {"person": "own", "own": "person"}
 OTHER_ORDER = {"person_first": "own_first", "own_first": "person_first"}
@@ -269,7 +270,7 @@ def stage_match(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors
         for arm, order, pair in circuit.pairs_of(engine, cells, int(circuit_settings["fields"])):
             for query in prompts.QUERIES:
                 rows += match_rows(engine, setup, cells, case, arm, order, pair, query)
-        circuit.write(rows_dir / f"{case}.parquet", rows)
+        write_rows(rows_dir / f"{case}.parquet", rows)
         seconds = time.time() - started
         print(f"[circuit match] {done + 1} patients, {len(rows)} runs, {seconds:.1f}s", flush=True)
 
@@ -277,7 +278,7 @@ def stage_match(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors
 def tables(run_dir: Path, cfg: dict) -> dict:
     """Per exchange: how far the margin moves toward the other record's answer, the share of lookups flipped,
     and the readers' attention to the asked field's value in each record."""
-    rows = circuit.read(run_dir / "circuit_match" / "rows")
+    rows = read_rows(run_dir / "circuit_match" / "rows")
     if rows.empty:
         return {}
     rows["moved"] = (rows.patched - rows.base) / (rows.donor - rows.base)
@@ -426,7 +427,7 @@ def stage_phrase(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
             swapped_pair = lookup_in_other_order(engine, cells, arm, order, pair)
             for query in prompts.QUERIES:
                 rows += phrase_rows(engine, settings, case, arm, order, pair, swapped_pair, query)
-        circuit.write(rows_dir / f"{case}.parquet", rows)
+        write_rows(rows_dir / f"{case}.parquet", rows)
         seconds = time.time() - started
         print(f"[circuit phrase] {done + 1} patients, {len(rows)} runs, {seconds:.1f}s", flush=True)
 
@@ -441,7 +442,7 @@ def cell_labels(rows: pd.DataFrame, cfg: dict) -> pd.Series:
 def phrase_tables(run_dir: Path, cfg: dict) -> dict:
     """Per phrase condition: how far the margin moves toward the other record's answer and the share of
     lookups flipped, over all lookups and by prompt format and page order."""
-    rows = circuit.read(run_dir / "circuit_phrase" / "rows")
+    rows = read_rows(run_dir / "circuit_phrase" / "rows")
     if rows.empty:
         return {}
     effects = circuit.effects(rows, cfg["circuit"]["min_gap"])
@@ -524,14 +525,14 @@ def stage_tag(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
         rows = []
         for item in program.ckd_items(case, cases, cfg):
             rows += tag_rows(engine, settings, case, item)
-        circuit.write(rows_dir / f"{case}.parquet", rows)
+        write_rows(rows_dir / f"{case}.parquet", rows)
         print(f"[circuit tag] {done + 1} patients, {len(rows)} runs", flush=True)
 
 
 def tag_tables(run_dir: Path) -> dict:
     """The share of lookups answered from the asked record, per barring condition and kind of question, over
     all prompts and (unbarred against the first record barred) by prompt format and page order."""
-    rows = circuit.read(run_dir / "circuit_tag" / "rows")
+    rows = read_rows(run_dir / "circuit_tag" / "rows")
     if rows.empty:
         return {}
     rows["right"] = rows.margin > 0

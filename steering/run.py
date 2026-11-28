@@ -72,7 +72,8 @@ from belief_leakage import config
 from steering import interventions
 from steering import prompts
 from steering import transcripts
-from steering.engine import Engine, Job, half_bits, stated_probability, to_device
+from steering.engine import Engine, Job, half_bits, to_device
+from steering.results import read_rows, reply_rows, stated_value, write_rows
 
 DEFAULTS = {
     # ---- Model and numerics ----
@@ -271,23 +272,6 @@ def file_sha256(path: Path) -> str:
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
-def write_rows(path: Path, rows: list[dict]) -> None:
-    """Write result rows as a parquet file, through a temporary file so that an interrupted run leaves no half
-    file behind (a stage skips the patients whose file exists)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    pd.DataFrame(rows).to_parquet(temporary, index=False)
-    temporary.replace(path)
-
-
-def read_rows(folder: Path) -> pd.DataFrame:
-    """Every per-patient file of a stage's folder as one table (empty if the folder has none)."""
-    files = sorted(folder.glob("*.parquet"))
-    if not files:
-        return pd.DataFrame()
-    return pd.concat([pd.read_parquet(file) for file in files], ignore_index=True)
-
-
 class Timer:
     """Seconds and patients of each stage, kept in timing.json."""
 
@@ -322,17 +306,6 @@ def result_rows(meta: dict, result: dict, lookup_meta: list[dict]) -> list[dict]
         rows.append(dict(meta, readout="lookup", field=lookup["field"], query=lookup["query"], value=margin,
                          digit_mass=np.nan))
     return rows
-
-
-def stated_value(reply_text: str) -> float:
-    probability = stated_probability(reply_text)
-    return float("nan") if probability is None else probability
-
-
-def reply_rows(meta: dict, samples: list[dict]) -> list[dict]:
-    return [dict(meta, readout="reasoned", sample=index, text=sample["text"], n_tokens=sample["n_tokens"],
-                 truncated=sample["truncated"], value=stated_value(sample["text"]))
-            for index, sample in enumerate(samples)]
 
 
 # Prompts and jobs

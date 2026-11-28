@@ -39,7 +39,7 @@ models:
                   enable_thinking: false, batch_size: 16}
   qwen3_0_6b_hf: {backend: hf, path: Qwen/Qwen3-0.6B, datasets: [ckd, bespoke], dtype: float32,
                   enable_thinking: false, batch_size: 4}
-  # Text-level simulator with known parameters (belief_leakage/synthetic.py), for end-to-end checks.
+  # Text-level simulator with known parameters (second_order/synthetic.py), for end-to-end checks.
   synthetic: {backend: synthetic, datasets: [ckd, bespoke], batch_size: 100000,
               truth: {lambda_partial: 0.5, lambda_false: 0.3, phi: 0.8, intercept: 0.2, call_noise: 0.35,
                       comprehension_accuracy: 0.9}}
@@ -57,7 +57,7 @@ tuning:
   candidates:
     - {max_num_seqs: 1024, max_num_batched_tokens: 32768, gpu_memory_utilization: 0.92, enable_prefix_caching: true}
 
-# Residual-stream activations frozen after generation (belief_leakage/freeze.py).
+# Residual-stream activations frozen after generation (second_order/freeze.py).
 activations:
   outputs: {ckd: [probability/normal], bespoke: [probability]}
   samples: 1

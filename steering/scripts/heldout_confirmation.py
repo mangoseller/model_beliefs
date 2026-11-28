@@ -17,6 +17,7 @@ import pandas as pd
 
 from steering import circuit
 from steering import prompts
+from steering.results import read_rows
 
 BOOTSTRAP_DRAWS = 2000
 MIN_GAP = 5.0       # a lookup counts if its two questions' margins are at least this far apart (logits)
@@ -46,7 +47,7 @@ def measure(name: str, prediction: str, frame: pd.DataFrame, column: str, rng) -
 def head_set_measures(run_dir: Path, held_out: list[str], rng) -> list[dict]:
     """How much of a lookup's answer the top lookup heads keep when every other head is taken from a run with
     the other answer (the other question, or the records under the slot edit), against random head sets."""
-    runs = circuit.read(run_dir / "circuit" / "faith")
+    runs = read_rows(run_dir / "circuit" / "faith")
     runs = circuit.effects(runs[runs.case_id.isin(held_out)], MIN_GAP)
     runs["kept"] = 1 - runs.effect
     rows = []
@@ -65,7 +66,7 @@ def head_set_measures(run_dir: Path, held_out: list[str], rng) -> list[dict]:
 def step_measures(run_dir: Path, held_out: list[str], rng) -> list[dict]:
     """The tests of single steps: the question's tokens from the other page order, reader heads barred from
     the asked record, vectors added at the answer token, and heads against MLPs."""
-    tests = circuit.read(run_dir / "circuit_concrete" / "test")
+    tests = read_rows(run_dir / "circuit_concrete" / "test")
     tests = tests[tests.case_id.isin(held_out) & tests.ok].copy()
     tests["share"] = (tests.patched - tests.base) / (tests.other - tests.base)
     tests["flipped"] = np.where(tests["query"] == "person", 1.0, -1.0) * tests.patched < 0

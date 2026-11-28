@@ -42,6 +42,18 @@ def cell_prompts(case=None):
     return {(r.arm, r.block_order, r.role, r.replicate): r.prompt for r in frame.itertuples()}
 
 
+class BindingPrompts(unittest.TestCase):
+    def test_steering_rows_match_the_binding_plan(self):
+        cases = P.patients(2)
+        arms = list(B.ARMS)
+        spec = B.PROFILES["pilot"] | dict(arms=arms, direct_samples=2)
+        trials, items = B.make_plan("synthetic", cases.index, spec, cases, 0, use_baseline=False)
+        columns = ("case_id", "split", "arm", "block_order", "role", "replicate")
+        expected = [dict({key: trial[key] for key in columns}, prompt=items[trial["item_key"]]["prompt"])
+                    for trial in trials if trial["output"] == "probability/normal" and trial["sample"] == 0]
+        pd.testing.assert_frame_equal(P.build(cases, arms), pd.DataFrame(expected))
+
+
 @unittest.skipIf(tokenizer_path() is None, "no Qwen3 tokenizer available")
 class Layouts(unittest.TestCase):
     @classmethod

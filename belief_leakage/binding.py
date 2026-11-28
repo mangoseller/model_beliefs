@@ -38,6 +38,7 @@ import argparse
 import contextlib
 import copy
 import fcntl
+import itertools
 import json
 import re
 import shutil
@@ -56,6 +57,9 @@ PROTOCOL = "ckd-binding-v1"
 TAG = "binding_v1"
 DRIFT_TAG = "drift_v1"
 ORDERS = F.ORDERS
+ROLES = ("A", "B", "C", "M", "D")
+TWO_RECORD_ROLES = "CMD"
+REPLICATED_ROLES = "AB"
 CUE = F.CUE
 OWN_HEAD = "Your record for this patient:"
 PERSON_HEAD = re.compile(r"^(.+?) has only the following record for this patient and accepts its contents as accurate:$")
@@ -340,6 +344,22 @@ def select_patients(n, split: pd.Series, seed: int) -> list[str]:
 release_frame = F.release_frame
 
 
+def prompt_cells(cases, arms):
+    """The binding design in trial order. Only the two-record roles vary block order."""
+    for case, arm, role in itertools.product(cases, arms, ROLES):
+        for order in (ORDERS if role in TWO_RECORD_ROLES else ("shared",)):
+            yield case, arm, role, order
+
+
+def cell_prompts(case, arm, role, order, outputs, released_prompt):
+    """Yield each output, replicate and transformed prompt. Own-belief roles have two replicates."""
+    source = source_condition(arm, role)
+    for output in outputs:
+        for replicate in ((0, 1) if role in REPLICATED_ROLES else (0,)):
+            prompt = released_prompt(case, source, output, replicate)
+            yield output, replicate, transform(prompt, arm, None if order == "shared" else order, role)
+
+
 class Builder:
     """Accumulates trials and unique items; identical prompts share one item."""
 
@@ -368,6 +388,10 @@ def make_plan(model: str, cases, spec: dict, split: pd.Series, seed: int, use_ba
     frame = release_frame(cases)
     records = frame.to_dict("records")
     index = {(r["case_id"], r["condition"], r["output"], r["replicate"]): r for r in records}
+
+    def released_prompt(case, source, output, replicate):
+        return index[(case, source, output, replicate)]["prompt"]
+
     originals = {}
     if use_baseline:
         for r in records:
@@ -380,28 +404,20 @@ def make_plan(model: str, cases, spec: dict, split: pd.Series, seed: int, use_ba
             b.resolve(F.item_from(data), data["source"])
     latent = sorted(set(frame.output[~frame.question_id.isin(("check", "role_check"))]))
     k_direct = max(1, int(spec["direct_samples"]))
-    for case in sorted(cases):
-        for arm in spec["arms"]:
-            variant, binding, absence = ARMS[arm]
-            outputs = latent if arm in spec["latent_arms"] else ["probability/normal"]
-            for role in ("A", "B", "C", "M", "D"):
-                src = source_condition(arm, role)
-                for order in (ORDERS if role in "CMD" else ("shared",)):
-                    condition = (f"{TAG}__{arm}__{order}__{role}" if role in "CMD"
-                                 else f"{TAG}__{own_belief_version(arm, role)}__shared__{role}")
-                    trial = dict(model=model, dataset="ckd", case_id=case, split=split[case], arm=arm, variant=variant,
-                                 binding=binding, absence=absence, block_order=order, role=role,
-                                 ab_version=own_belief_version(arm, role) if role in "AB" else "",
-                                 check_answer="", check_fact="", check_relation="", drift_of="")
-                    for output in outputs:
-                        for rep in ((0, 1) if role in "AB" else (0,)):
-                            prompt = transform(index[(case, src, output, rep)]["prompt"], arm,
-                                               order if role in "CMD" else None, role)
-                            for sample in (range(k_direct) if output == "probability/normal" else (0,)):
-                                b.add(trial | dict(output=output, replicate=rep, sample=sample),
-                                      G.Item(model, case, condition, output, rep, prompt, sample))
-                    if role == "C":
-                        _add_checks(b, index, case, arm, order, condition, trial)
+    for case, arm, role, order in prompt_cells(sorted(cases), spec["arms"]):
+        variant, binding, absence = ARMS[arm]
+        outputs = latent if arm in spec["latent_arms"] else ["probability/normal"]
+        ab_version = own_belief_version(arm, role) if role in "AB" else ""
+        condition = f"{TAG}__{ab_version or arm}__{order}__{role}"
+        trial = dict(model=model, dataset="ckd", case_id=case, split=split[case], arm=arm, variant=variant,
+                     binding=binding, absence=absence, block_order=order, role=role, ab_version=ab_version,
+                     check_answer="", check_fact="", check_relation="", drift_of="")
+        for output, rep, prompt in cell_prompts(case, arm, role, order, outputs, released_prompt):
+            for sample in (range(k_direct) if output == "probability/normal" else (0,)):
+                b.add(trial | dict(output=output, replicate=rep, sample=sample),
+                      G.Item(model, case, condition, output, rep, prompt, sample))
+        if role == "C":
+            _add_checks(b, index, case, arm, order, condition, trial)
     if spec.get("drift_fraction"):
         _add_drift(b, float(spec["drift_fraction"]), seed, split)
     used = {t["item_key"] for t in b.trials}
