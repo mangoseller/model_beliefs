@@ -57,8 +57,9 @@ This installs everything, runs the experiment on both models, and packages the r
 second_order/      the experiment, and its config.yaml
 steering/          the lookup circuit behind the false-evidence leak: steering, patching, the lookup as a program (steering/README.md)
 datasets/          the experiment's input data
-latent_beliefs/    the paper's replication package (latent_beliefs/README.md)
-first_order/       first-order belief readouts on small models (first_order/README.md)
+archive/
+  first_order_toolkit/         standalone first-order belief experiments
+  smolin_wilder_replication/   paper reproduction and latent model used by second_order/
 tests/             unit and end-to-end tests
 requirements/      pinned dependencies for run_experiment.sh and for steering/
 ```

@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from latent_beliefs.latent.model import FitConfig
+from archive.smolin_wilder_replication.latent.model import FitConfig
 from second_order import config as C
 from second_order import datasets as DS
 from second_order import leakage
@@ -274,8 +274,8 @@ def write_results(parts: list[str], run_dir: Path, manifest: dict, use: dict) ->
         parts.append("## Figures\n\n" + "".join(f"### {f.stem}\n\n![{f.stem}](figures/{f.name})\n\n" for f in figures))
     paper = manifest.get("paper_reproduction")
     if paper:
-        parts.append("## Original paper reproduced\n\n`latent_beliefs/reproduce.sh analysis` outputs are in `paper/` "
-                     "(figures in `paper/figures/`). CKD reports↔decisions against `latent_beliefs/baseline_ckd.csv` "
+        parts.append("## Original paper reproduced\n\n`archive/smolin_wilder_replication/reproduce.sh analysis` outputs are in `paper/` "
+                     "(figures in `paper/figures/`). CKD reports↔decisions against `archive/smolin_wilder_replication/baseline_ckd.csv` "
                      "(the paper's numbers); "
                      "c-indices may differ by up to about 0.01 off the pinned macOS build:\n\n"
                      + md_table(pd.DataFrame([{"metric": k, **v} for k, v in paper.items()]),

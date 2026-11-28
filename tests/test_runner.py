@@ -110,7 +110,7 @@ class AnswerScoring(unittest.TestCase):
 class AnchoredExport(unittest.TestCase):
     def test_withheld_decision_cannot_change_its_predictor(self):
         import pandas as pd
-        from latent_beliefs.latent.model import OutputSpec, ProbabilisticLatentModel
+        from archive.smolin_wilder_replication.latent.model import OutputSpec, ProbabilisticLatentModel
         from second_order.fit_pooled import posteriors
 
         specs = [OutputSpec("probability/normal", "probability"), OutputSpec("decision/normal", "binary"),
@@ -124,7 +124,7 @@ class AnchoredExport(unittest.TestCase):
         np.testing.assert_allclose(post, posteriors(model, obs, batch_size=10))
 
     def test_roundtrip_reproduces_curves_and_distinguishes_cutoffs(self):
-        from latent_beliefs.latent.model import OutputSpec, restore_model
+        from archive.smolin_wilder_replication.latent.model import OutputSpec, restore_model
         from second_order.fit_pooled import AnchoredLatentModel, parameter_frame
         from second_order.responses import cutoff
 

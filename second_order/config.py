@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from latent_beliefs.config import PACKAGE_ROOT
+from archive.smolin_wilder_replication.config import PACKAGE_ROOT
 
 ROOT = PACKAGE_ROOT
 BUNDLED_CONFIG = Path(__file__).with_name("config.yaml")

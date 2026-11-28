@@ -14,8 +14,8 @@ Stages, in order (``--stages`` runs a subset, ``--skip`` leaves some out):
    Hugging Face Hub and pins the exact snapshot (commit hash) in the run's config, so vLLM
    loads exactly those files (offline from then on).
 3. ``checks``: unit tests, the CKD dataset's own validator, the GPU and disk.
-4. ``paper``: ``latent_beliefs/reproduce.sh analysis`` (the original paper's figures and
-   tables) and a comparison with the paper's CKD numbers (``latent_beliefs/baseline_ckd.csv``).
+4. ``paper``: ``archive/smolin_wilder_replication/reproduce.sh analysis`` (the original paper's figures and
+   tables) and a comparison with the paper's CKD numbers (``archive/smolin_wilder_replication/baseline_ckd.csv``).
 5. ``tune``: a smoke test and inference tuning per model (``second_order.tune``): a sample
    of real calls under a few vLLM engine settings, the fastest kept in the run's config;
    stops the run if the answers do not parse or are truncated.
@@ -58,7 +58,7 @@ from pathlib import Path
 
 import yaml
 
-from latent_beliefs.release import sha256
+from archive.smolin_wilder_replication.release import sha256
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "runs"
@@ -214,7 +214,7 @@ def fetch_paper_data(run: Run) -> None:
         with tarfile.open(target) as archive:
             archive.extractall(ROOT)
         run.manifest["zenodo"] = {"record": ZENODO_RECORD, "file": ZENODO_FILE, "md5": md5}
-    run.sh([sys.executable, "-m", "latent_beliefs.release", "verify"], "fetch_data")
+    run.sh([sys.executable, "-m", "archive.smolin_wilder_replication.release", "verify"], "fetch_data")
     run.manifest["release_manifest_sha256"] = sha256(release / "MANIFEST.sha256")
 
 
@@ -284,10 +284,10 @@ def stage_checks(run: Run, cfg: dict) -> None:
 def stage_paper(run: Run, cfg: dict) -> None:
     env = dict(run.env, LB_BUILD_DIR=str(run.dir / "paper"), PYTHON=sys.executable,
                WORKERS=str(max(1, min(8, (os.cpu_count() or 2) - 1))))
-    run.sh(["bash", "latent_beliefs/reproduce.sh", "analysis"], "paper", env=env, echo=True)
+    run.sh(["bash", "archive/smolin_wilder_replication/reproduce.sh", "analysis"], "paper", env=env, echo=True)
     import pandas as pd
 
-    ref = pd.read_csv(ROOT / "latent_beliefs" / "baseline_ckd.csv")
+    ref = pd.read_csv(ROOT / "archive" / "smolin_wilder_replication" / "baseline_ckd.csv")
     new = pd.read_csv(run.dir / "paper" / "evaluation" / "reciprocal" / "model_summary.csv")
     merged = ref.merge(new[new.domain == "ckd"], on=["model_key", "condition"], suffixes=("_paper", "_rerun"))
     summary = {}

@@ -1,4 +1,4 @@
-# The second-order experiment and the latent_beliefs replication package (run_experiment.sh).
+# The second-order experiment and the Smolin and Wilder replication package (run_experiment.sh).
 # Versions follow environment.yml where it pins them; Python 3.11. torch comes from
 # requirements/gpu.txt (with vLLM) or, with CPU_ONLY=1, from the PyTorch CPU index.
 numpy==1.26.4

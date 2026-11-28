@@ -7,8 +7,8 @@
 /outputs/
 /figures/
 /runs/
-first_order/data/*
-!first_order/data/.gitkeep
+archive/first_order_toolkit/data/*
+!archive/first_order_toolkit/data/.gitkeep
 
 # large arrays
 *.pt
