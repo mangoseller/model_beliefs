@@ -221,19 +221,25 @@ def bootstrap(frame: pd.DataFrame, fn: Callable[[dict[str, np.ndarray]], dict[st
     return _bootstrap_tables(frame, lambda sample: {"all": fn(sample)}, resamples, seed)["all"]
 
 
-def _bootstrap_tables(frame, evaluate, resamples, seed):
-    """Resample patient rows once per draw and summarize each group of statistics separately."""
+def bootstrap_draws(frame, evaluate, resamples, seed):
+    """Point estimates and draws by group and statistic, resampling whole patient rows together."""
     arrays = {c: frame[c].to_numpy(dtype=float) for c in frame.columns}
     points = evaluate(arrays)
     draws = {group: {key: [] for key in point} for group, point in points.items()}
     rng = np.random.default_rng(seed)
-    n = len(frame)
     for _ in range(int(resamples)):
-        idx = rng.integers(0, n, n)
-        for group, stats in evaluate({c: v[idx] for c, v in arrays.items()}).items():
-            for key, values in draws[group].items():
+        idx = rng.integers(0, len(frame), len(frame))
+        sample = evaluate({c: v[idx] for c, v in arrays.items()})
+        for group, series in draws.items():
+            stats = sample.get(group, {})
+            for key, values in series.items():
                 values.append(stats.get(key, np.nan))
-    return {group: _bootstrap_summary(point, draws[group], n, resamples) for group, point in points.items()}
+    return points, {group: {k: np.asarray(v, float) for k, v in series.items()} for group, series in draws.items()}
+
+
+def _bootstrap_tables(frame, evaluate, resamples, seed):
+    points, draws = bootstrap_draws(frame, evaluate, resamples, seed)
+    return {group: _bootstrap_summary(point, draws[group], len(frame), resamples) for group, point in points.items()}
 
 
 def _bootstrap_summary(point, draws, n, resamples):

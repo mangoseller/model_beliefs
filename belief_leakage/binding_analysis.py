@@ -36,7 +36,7 @@ import pandas as pd
 from belief_leakage import binding as B
 from belief_leakage import config as C
 from belief_leakage import leakage as L
-from belief_leakage import order_followup as F
+from belief_leakage import run_plan
 from belief_leakage.beliefs import clip_logit
 
 ROLES = ("A", "B", "C", "M", "D")
@@ -66,7 +66,7 @@ def load(root: Path, model: str) -> tuple[pd.DataFrame, dict]:
 
 def load_order_followup(root: Path, model: str) -> tuple[pd.DataFrame, dict]:
     """The order follow-up's export in this module's schema, so it gets the same estimators."""
-    F.read_plan(root)
+    run_plan.read_plan(root)
     long = pd.read_parquet(root / "outputs" / f"{model}_responses.parquet")
     long["arm"] = [B.FOLLOWUP_ARM[(s, w)] for s, w in zip(long.setting, long.wording)]
     long["variant"], long["binding"], long["absence"] = long.setting, long.wording, "implicit"
@@ -286,24 +286,13 @@ def evaluate(W, arms, checks=True):
 
 def bootstrap_draws(frame: pd.DataFrame, arms, resamples: int, seed: int, checks=True):
     """Point estimates and the paired patient-bootstrap draws of every cell statistic and contrast."""
-    arrays = {c: frame[c].to_numpy(dtype=float) for c in frame.columns}
-    points, cpoints = evaluate(arrays, arms, checks)
-    draws = {key: {s: [] for s in stats} for key, stats in points.items()}
-    cdraws = {name: [] for name in cpoints}
-    rng = np.random.default_rng(seed)
-    n = len(frame)
-    for _ in range(int(resamples)):
-        idx = rng.integers(0, n, n)
-        cells, contrasts = evaluate({c: v[idx] for c, v in arrays.items()}, arms, checks)
-        for key, stats in draws.items():
-            got = cells.get(key, {})
-            for s, values in stats.items():
-                values.append(got.get(s, np.nan))
-        for name, values in cdraws.items():
-            values.append(contrasts.get(name, np.nan))
-    draws = {key: {s: np.asarray(v, float) for s, v in stats.items()} for key, stats in draws.items()}
-    cdraws = {name: np.asarray(v, float) for name, v in cdraws.items()}
-    return points, cpoints, draws, cdraws
+    def by_group(sample):
+        cells, contrasts = evaluate(sample, arms, checks)
+        return cells | {"contrasts": contrasts}
+
+    points, draws = L.bootstrap_draws(frame, by_group, resamples, seed)
+    contrast_points, contrast_draws = points.pop("contrasts"), draws.pop("contrasts")
+    return points, contrast_points, draws, contrast_draws
 
 
 def summarise(points, cpoints, draws, cdraws, take=None):
@@ -814,7 +803,7 @@ def main():
     parser.add_argument("--order-followup", action="store_true", help="the run is an order_followup plan")
     args = parser.parse_args()
     root = args.run.resolve()
-    (F.read_plan if args.order_followup else B.read_plan)(root)  # points the config at the run
+    (run_plan.read_plan if args.order_followup else B.read_plan)(root)  # points the config at the run
     resamples = args.resamples or int(C.load()["analysis"]["bootstrap_resamples"])
     analyse(root, args.model, resamples, order_followup=args.order_followup, rule_resamples=args.rule_resamples)
 

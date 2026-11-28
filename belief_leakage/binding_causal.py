@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import argparse
 import fcntl
-import hashlib
 import json
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -49,6 +48,7 @@ from belief_leakage import binding as B
 from belief_leakage import config as C
 from belief_leakage.beliefs import clip_logit
 from belief_leakage.leakage import slope
+from belief_leakage.package_run import file_sha256
 
 PREFIX = '{"probability": 0.'
 REASONING = ("Provide your reasoning first.\nThen output valid JSON on a new line in exactly this structure:\n"
@@ -212,13 +212,8 @@ class Lens:
             raise ValueError(f"unknown readout statistic {statistic!r}")
         self.statistic = statistic
         if lm is None:
-            from transformers import AutoModelForCausalLM, AutoTokenizer
-            from belief_leakage.run_generation import model_revision, template_kwargs as tk
-            cfg = C.model_config(model)
-            tok = AutoTokenizer.from_pretrained(cfg["path"], revision=model_revision(model))
-            lm = AutoModelForCausalLM.from_pretrained(
-                cfg["path"], revision=model_revision(model), torch_dtype=getattr(torch, dtype),
-                device_map=cfg.get("device_map", "auto"), attn_implementation="eager")
+            from belief_leakage.run_generation import load_hf_model, template_kwargs as tk
+            lm, tok = load_hf_model(model, dtype=dtype, attn_implementation="eager")
             template_kwargs = tk(model)
         lm.eval()
         self.lm, self.tok = lm, tok
@@ -524,10 +519,7 @@ def load_cfg(run: Path) -> dict:
 
 
 def _sha(path: Path) -> str | None:
-    if not path.exists():
-        return None
-    with path.open("rb") as h:
-        return hashlib.file_digest(h, "sha256").hexdigest()
+    return file_sha256(path) if path.exists() else None
 
 
 def _read_rows(path: Path, **kwargs) -> pd.DataFrame:
@@ -1350,7 +1342,9 @@ def stage_report(run: Path, model: str, resamples: int, cfg: dict | None = None)
 
 
 STAGES = ("readout", "gate", "probes", "patch", "knockout", "directions", "report")
-GPU_STAGES = ("readout", "patch", "knockout", "directions", "benchmark")
+GPU_STAGE_FUNCTIONS = {"readout": stage_readout, "patch": stage_patch, "knockout": stage_knockout,
+                       "directions": stage_directions, "benchmark": stage_benchmark}
+GPU_STAGES = tuple(GPU_STAGE_FUNCTIONS)
 
 
 def main():
@@ -1377,28 +1371,20 @@ def main():
     with (run / ".causal.lock").open("a+b") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         for stage in stages:
-            if stage in GPU_STAGES and lens is None:
-                import torch
-                torch.backends.cuda.matmul.allow_tf32 = bool(cfg.get("tf32", True))
-                torch.backends.cudnn.allow_tf32 = bool(cfg.get("tf32", True))
-                lens = Lens(args.model, dtype=cfg.get("dtype", "float32"),
-                            statistic=cfg.get("readout_statistic", "mean_logit"))
-            if stage == "benchmark":
-                stage_benchmark(run, source, args.model, lens, cfg)
-            elif stage == "readout":
-                stage_readout(run, source, args.model, lens, cfg)
+            if stage in GPU_STAGES:
+                if lens is None:
+                    import torch
+                    torch.backends.cuda.matmul.allow_tf32 = bool(cfg.get("tf32", True))
+                    torch.backends.cudnn.allow_tf32 = bool(cfg.get("tf32", True))
+                    lens = Lens(args.model, dtype=cfg.get("dtype", "float32"),
+                                statistic=cfg.get("readout_statistic", "mean_logit"))
+                GPU_STAGE_FUNCTIONS[stage](run, source, args.model, lens, cfg)
             elif stage in ("gate", "probes") and locked():
                 print(f"[{stage} {args.model}] skipped: the lock exists (it fixes gate.csv and the directions)")
             elif stage == "gate":
                 stage_gate(run, source, args.model, cfg, args.resamples)
             elif stage == "probes":
                 stage_probes(run, source, args.model, cfg)
-            elif stage == "patch":
-                stage_patch(run, source, args.model, lens, cfg)
-            elif stage == "knockout":
-                stage_knockout(run, source, args.model, lens, cfg)
-            elif stage == "directions":
-                stage_directions(run, source, args.model, lens, cfg)
             elif stage == "report":
                 stage_report(run, args.model, args.resamples, cfg)
 

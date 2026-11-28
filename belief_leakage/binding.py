@@ -43,7 +43,7 @@ import json
 import re
 import shutil
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -51,7 +51,8 @@ import pandas as pd
 import yaml
 
 from belief_leakage import config as C, datasets as DS, run_generation as G
-from belief_leakage import order_followup as F
+from belief_leakage import order_followup as F, run_plan
+from belief_leakage.run_plan import Builder
 
 PROTOCOL = "ckd-binding-v1"
 TAG = "binding_v1"
@@ -360,28 +361,6 @@ def cell_prompts(case, arm, role, order, outputs, released_prompt):
             yield output, replicate, transform(prompt, arm, None if order == "shared" else order, role)
 
 
-class Builder:
-    """Accumulates trials and unique items; identical prompts share one item."""
-
-    def __init__(self, model, originals):
-        self.model, self.originals = model, originals
-        self.items, self.identity, self.trials = {}, {}, []
-
-    def resolve(self, item: G.Item, source: str = "new") -> str:
-        idt = (item.case_id, item.output, item.replicate, item.sample, item.prompt_sha)
-        if idt not in self.identity:
-            original = self.originals.get(idt[:3] + (item.prompt_sha,)) if item.sample == 0 else None
-            chosen = original or item
-            self.identity[idt] = chosen.key
-            self.items[chosen.key] = asdict(chosen) | {"key": chosen.key, "prompt_sha": chosen.prompt_sha,
-                                                       "source": "baseline" if original else source}
-        return self.identity[idt]
-
-    def add(self, trial: dict, item: G.Item) -> None:
-        key = self.resolve(item)
-        self.trials.append(trial | {"item_key": key, "source": self.items[key]["source"]})
-
-
 def make_plan(model: str, cases, spec: dict, split: pd.Series, seed: int, use_baseline: bool = True):
     """(trials, items) of one model. ``use_baseline``: reuse the base run's answers and the order follow-up's
     item keys (only for models the base run generated)."""
@@ -392,16 +371,11 @@ def make_plan(model: str, cases, spec: dict, split: pd.Series, seed: int, use_ba
     def released_prompt(case, source, output, replicate):
         return index[(case, source, output, replicate)]["prompt"]
 
-    originals = {}
+    b = Builder(model, run_plan.released_items(model, records) if use_baseline else {})
     if use_baseline:
-        for r in records:
-            item = G.Item(model, r["case_id"], r["condition"], r["output"], r["replicate"], r["prompt"])
-            originals.setdefault((item.case_id, item.output, item.replicate, item.prompt_sha), item)
-    b = Builder(model, originals)
-    if use_baseline:
-        # Seed identities with the order follow-up's items so identical prompts get its exact keys.
-        for data in F.make_plan(model, cases)[1].values():
-            b.resolve(F.item_from(data), data["source"])
+        # Visit the follow-up's candidates first so shared prompts keep their archived keys.
+        for _, item in F.order_trials(model, frame):
+            b.resolve(item)
     latent = sorted(set(frame.output[~frame.question_id.isin(("check", "role_check"))]))
     k_direct = max(1, int(spec["direct_samples"]))
     for case, arm, role, order in prompt_cells(sorted(cases), spec["arms"]):
@@ -467,7 +441,7 @@ def capture_items_of(plan, model) -> list[dict]:
     no drift re-generations, and none unless the profile captures activations)."""
     if plan.get("protocol") == PROTOCOL and not plan["spec"]["activations"]:
         return []
-    return [v for v in F.capture_items(plan, model)
+    return [v for v in run_plan.capture_items(plan, model)
             if v.get("sample", 0) == 0 and not v["condition"].startswith(DRIFT_TAG)]
 
 
@@ -509,36 +483,30 @@ def prepare(args):
         spec["n_patients"] = args.n_patients if args.n_patients == "all" else int(args.n_patients)
     if args.direct_samples is not None:
         spec["direct_samples"] = args.direct_samples
-    config_bytes = F.read_member(args.base_run, "config.yaml") if args.base_run else C.CONFIG_PATH.read_bytes()
-    F.install_config(root, with_models(config_bytes, spec["models"]))
+    config_bytes = run_plan.read_member(args.base_run, "config.yaml") if args.base_run else C.CONFIG_PATH.read_bytes()
+    run_plan.install_config(root, with_models(config_bytes, spec["models"]))
     seed = int(C.load()["seed"])
     split = patient_split(seed)
     cases = select_patients(spec["n_patients"], split, seed)
     # Only models the base run generated have archived answers to reuse.
     base_models = set(C.load()["experiment"]["models"]) if args.base_run else set()
-    trials, items, signatures = [], {}, {}
-    for model in spec["models"]:
-        ts, its = make_plan(model, cases, spec, split, seed, model in base_models)
-        trials.extend(ts)
-        items.update(its)
-        signatures[model] = G.settings_signature(model, "ckd")
+
+    def model_plan(model):
+        return make_plan(model, cases, spec, split, seed, model in base_models)
+
+    trials, items, signatures = run_plan.collect_models(spec["models"], model_plan)
     plan = dict(protocol=PROTOCOL, spec=spec, models=spec["models"], settings=signatures, cases=cases,
                 patient_split=split.to_dict(), base_run=str(args.base_run.resolve()) if args.base_run else None,
                 base_activations=str(args.base_activations.resolve()) if args.base_activations else None,
                 trials=trials, items=items)
-    F.write_plan(root, plan)
+    run_plan.write_plan(root, plan)
     split.rename_axis("case_id").reset_index().to_csv(root / "patient_split.csv", index=False)
-    for model in spec["models"]:
-        wanted = {k: v for k, v in items.items() if v["model"] == model and v["source"] == "baseline"}
-        if wanted:
-            F.copy_baseline(root, model, wanted, signatures[model], args.base_run, args.base_activations)
-    F.atomic_json(root / "prepared.json", {"plan_digest": plan["digest"], "budget": summary(plan)})
-    print(json.dumps(summary(plan), indent=2))
+    run_plan.finish_prepare(root, plan, summary)
 
 
 def read_plan(root, protocols=(PROTOCOL,)):
-    """A verified plan (``order_followup.read_plan``) of one of ``protocols``."""
-    plan = F.read_plan(root)
+    """A verified plan (``run_plan.read_plan``) of one of ``protocols``."""
+    plan = run_plan.read_plan(root)
     if plan.get("protocol") not in protocols:
         raise ValueError(f"{root}: protocol {plan.get('protocol')} is not one of {protocols}")
     return plan
@@ -550,7 +518,7 @@ PLAN_DIGESTS = Path(__file__).with_name("binding_plans.json")
 def content_digest(plan) -> str:
     """Digest of what a plan generates (items, trials, settings, patients), without the machine-specific paths
     of its base run, so a plan prepared on the GPU host can be checked against the reviewed one."""
-    return F.digest({k: v for k, v in plan.items() if k not in ("digest", "base_run", "base_activations")})
+    return run_plan.digest({k: v for k, v in plan.items() if k not in ("digest", "base_run", "base_activations")})
 
 
 def verify(root, expected: Path = PLAN_DIGESTS) -> None:
@@ -613,9 +581,9 @@ def _import_activations(root, plan, model, sources) -> int:
             if meta.get("prompt_sha") != item["prompt_sha"] or meta.get("settings_sha") != plan["settings"][model]:
                 raise ValueError(f"{src}: capture of another prompt or settings; refusing to import")
             record = cache.get(key)
-            if not record or meta.get("response_sha") != F.digest([record["text"], record["token_ids"]]):
+            if not record or meta.get("response_sha") != run_plan.digest([record["text"], record["token_ids"]]):
                 continue  # not a capture of this run's answer: capture makes its own
-            if F.file_sha256(src / "acts.npy") != meta.get("array_sha256"):
+            if run_plan.file_sha256(src / "acts.npy") != meta.get("array_sha256"):
                 continue  # damaged: capture regenerates it
             tmp = dest.with_name(key + ".tmp")
             shutil.rmtree(tmp, ignore_errors=True)
@@ -632,12 +600,11 @@ def synthetic_backend(model):
         yield
         return
     from belief_leakage import binding_synthetic
-    saved = G.BACKENDS["synthetic"]
-    G.BACKENDS["synthetic"] = binding_synthetic.generate
+    token = G.synthetic_override.set(binding_synthetic.generate)
     try:
         yield
     finally:
-        G.BACKENDS["synthetic"] = saved
+        G.synthetic_override.reset(token)
 
 
 def generate(root, model, engine: dict | None = None):
@@ -652,21 +619,18 @@ def generate(root, model, engine: dict | None = None):
         print(f"[{model}] engine: {C.model_config(model)['engine']}", flush=True)
         if G.settings_signature(model, "ckd") != plan["settings"][model]:
             raise ValueError("the engine override changed the settings signature")
-    items = F.new_items(plan, model)
+    items = run_plan.new_items(plan, model)
     with synthetic_backend(model):
-        result = G.run(items, label=f"{model}/binding")
-    F.atomic_json(root / f"generation_{model}.json", result)
-    if G.pending(items):
-        raise RuntimeError("generation incomplete; rerun to retry failed calls")
+        run_plan.generate_items(root, model, items, f"{model}/binding")
 
 
 def capture(root, model):
-    """Residual stream at the three positions of ``freeze`` for every capture item (``order_followup.capture``).
+    """Residual stream at the three positions of ``freeze`` for every capture item (``run_plan.capture``).
     Phase 3 captures its own prompt positions separately."""
     plan = read_plan(root)
     items = capture_items_of(plan, model)
     if items:
-        F.capture(root, model, items=items)
+        run_plan.capture(root, model, items=items)
     else:
         print(f"{model}: this profile captures no activations")
 
@@ -675,7 +639,7 @@ def export(root, model):
     plan = read_plan(root)
     rows = [trial | dict(status=result.status, value=result.value if result.status == "parsed" else np.nan,
                          text=(record or {}).get("text"), condition=item.condition)
-            for trial, item, record, result in F.scored_trials(root, plan, model)]
+            for trial, item, record, result in run_plan.scored_trials(root, plan, model)]
     long = pd.DataFrame(rows)
     out = root / "outputs"
     out.mkdir(exist_ok=True)
@@ -687,7 +651,7 @@ def export(root, model):
 
 
 def status(root):
-    return F.status(root, read_plan(root), summary)
+    return run_plan.status(read_plan(root), summary)
 
 
 def main():

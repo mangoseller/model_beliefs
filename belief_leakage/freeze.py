@@ -47,7 +47,8 @@ import numpy as np
 import pandas as pd
 
 from belief_leakage import config as C
-from belief_leakage.run_generation import Item, experiment_items, lookup, model_revision, template_kwargs
+from belief_leakage.package_run import file_sha256
+from belief_leakage.run_generation import Item, experiment_items, load_hf_model, lookup, model_revision, template_kwargs
 
 POSITIONS = ("evidence_end", "prompt_end", "pre_answer")
 ANSWER_JSON = re.compile(r'\{\s*"probability"')
@@ -88,14 +89,8 @@ def token_at(offsets: list[tuple[int, int]], char_end: int) -> int:
 class Replayer:
     def __init__(self, model: str):
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        cfg = C.model_config(model)
         self.torch = torch
-        self.tok = AutoTokenizer.from_pretrained(cfg["path"], revision=model_revision(model))
-        self.lm = AutoModelForCausalLM.from_pretrained(cfg["path"], revision=model_revision(model),
-                                                       torch_dtype=getattr(torch, cfg.get("dtype", "bfloat16")),
-                                                       device_map=cfg.get("device_map", "auto"))
+        self.lm, self.tok = load_hf_model(model)
         self.lm.eval()
         text_cfg = self.lm.config.get_text_config()
         self.layers, self.hidden = text_cfg.num_hidden_layers + 1, text_cfg.hidden_size
@@ -155,9 +150,8 @@ def verified_files(folder):
             or len(index) != len(raw) or not np.array_equal(index.row, np.arange(len(index)))
             or list(meta["positions"]) != list(POSITIONS) or index_digest(index) != meta.get("items_sha256")):
         raise ValueError(f"inconsistent activation metadata or item index in {folder}")
-    with path.open("rb") as handle:
-        if hashlib.file_digest(handle, "sha256").hexdigest() != meta.get("array_sha256"):
-            raise ValueError(f"activation array checksum mismatch in {folder}")
+    if file_sha256(path) != meta.get("array_sha256"):
+        raise ValueError(f"activation array checksum mismatch in {folder}")
     return raw, index, meta
 
 
@@ -230,8 +224,7 @@ def _freeze(folder, model, dataset, case_ids, conditions, replayer):
         acts[n] = replayer.run(record["prompt_token_ids"] + record["token_ids"], index)
     acts.flush()
     del acts
-    with (folder / "acts.npy").open("rb") as handle:
-        meta["array_sha256"] = hashlib.file_digest(handle, "sha256").hexdigest()
+    meta["array_sha256"] = file_sha256(folder / "acts.npy")
     manifest.to_parquet(folder / "index.parquet", index=False)
     meta.update(complete=True, minutes=round((time.time() - started) / 60, 2),
                 missing={p: int(sum(r[f"token_{p}"] < 0 for r in entries)) for p in POSITIONS})
