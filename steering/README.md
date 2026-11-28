@@ -3,7 +3,7 @@
 When the model reasons about what PERSON believes from two records of one patient (its own and the one PERSON was
 shown), it often answers from the wrong record. The stages here find the computation that decides which record a
 value is read from, test each step by intervention, and show that changing it induces or removes the leak in sampled
-answers. Models: Qwen3 8B and 14B, through `transformers` with forward hooks (no vLLM).
+answers. Models: Qwen3 8B and 14B, through `transformers` with forward hooks.
 
 ## What is here
 
@@ -60,9 +60,3 @@ for 14B; sampled stages run in bfloat16.
 22 tests on a tiny random Qwen3 (about a minute on a CPU; needs the Qwen3-0.6B tokenizer in the Hugging Face cache):
 the token layouts, every engine operation against a plain forward pass, the vectors, the leak estimator on a planted
 leak, the program, and every stage end to end.
-
-## Status
-
-This is a cut-down and rewritten version of the code that produced the results. It was checked for identical output
-against that code on the tiny test model, stage by stage; no result on Qwen3 8B or 14B has been regenerated with it
-yet.
