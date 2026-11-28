@@ -1,4 +1,7 @@
-# downloaded and generated data (docs/data.md)
+# local documentation
+/docs/
+
+# downloaded and generated data
 /data/
 /build/
 /outputs/
