@@ -4,11 +4,9 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
-import os
 import re
-import subprocess
-import sys
 import tarfile
 import tempfile
 import unittest
@@ -25,8 +23,8 @@ from belief_leakage import config as C
 from belief_leakage import datasets as DS
 from belief_leakage import order_followup as F
 from belief_leakage import run_generation as G
+from tests.support import isolated_config, run, run_env, synthetic_config, write_config, prepared_followup
 
-ROOT = Path(__file__).resolve().parents[1]
 SEED = 20261111
 
 
@@ -208,11 +206,14 @@ class Plan(unittest.TestCase):
         self.assertEqual(B.with_models(base, ["qwen3_8b"]), base)
 
 
-def run(args, env, check=True):
-    done = subprocess.run([sys.executable, "-m", *args], cwd=ROOT, env=env, capture_output=True, text=True)
-    if check and done.returncode:
-        raise AssertionError(f"{args} failed:\n{done.stdout[-3000:]}\n{done.stderr[-3000:]}")
-    return done
+def write_capture(root, item, plan, record):
+    folder = root / "data" / "activations" / "synthetic" / "ckd" / item["key"]
+    folder.mkdir(parents=True)
+    np.save(folder / "acts.npy", np.zeros((1, 3, 2, 4), dtype=np.uint16))
+    sha = hashlib.sha256((folder / "acts.npy").read_bytes()).hexdigest()
+    (folder / "meta.json").write_text(json.dumps(dict(prompt_sha=item["prompt_sha"],
+        settings_sha=plan["settings"]["synthetic"], array_sha256=sha,
+        response_sha=F.digest([record["text"], record["token_ids"]]))))
 
 
 class SyntheticEndToEnd(unittest.TestCase):
@@ -220,13 +221,9 @@ class SyntheticEndToEnd(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
-        tmp = Path(cls.tmp.name)
-        cfg = yaml.safe_load(C.BUNDLED_CONFIG.read_text())
-        cfg["latent_fit"] = {"epochs": 1500, "patience": 100}
-        (tmp / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
-        cls.env = {**os.environ, "SO_CONFIG": str(tmp / "config.yaml"), "PYTHONPATH": str(ROOT)}
-        cls.run_dir = tmp / "run"
+        cls.root = Path(cls.enterClassContext(tempfile.TemporaryDirectory()))
+        cls.env = run_env(cls.root, synthetic_config())
+        cls.run_dir = cls.root / "run"
         run(["belief_leakage.binding", "prepare", "--run", str(cls.run_dir), "--profile", "full", "--models", "synthetic",
              "--n-patients", "60", "--direct-samples", "4"], cls.env)
         run(["belief_leakage.binding", "generate", "--run", str(cls.run_dir), "--model", "synthetic"], cls.env)
@@ -237,10 +234,6 @@ class SyntheticEndToEnd(unittest.TestCase):
         cls.cells = pd.read_csv(out / "lambda_cells.csv")
         cls.contrasts = pd.read_csv(out / "contrasts.csv")
         cls.decisions = json.loads((out / "decisions.json").read_text())
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
 
     def lam(self, method, subset="all"):
         c = self.cells
@@ -279,7 +272,7 @@ class SyntheticEndToEnd(unittest.TestCase):
     def test_resume_generates_nothing_twice_and_import_reuses_keys(self):
         done = run(["belief_leakage.binding", "generate", "--run", str(self.run_dir), "--model", "synthetic"], self.env)
         self.assertIn("0 to call", done.stdout)
-        other = Path(self.tmp.name) / "other"
+        other = self.root / "other"
         run(["belief_leakage.binding", "prepare", "--run", str(other), "--profile", "pilot", "--models", "synthetic",
              "--n-patients", "10", "--direct-samples", "2"], self.env)
         done = run(["belief_leakage.binding", "import-cache", "--run", str(other), "--from", str(self.run_dir)], self.env)
@@ -292,22 +285,13 @@ class SyntheticEndToEnd(unittest.TestCase):
         self.assertEqual(counts["imported"], len({v["key"] for v in covered}))
 
     def test_activation_captures_are_imported_by_key_and_verified(self):
-        import hashlib
-        saved = (C.CONFIG_PATH, C.CACHE)
-        try:
+        with isolated_config():
             plan = B.read_plan(self.run_dir)
             items = B.capture_items_of(plan, "synthetic")[:3]
             cache = G.Cache("synthetic", C.CACHE)
-            src = Path(self.tmp.name) / "capture_source"
+            src = self.root / "capture_source"
             for item in items:
-                folder = src / "data" / "activations" / "synthetic" / "ckd" / item["key"]
-                folder.mkdir(parents=True)
-                np.save(folder / "acts.npy", np.zeros((1, 3, 2, 4), dtype=np.uint16))
-                sha = hashlib.sha256((folder / "acts.npy").read_bytes()).hexdigest()
-                record = cache.get(item["key"])  # a capture of this run's own answer
-                (folder / "meta.json").write_text(json.dumps(dict(prompt_sha=item["prompt_sha"],
-                    settings_sha=plan["settings"]["synthetic"], array_sha256=sha,
-                    response_sha=F.digest([record["text"], record["token_ids"]]))))
+                write_capture(src, item, plan, cache.get(item["key"]))
             self.assertEqual(B._import_activations(self.run_dir, plan, "synthetic", [src]), 3)
             self.assertEqual(B._import_activations(self.run_dir, plan, "synthetic", [src]), 0)  # already there
             bad = src / "data" / "activations" / "synthetic" / "ckd" / B.capture_items_of(plan, "synthetic")[3]["key"]
@@ -316,13 +300,10 @@ class SyntheticEndToEnd(unittest.TestCase):
             (bad / "meta.json").write_text(json.dumps(dict(prompt_sha="other", settings_sha="x", array_sha256="y")))
             with self.assertRaisesRegex(ValueError, "another prompt"):
                 B._import_activations(self.run_dir, plan, "synthetic", [src])
-        finally:
-            C.CONFIG_PATH, C.CACHE = saved
-            C.load.cache_clear()
 
     def test_package_writes_independent_archives(self):
         from belief_leakage.package_run import package
-        out = Path(self.tmp.name) / "pkg"
+        out = self.root / "pkg"
         written = package(self.run_dir, out, "binding-test")
         has_acts = any((self.run_dir / "data" / "activations").rglob("acts.npy"))
         self.assertEqual([p.name for p in written],
@@ -342,50 +323,33 @@ class OrderFollowupImport(unittest.TestCase):
     """An order follow-up plan imports answers and captures that another run generated under the same keys."""
 
     def test_order_followup_plan_imports_answers_and_captures(self):
-        import hashlib
-        saved = (C.CONFIG_PATH, C.CACHE)
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                tmp = Path(tmp)
-                followup, source = tmp / "followup", tmp / "source"
-                followup.mkdir()
-                (followup / "config.yaml").write_bytes(C.BUNDLED_CONFIG.read_bytes())
-                F.configure(followup)
-                cases = sorted(B.patient_split(SEED).index)[:2]
-                trials, items = F.make_plan("synthetic", cases)
-                plan = dict(protocol=F.PROTOCOL, models=["synthetic"],
-                            settings={"synthetic": G.settings_signature("synthetic", "ckd")}, trials=trials, items=items)
-                plan["digest"] = F.digest(plan)
-                F.atomic_json(followup / "plan.json", plan)
-                F.atomic_json(followup / "prepared.json", {"plan_digest": plan["digest"]})
-                new = [F.item_from(v) for v in items.values() if v["source"] == "new"]
-                # Another run generated the same items (same keys) and captured one of them.
-                C.CACHE = source / "data" / "generation_cache"
-                G.cache_index.cache_clear()
-                with B.synthetic_backend("synthetic"):
-                    G.run(new, label="source")
-                capture = next(v for v in items.values() if v["source"] == "new"
-                               and v["output"] == "probability/normal" and v["replicate"] == 0)
-                folder = source / "data" / "activations" / "synthetic" / "ckd" / capture["key"]
-                folder.mkdir(parents=True)
-                np.save(folder / "acts.npy", np.zeros((1, 3, 2, 4), dtype=np.uint16))
-                record = G.Cache("synthetic", source / "data" / "generation_cache").get(capture["key"])
-                (folder / "meta.json").write_text(json.dumps(dict(
-                    prompt_sha=capture["prompt_sha"], settings_sha=plan["settings"]["synthetic"],
-                    array_sha256=hashlib.sha256((folder / "acts.npy").read_bytes()).hexdigest(),
-                    response_sha=F.digest([record["text"], record["token_ids"]]))))
-                counts = B.import_cache(followup, [source])["synthetic"]
-                self.assertEqual(counts["imported"], len(new))
-                self.assertEqual(counts["still_pending"], 0)
-                self.assertEqual(counts["activations_imported"], 1)
-                F.read_plan(followup)
-                G.cache_index.cache_clear()
-                self.assertEqual(G.pending(new), [])
-                self.assertEqual(B.import_cache(followup, [source])["synthetic"]["imported"], 0)  # idempotent
-        finally:
-            C.CONFIG_PATH, C.CACHE = saved
-            C.load.cache_clear()
+        with isolated_config(), tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            followup, source = tmp / "followup", tmp / "source"
+            followup.mkdir()
+            (followup / "config.yaml").write_bytes(C.BUNDLED_CONFIG.read_bytes())
+            F.configure(followup)
+            cases = sorted(B.patient_split(SEED).index)[:2]
+            trials, items = F.make_plan("synthetic", cases)
+            plan = prepared_followup(followup, trials, items)
+            new = [F.item_from(v) for v in items.values() if v["source"] == "new"]
+            # Another run generated the same items (same keys) and captured one of them.
+            C.CACHE = source / "data" / "generation_cache"
             G.cache_index.cache_clear()
+            with B.synthetic_backend("synthetic"):
+                G.run(new, label="source")
+            capture = next(v for v in items.values() if v["source"] == "new"
+                           and v["output"] == "probability/normal" and v["replicate"] == 0)
+            record = G.Cache("synthetic", source / "data" / "generation_cache").get(capture["key"])
+            write_capture(source, capture, plan, record)
+            counts = B.import_cache(followup, [source])["synthetic"]
+            self.assertEqual(counts["imported"], len(new))
+            self.assertEqual(counts["still_pending"], 0)
+            self.assertEqual(counts["activations_imported"], 1)
+            F.read_plan(followup)
+            G.cache_index.cache_clear()
+            self.assertEqual(G.pending(new), [])
+            self.assertEqual(B.import_cache(followup, [source])["synthetic"]["imported"], 0)  # idempotent
 
 
 class OrderFollowupAdapter(unittest.TestCase):
@@ -394,37 +358,25 @@ class OrderFollowupAdapter(unittest.TestCase):
 
     def test_adapter_recovers_planted_lambda(self):
         from belief_leakage import binding_analysis as BA
-        saved = (C.CONFIG_PATH, C.CACHE)
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
-                cfg = yaml.safe_load(C.BUNDLED_CONFIG.read_text())
-                cfg["latent_fit"] = {"epochs": 1500, "patience": 100}
-                (root / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
-                F.configure(root)
-                split = B.patient_split(SEED)
-                cases = sorted(split.index)[:50]
-                trials, items = F.make_plan("synthetic", cases)
-                plan = dict(protocol=F.PROTOCOL, models=["synthetic"],
-                            settings={"synthetic": G.settings_signature("synthetic", "ckd")}, trials=trials, items=items)
-                plan["digest"] = F.digest(plan)
-                F.atomic_json(root / "plan.json", plan)
-                F.atomic_json(root / "prepared.json", {"plan_digest": plan["digest"]})
-                pd.DataFrame(columns=["item_key", "row"]).to_parquet(root / "baseline_activations_synthetic.parquet")
-                with B.synthetic_backend("synthetic"):
-                    # The synthetic model has no baseline, so generate every item of the plan.
-                    G.run([F.item_from(v) for v in items.values()], label="followup-synthetic")
-                # order_followup.export reads reused items from baseline_cache/ (its prepare copies them there).
-                (root / "baseline_cache").mkdir()
-                (root / "baseline_cache" / "synthetic.jsonl").write_bytes(
-                    (root / "data" / "generation_cache" / "synthetic.jsonl").read_bytes())
-                F.export(root, "synthetic")
-                BA.analyse(root, "synthetic", resamples=100, order_followup=True)
-                cells = pd.read_csv(root / "outputs" / "analysis" / "synthetic" / "lambda_cells.csv")
-        finally:
-            C.CONFIG_PATH, C.CACHE = saved
-            C.load.cache_clear()
-            G.cache_index.cache_clear()
+        with isolated_config(), tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_config(root, synthetic_config())
+            F.configure(root)
+            split = B.patient_split(SEED)
+            cases = sorted(split.index)[:50]
+            trials, items = F.make_plan("synthetic", cases)
+            prepared_followup(root, trials, items)
+            pd.DataFrame(columns=["item_key", "row"]).to_parquet(root / "baseline_activations_synthetic.parquet")
+            with B.synthetic_backend("synthetic"):
+                # The synthetic model has no baseline, so generate every item of the plan.
+                G.run([F.item_from(v) for v in items.values()], label="followup-synthetic")
+            # order_followup.export reads reused items from baseline_cache/ (its prepare copies them there).
+            (root / "baseline_cache").mkdir()
+            (root / "baseline_cache" / "synthetic.jsonl").write_bytes(
+                (root / "data" / "generation_cache" / "synthetic.jsonl").read_bytes())
+            F.export(root, "synthetic")
+            BA.analyse(root, "synthetic", resamples=100, order_followup=True)
+            cells = pd.read_csv(root / "outputs" / "analysis" / "synthetic" / "lambda_cells.csv")
         lam = cells[(cells.statistic == "lambda") & (cells.subset == "all") & (cells.order != "pooled")]
         for method in ("direct", "latent"):
             part = lam[lam.method == method]

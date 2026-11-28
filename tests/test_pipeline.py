@@ -9,49 +9,35 @@ CKD patients keep it to a few minutes; run it on its own:
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import yaml
 
-ROOT = Path(__file__).resolve().parents[1]
+from tests.support import run, run_env, synthetic_config
 
 
 class SyntheticPipeline(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
-        tmp = Path(cls.tmp.name)
-        cfg = yaml.safe_load((ROOT / "belief_leakage" / "config.yaml").read_text())
+        tmp = Path(cls.enterClassContext(tempfile.TemporaryDirectory()))
+        cfg = synthetic_config()
         cfg["datasets"]["bespoke"]["samples"] = 20
-        cfg["latent_fit"] = {"epochs": 1500, "patience": 100}
         cfg["models"]["synthetic"]["truth"].update({"parse_failure_rate": 0.01, "think_tags": True})
         cls.truth = cfg["models"]["synthetic"]["truth"]
-        (tmp / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
-        env = {**os.environ, "SO_CONFIG": str(tmp / "config.yaml"), "SO_DATA_DIR": str(tmp / "data"),
-               "SO_RESULTS_DIR": str(tmp / "results"), "SO_FIGURES_DIR": str(tmp / "figures"),
-               "PYTHONPATH": str(ROOT)}
+        env = run_env(tmp, cfg) | {"SO_DATA_DIR": str(tmp / "data"), "SO_RESULTS_DIR": str(tmp / "results"),
+                                   "SO_FIGURES_DIR": str(tmp / "figures")}
         steps = [["belief_leakage.run_generation", "--model", "synthetic", "--cases", "100"],
                  ["belief_leakage.phase3", "--model", "synthetic", "--cases", "100"],
                  ["belief_leakage.curse", "--models", "synthetic", "--resamples", "100"],
                  ["belief_leakage.figures"]]
         for step in steps:
-            done = subprocess.run([sys.executable, "-m", *step], cwd=ROOT, env=env, capture_output=True, text=True)
-            if done.returncode:
-                raise AssertionError(f"{step[0]} failed:\n{done.stdout[-3000:]}\n{done.stderr[-3000:]}")
+            run(step, env)
         cls.results = tmp / "results" / "curse"
         cls.figures = tmp / "figures"
         cls.est = pd.read_csv(cls.results / "estimates.csv")
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
 
     def stat(self, dataset, method, setting, statistic, reference, case_set="all"):
         e = self.est

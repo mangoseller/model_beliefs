@@ -7,12 +7,10 @@ Needs a Qwen3 tokenizer: the Hub snapshot of Qwen/Qwen3-0.6B (cached), or ``SO_T
 """
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -22,49 +20,17 @@ from belief_leakage import binding as B
 from belief_leakage import binding_causal as BC
 from belief_leakage import config as C
 
-ROOT = Path(__file__).resolve().parents[1]
-REVISION = "c1899de289a04d12100db370d81485cdf75e47ca"
+from tests.support import isolated_config, run as run_cli, run_env
+from tests.qwen import digit_probabilities, requires_tokenizer, snapshot, tiny_lens, two_digit_value
 
 
-def tokenizer_path():
-    if os.environ.get("SO_TEST_TOKENIZER"):
-        return os.environ["SO_TEST_TOKENIZER"]
-    try:
-        from huggingface_hub import snapshot_download
-        return snapshot_download("Qwen/Qwen3-0.6B", revision=REVISION, local_files_only=True,
-                                 allow_patterns=["tokenizer*", "vocab.json", "merges.txt", "*.json"])
-    except Exception:
-        return None
+def explicit_readout(lens, ids, variant=None):
+    def logits(seq):
+        with lens._run([variant] if variant else []):
+            return lens.lm(lens.torch.tensor([seq])).logits[0, -1].float()
 
-
-def tiny_lens():
-    import torch
-    from transformers import AutoTokenizer, Qwen3Config, Qwen3ForCausalLM
-    tok = AutoTokenizer.from_pretrained(tokenizer_path())
-    cfg = Qwen3Config(vocab_size=len(tok), hidden_size=64, intermediate_size=128, num_hidden_layers=4,
-                      num_attention_heads=4, num_key_value_heads=2, head_dim=16, max_position_embeddings=4096,
-                      attn_implementation="eager", tie_word_embeddings=True)
-    torch.manual_seed(0)
-    lm = Qwen3ForCausalLM(cfg).float().eval()
-    return BC.Lens(lm=lm, tok=tok, device=torch.device("cpu"), template_kwargs={"enable_thinking": False})
-
-
-def two_digit_value(p1, q2s, statistic="mean_logit"):
-    """The readout from explicit first-digit probabilities ``p1`` and each first digit's second-digit
-    probabilities ``q2s[a]``: E[p] ("expected_p"), or the probability whose logit is E[clip_logit(p)]."""
-    import math
-
-    def f(p):
-        if statistic == "expected_p":
-            return p
-        p = min(max(p, 0.01), 0.99)
-        return math.log(p) - math.log1p(-p)
-    total = 0.0
-    for a in range(10):
-        q2 = [float(x) for x in q2s[a]]
-        end = max(1 - sum(q2), 0.0)
-        total += float(p1[a]) * (sum(q2[b] * f(a / 10 + b / 100) for b in range(10)) + end * f(a / 10)) / (sum(q2) + end)
-    return total if statistic == "expected_p" else 1 / (1 + math.exp(-total))
+    first, second = digit_probabilities(logits, ids, lens.digits)
+    return two_digit_value(first / first.sum(), second)
 
 
 def a_prompt(arm="false_labelled", order="person_first", role="C", case=None):
@@ -76,13 +42,14 @@ def a_prompt(arm="false_labelled", order="person_first", role="C", case=None):
     return B.transform(src, arm, order if role in "CMD" else None, role)
 
 
-@unittest.skipIf(tokenizer_path() is None, "no Qwen3 tokenizer available")
+@requires_tokenizer
 class Interventions(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import torch
         cls.torch = torch
         cls.lens = tiny_lens()
+        cls.addClassCleanup(cls.lens.close)
         cls.prompt = BC.no_reasoning(a_prompt())
         cls.enc = cls.lens.encode(cls.prompt)
 
@@ -129,17 +96,12 @@ class Interventions(unittest.TestCase):
         res = self.lens.readout(ids, [BC.Variant(), BC.Variant()])
         self.assertAlmostEqual(float(res["p"][0]), float(res["p"][1]), places=6)
         # First digit from a plain forward; second digit from explicit sequences, not the cache.
-        p = self.plain_logits(ids).softmax(-1)
-        d = self.lens.digits
-        p1 = p[d] / p[d].sum()
-        q2s = [self.plain_logits(ids + [d[a]]).softmax(-1)[d] for a in range(10)]
+        first, q2s = digit_probabilities(self.plain_logits, ids, self.lens.digits)
+        p1 = first / first.sum()
         self.assertAlmostEqual(float(res["p"][0]), two_digit_value(p1, q2s), places=5)
         # the expected-probability statistic is exact too
-        self.lens.statistic = "expected_p"
-        try:
+        with patch.object(self.lens, "statistic", "expected_p"):
             got = float(self.lens.readout(ids, [BC.Variant()])["p"][0])
-        finally:
-            self.lens.statistic = "mean_logit"
         self.assertAlmostEqual(got, two_digit_value(p1, q2s, "expected_p"), places=5)
 
     def test_tree_second_digit_is_exact_under_knockout_and_steering(self):
@@ -153,15 +115,7 @@ class Interventions(unittest.TestCase):
             got = float(self.lens.readout(e.ids, [v])["p"][0])
             # Explicit: every candidate as a real next token, the knockout also blocking it as a query.
             explicit = (BC.Variant(knock=[(1, e.groups["readout"] + [L], e.groups["own"], False)]) if knock else v)
-            d = self.lens.digits
-
-            def last(ids):
-                with self.lens._run([explicit]):
-                    return self.lens.lm(torch.tensor([ids])).logits[0, -1].float().softmax(-1)
-            p = last(e.ids)
-            p1 = p[d] / p[d].sum()
-            expected = two_digit_value(p1, [last(e.ids + [d[a]])[d] for a in range(10)])
-            self.assertAlmostEqual(got, expected, places=5)
+            self.assertAlmostEqual(got, explicit_readout(self.lens, e.ids, explicit), places=5)
 
     def test_patching_every_position_reproduces_the_donor(self):
         donor_prompt = self.prompt.replace("Age (age) is", "Age (age) is ", 1)
@@ -276,14 +230,6 @@ class Interventions(unittest.TestCase):
         np.testing.assert_allclose(self.lens.readout(e.ids, variants)["p"], alone, atol=1e-5)
 
 
-def real_snapshot():
-    try:
-        from huggingface_hub import snapshot_download
-        return snapshot_download("Qwen/Qwen3-0.6B", revision=REVISION, local_files_only=True)
-    except Exception:
-        return None
-
-
 class Null(unittest.TestCase):
     def test_patient_permutation_moves_whole_patients(self):
         rng = np.random.default_rng(0)
@@ -301,7 +247,7 @@ class Null(unittest.TestCase):
         self.assertEqual(sorted(out[:6]), sorted(y[:6]))
 
 
-@unittest.skipIf(real_snapshot() is None, "Qwen3-0.6B weights not in the local HF cache")
+@unittest.skipIf(snapshot() is None, "Qwen3-0.6B weights not in the local HF cache")
 class RealWeights(unittest.TestCase):
     """On real weights (where a misplaced tree mask shows; a tiny random model is insensitive to it): the
     single-prompt readout, the padded batch readout and the explicit two-digit computation agree."""
@@ -309,31 +255,23 @@ class RealWeights(unittest.TestCase):
     def test_readout_paths_agree_with_the_explicit_computation(self):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
-        path = real_snapshot()
+        path = snapshot()
         lm = AutoModelForCausalLM.from_pretrained(path, torch_dtype=torch.float32, attn_implementation="eager")
         lens = BC.Lens(lm=lm, tok=AutoTokenizer.from_pretrained(path), device=torch.device("cpu"),
                        template_kwargs={"enable_thinking": False})
         encs = [lens.encode(BC.no_reasoning(a_prompt(arm, "person_first", "C")))
                 for arm in ("false_verified", "partial_labelled")]
 
-        def explicit(ids, v=None):
-            def last(seq):
-                with lens._run([v] if v else []):
-                    return lm(torch.tensor([seq])).logits[0, -1].float().softmax(-1)
-            d = lens.digits
-            p = last(ids)
-            p1 = p[d] / p[d].sum()
-            return two_digit_value(p1, [last(ids + [d[a]])[d] for a in range(10)])
         batch = lens.readout_batch(encs, batch=2)[0]
         for e, pb in zip(encs, batch):
-            want = explicit(e.ids)
+            want = explicit_readout(lens, e.ids)
             self.assertAlmostEqual(float(lens.readout(e.ids, [BC.Variant()])["p"][0]), want, places=4)
             self.assertAlmostEqual(pb, want, places=4)
         # and under an intervention (a knockout also blocking the answer token)
         e = encs[0]
         v = BC.Variant(knock=[(4, e.groups["readout"], e.groups["own"], True)])
         explicit_v = BC.Variant(knock=[(4, e.groups["readout"] + [len(e.ids)], e.groups["own"], False)])
-        self.assertAlmostEqual(float(lens.readout(e.ids, [v])["p"][0]), explicit(e.ids, explicit_v), places=4)
+        self.assertAlmostEqual(float(lens.readout(e.ids, [v])["p"][0]), explicit_readout(lens, e.ids, explicit_v), places=4)
 
 
 class Probes(unittest.TestCase):
@@ -359,29 +297,23 @@ class Probes(unittest.TestCase):
         self.assertGreater(abs(u @ signal), 0.8)
 
 
-@unittest.skipIf(tokenizer_path() is None, "no Qwen3 tokenizer available")
+@requires_tokenizer
 class StagesEndToEnd(unittest.TestCase):
     """Session 1 on the synthetic model, then every session-2 stage with the tiny model."""
 
     def test_all_stages(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        root = Path(tmp.name)
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         cfg = yaml.safe_load(C.BUNDLED_CONFIG.read_text())
-        (root / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
-        env = {**os.environ, "SO_CONFIG": str(root / "config.yaml"), "PYTHONPATH": str(ROOT)}
+        env = run_env(root, cfg)
         source = root / "full"
         for args in (["prepare", "--run", str(source), "--profile", "pilot", "--models", "synthetic", "--n-patients",
                       "all", "--direct-samples", "1"],
                      ["generate", "--run", str(source), "--model", "synthetic"],
                      ["export", "--run", str(source), "--model", "synthetic"]):
-            done = subprocess.run([sys.executable, "-m", "belief_leakage.binding", *args], cwd=ROOT, env=env,
-                                  capture_output=True, text=True)
-            self.assertEqual(done.returncode, 0, done.stderr[-2000:])
+            run_cli(["belief_leakage.binding", *args], env)
         # The analysis only needs the direct beliefs here (no latent arms): rewrite the spec's latent arms.
         from belief_leakage import binding_analysis as BA
-        saved = (C.CONFIG_PATH, C.CACHE)
-        try:
+        with isolated_config():
             plan = B.read_plan(source)
             long = pd.read_parquet(source / "outputs" / "synthetic_responses.parquet")
             out = source / "outputs" / "analysis" / "synthetic"
@@ -402,9 +334,8 @@ class StagesEndToEnd(unittest.TestCase):
             prompts = BC.source_prompts(source, "synthetic")
             keep = (sorted(prompts.case_id[prompts.split == "fit"].unique())[:12]
                     + sorted(prompts.case_id[prompts.split == "test"].unique())[:6])
-            original = BC.source_prompts
-            BC.source_prompts = lambda s, m: (lambda d: d[d.case_id.isin(keep)])(original(s, m))
-            try:
+            subset = prompts[prompts.case_id.isin(keep)]
+            with patch.object(BC, "source_prompts", side_effect=lambda *_: subset.copy()):
                 frame = BC.stage_readout(run, source, "synthetic", lens, ccfg)
                 wanted = BC.source_prompts(source, "synthetic")
                 self.assertEqual(len(frame), int(wanted.arm.isin(ccfg["cells"]).sum()))
@@ -416,9 +347,9 @@ class StagesEndToEnd(unittest.TestCase):
                     self.assertTrue(all(1 <= l < lens.n_layers for l in v["window"]))
                 with self.assertRaises(ValueError):
                     BC.stage_probes(run, source, "synthetic", ccfg)  # the lock is written once
-                patch = BC.stage_patch(run, source, "synthetic", lens, ccfg)
-                self.assertEqual(set(patch.direction), {"sufficiency", "necessity"})
-                self.assertEqual(patch.layer.max(), lens.n_layers - 1)
+                patched = BC.stage_patch(run, source, "synthetic", lens, ccfg)
+                self.assertEqual(set(patched.direction), {"sufficiency", "necessity"})
+                self.assertEqual(patched.layer.max(), lens.n_layers - 1)
                 ko = BC.stage_knockout(run, source, "synthetic", lens, ccfg)
                 self.assertEqual(set(ko.knockout), {"none", "readout", "encoding", "update"})
                 dr = BC.stage_directions(run, source, "synthetic", lens, ccfg)
@@ -469,11 +400,6 @@ class StagesEndToEnd(unittest.TestCase):
                 np.savez(run / "synthetic" / "directions.npz", x=np.zeros(1))
                 with self.assertRaisesRegex(ValueError, "changed after the lock"):
                     BC.stage_patch(run, source, "synthetic", lens, ccfg)
-            finally:
-                BC.source_prompts = original
-        finally:
-            C.CONFIG_PATH, C.CACHE = saved
-            C.load.cache_clear()
 
 
 if __name__ == "__main__":

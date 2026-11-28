@@ -48,9 +48,8 @@ stages on replies read the `reason` folders.
 
 ## Running
 
-    pip install -r requirements/steering.txt
-    python -m steering.run <stage> --model qwen3_8b --out runs/steering [--config steering/configs/<file>.json]
-    python -m steering.run analyse --model qwen3_8b --out runs/steering --session1 <beliefs_direct.parquet>
+    ./entrypoint.sh steering <stage> --model qwen3_8b --out runs/steering [--config steering/configs/<file>.json]
+    ./entrypoint.sh steering analyse --model qwen3_8b --out runs/steering --session1 <beliefs_direct.parquet>
 
 The leak of a sampled answer is measured against reference beliefs from the binding experiment
 (`belief_leakage.binding_analysis` writes `beliefs_direct.parquet`). Float32 weights take about 32 GB for 8B and 59 GB
@@ -60,6 +59,6 @@ for 14B; sampled stages run in bfloat16.
 
     PYTHONPATH=. python -m unittest tests.test_steering
 
-22 tests on a tiny random Qwen3 (about a minute on a CPU; needs the Qwen3-0.6B tokenizer in the Hugging Face cache):
+The model tests use a tiny random Qwen3 and the cached Qwen3-0.6B tokenizer. The suite checks
 the token layouts, every engine operation against a plain forward pass, the vectors, the leak estimator on a planted
 leak, the program, and every stage end to end.

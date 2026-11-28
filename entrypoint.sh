@@ -1,27 +1,34 @@
 #!/usr/bin/env bash
-# Run the whole curse-of-knowledge experiment on a fresh GPU instance (e.g. vast.ai) and package it.
-#
-#   git clone https://github.com/mangoseller/model_beliefs && cd model_beliefs
-#   nohup bash run_experiment.sh > run.out 2>&1 &      # everything; then download runs/<run_id>.tar.gz
-#   bash run_experiment.sh --core --no-install-agents  # main experiment only, skip coding-agent installation
-#   bash run_experiment.sh --smoke                     # 20 CKD cases, 3 samples: a quick full check first
-#   bash run_experiment.sh --run-id <run_id>           # resume an interrupted run (nothing is regenerated)
-#   bash run_experiment.sh --help                      # every option (belief_leakage/runner.py)
-#
-# Needs: Linux, an NVIDIA GPU with CUDA 12 drivers (48 GB or more runs Qwen3 14B in bf16 comfortably;
-# 24 GB is enough for Qwen3 8B alone), about 120 GB of free disk, internet access.
-# The two experiment datasets ship in datasets/.
-#
-# It also installs the Claude Code and Codex CLIs (`claude`, `codex`) into ~/.local/bin and puts
-# them on PATH, here and in ~/.bashrc for later shells. Log in with `claude` / `codex`, or set
-# ANTHROPIC_API_KEY / OPENAI_API_KEY. A failed install only warns; the experiment still runs.
-#
-# Environment: CPU_ONLY=1 skips torch/vLLM (synthetic model only); INSTALL_AGENTS=0 skips the
-# Claude Code and Codex install; HF_TOKEN for gated models; VENV=<dir> picks the virtual
-# environment (default .venv-experiment).
+# Install dependencies and launch either experiment from a fresh instance.
+# VENV overrides the experiment's virtual environment. CPU_ONLY=1 installs CPU torch.
+# Leakage installs the Claude Code and Codex CLIs by default. Either experiment accepts
+# --install-agents and --no-install-agents, or INSTALL_AGENTS=1/0.
 set -euo pipefail
 cd "$(dirname "$0")"
-VENV="${VENV:-.venv-experiment}"
+
+usage() {
+  echo "Usage: $0 leakage [runner options] | steering [stage] [steering options]"
+  echo "Examples: $0 leakage --smoke"
+  echo "          $0 steering baseline --model qwen3_8b"
+  echo "Use <experiment> --help for its options."
+}
+
+case "${1:-}" in
+  leakage)
+    module=belief_leakage.runner
+    VENV="${VENV:-.venv-experiment}"
+    default_agents=1
+    ;;
+  steering)
+    module=steering.run
+    VENV="${VENV:-.venv-steering}"
+    default_agents=0
+    ;;
+  -h|--help) usage; exit 0 ;;
+  *) usage >&2; exit 2 ;;
+esac
+experiment=$1
+shift
 NODE_VERSION=v22.12.0
 LOCAL="$HOME/.local"
 PATH_LINE='export PATH="$HOME/.local/bin:$HOME/.local/node/bin:$PATH"'
@@ -53,7 +60,7 @@ for arg in "$@"; do
 done
 set -- "${runner_args[@]}"
 
-if [ "${INSTALL_AGENTS:-1}" = 1 ]; then
+if [ "${INSTALL_AGENTS:-$default_agents}" = 1 ]; then
   install_agent_clis || echo "WARNING: installing Claude Code / Codex failed; continuing without them" >&2
 fi
 
@@ -63,9 +70,12 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 [ -x "$VENV/bin/python" ] || uv venv --python 3.11 "$VENV"
 if [ "${CPU_ONLY:-0}" = 1 ]; then
-  uv pip install --python "$VENV/bin/python" -r requirements/experiment.txt
-  # The latent fits need torch even without a GPU: the CPU build of the same version.
   uv pip install --python "$VENV/bin/python" torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+fi
+if [ "$experiment" = steering ]; then
+  uv pip install --python "$VENV/bin/python" -r requirements/steering.txt
+elif [ "${CPU_ONLY:-0}" = 1 ]; then
+  uv pip install --python "$VENV/bin/python" -r requirements/experiment.txt
 elif [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; then
   # Every package pinned, vLLM's dependencies at versions from its release (requirements/lock-cuda.txt).
   uv pip install --python "$VENV/bin/python" -r requirements/lock-cuda.txt
@@ -77,4 +87,4 @@ fi
 
 export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 export TOKENIZERS_PARALLELISM=false
-exec "$VENV/bin/python" -m belief_leakage.runner "$@"
+exec "$VENV/bin/python" -m "$module" "$@"

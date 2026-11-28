@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,12 +19,34 @@ from belief_leakage import tune as T
 from belief_leakage.responses import score_answer
 from belief_leakage.run_generation import FOLLOWUP, Item
 from belief_leakage.runner import last_line
+from tests.support import ROOT
 
 
 def trial(tok_s: float, parse: float = 0.95, truncated: float = 0.0, seqs: int = 256, ok: bool = True) -> dict:
     return {"engine": {"max_num_seqs": seqs}, "ok": ok, "output_tokens_per_second": tok_s,
             "smoke": {"parse_rate": parse, "truncated_rate": truncated, "mean_output_tokens": 300,
                       "groups": {"ckd/choice": {"parse_rate": parse, "truncated_rate": truncated}}}}
+
+
+class Entrypoint(unittest.TestCase):
+    def test_selects_dependencies_and_forwards_runner_arguments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            # Record the arguments to both uv and Python without installing dependencies or loading weights.
+            uv = bin_dir / "uv"
+            uv.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+            uv.chmod(0o755)
+            (bin_dir / "python").symlink_to(uv)
+            env = os.environ | {"VENV": tmp, "PATH": f"{bin_dir}:{os.environ['PATH']}", "CPU_ONLY": "1"}
+            for experiment, manifest, module, option in (("leakage", "experiment", "belief_leakage.runner", "--run-id"),
+                                                         ("steering", "steering", "steering.run", "--out")):
+                with self.subTest(experiment=experiment):
+                    result = subprocess.run([ROOT / "entrypoint.sh", experiment, "--no-install-agents", option, "a b"],
+                                            cwd=tmp, env=env, check=True, text=True, capture_output=True)
+                    args = result.stdout.splitlines()
+                    self.assertIn(f"requirements/{manifest}.txt", args)
+                    self.assertEqual(args[-4:], ["-m", module, option, "a b"])
 
 
 class Tuning(unittest.TestCase):

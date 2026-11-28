@@ -1,10 +1,10 @@
 """Run the whole curse-of-knowledge experiment end to end and package everything.
 
-Launched by ``run_experiment.sh`` (which installs the dependencies first):
+Launched by ``entrypoint.sh leakage`` (which installs the dependencies first):
 
-    bash run_experiment.sh                          # Qwen3 8B and 14B, everything
-    bash run_experiment.sh --smoke                  # 20 CKD cases, 3 samples: a quick full check
-    bash run_experiment.sh --run-id 20261121-0930   # resume an interrupted run
+    bash entrypoint.sh leakage                          # Qwen3 8B and 14B, everything
+    bash entrypoint.sh leakage --smoke                  # 20 CKD cases, 3 samples: a quick full check
+    bash entrypoint.sh leakage --run-id 20261121-0930   # resume an interrupted run
 
 Stages, in order (``--stages`` runs a subset, ``--skip`` leaves some out):
 
