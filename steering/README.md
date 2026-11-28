@@ -19,7 +19,7 @@ answers. Models: Qwen3 8B and 14B, through `transformers` with forward hooks.
 | `prompts.py`, `transcripts.py` | Token layout of a prompt; which record's values a reply states |
 | `analysis.py` | The leak estimator and the summary tables |
 | `scripts/` | CPU analyses of finished runs |
-| [presets.yaml](presets.yaml) | Named settings for each stage, variant, and model size |
+| [presets.yaml](presets.yaml) | Named overrides for selected stages and model variants |
 
 The invented-record stages sample their fields, values and owner names from the shared dataset.
 [Invented record definitions](../datasets/steering/invented_records.json)
