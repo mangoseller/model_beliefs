@@ -1,0 +1,2 @@
+{"dtype": "bfloat16", "circuit_phrase": {"patients": 34, "offset": 40, "blocks": [4, 8, 10, 12, 14, 16, 18, 20, 22, 24, 28],
+                                         "windows": [[13, 24], [1, 12], [1, 36]], "batch": 48}}

@@ -1,0 +1,2 @@
+{"circuit_redirect": {"folder": "reason_redirect_full", "patients": 74, "samples": 4, "max_new_tokens": 1100, "dtype": "bfloat16", "group": 4, "batch": 48,
+                      "sets": ["other value heads than lookup64 0", "lookup64"]}}

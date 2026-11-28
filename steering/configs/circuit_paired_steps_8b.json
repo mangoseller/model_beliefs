@@ -1,0 +1,7 @@
+{"circuit_paired": {"folder": "reason_paired2", "patients": 24, "samples": 4, "max_new_tokens": 1100, "dtype": "bfloat16",
+                    "group": 2, "heads": 64,
+                    "cells": [["false", "plain", "person_first", "twin", 0.0,
+                               ["place16", "value32", "readers", "random_lookup64_0", "random_lookup64_1", "random_place16_0"]],
+                              ["false", "plain", "person_first", "slot", -0.25, ["random_lookup64_0"]],
+                              ["strong", "labelled", "person_first", "slot", -0.25,
+                               ["random_lookup64_0", "random_lookup64_1", "random_lookup64_2", "place16", "value32", "every head"]]]}}

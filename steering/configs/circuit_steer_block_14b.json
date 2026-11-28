@@ -1,0 +1,5 @@
+{"circuit_steer": {"folder": "reason_program", "patients": 32, "samples": 4, "max_new_tokens": 1100, "dtype": "bfloat16",
+                   "group": 8, "batch": 96, "window": [26, 28], "reader_attention": 0.10,
+                   "cells": [["plain", "person_first", [["knock", "place16", "own"], ["knock", "place16+readers", "own"],
+                                                         ["knock", "lookup64", "own"], ["knock", "random_lookup64_0", "own"],
+                                                         ["knock", "all", "own"]]]]}}
