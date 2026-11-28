@@ -193,12 +193,8 @@ def value_token(engine, reply_text: str, prompt: str, value_start: int, value_en
     written_ids = engine.tok(text_before_value + reply_text[value_start:value_end],
                              add_special_tokens=False)["input_ids"]
     other_ids = engine.tok(text_before_value + other_value, add_special_tokens=False)["input_ids"]
-    differing = (index for index, (written, other) in enumerate(zip(written_ids, other_ids))
-                 if written != other)
-    differ_at = next(differing, None)
-    if differ_at is None:
-        return None
-    return written_ids[:differ_at], written_ids[differ_at], other_ids[differ_at]
+    found = prompts.split_answer_tokens([written_ids, other_ids])
+    return (found[0], *found[1]) if found else None
 
 
 @dataclass

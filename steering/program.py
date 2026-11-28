@@ -41,6 +41,7 @@ from belief_leakage.beliefs import clip_logit
 from steering import circuit
 from steering import prompts
 from steering.engine import Edit, Job, stated_probability
+from steering.run import held_out_patients as held_out
 from steering.results import read_rows, reply_rows as reasoned_rows, write_rows
 
 CI = circuit        # the test file reaches the circuit module through this name
@@ -276,16 +277,10 @@ def answer_tokens(engine, chat: str, prompt_length: int, item: Item, code: str):
     """How the owners' values of field ``code`` differ when written as the answer: (the tokens every
     value starts with, owner -> the first token that is its own). None unless one token position tells
     all the values apart."""
-    answers = {}
-    for owner in item.owners:
-        ids = engine.tok(chat + item.values[owner][code], add_special_tokens=False)["input_ids"]
-        answers[owner] = ids[prompt_length:]
-    shortest = min(map(len, answers.values()))
-    split = next((i for i in range(shortest) if len({ids[i] for ids in answers.values()}) > 1), None)
-    if split is None or len({ids[split] for ids in answers.values()}) != len(answers):
-        return None
-    shared_start = next(iter(answers.values()))[:split]
-    return shared_start, {owner: ids[split] for owner, ids in answers.items()}
+    answers = [engine.tok(chat + item.values[owner][code], add_special_tokens=False)["input_ids"][prompt_length:]
+               for owner in item.owners]
+    found = prompts.split_answer_tokens(answers)
+    return (found[0], dict(zip(item.owners, found[1]))) if found else None
 
 
 def encode(engine, item: Item) -> dict | None:
@@ -370,12 +365,6 @@ def named_sets(run_dir: Path, engine, cfg: dict) -> dict:
             sets[f"random_{name}_{i}"] = circuit.random_like(sets[name], engine.n_heads, rng)
     sets["all"] = [(layer, head) for layer in range(engine.n_layers) for head in range(engine.n_heads)]
     return {name: [(int(layer), int(head)) for layer, head in heads] for name, heads in sets.items()}
-
-
-def held_out(cases: pd.Series, cfg: dict, spec: dict) -> list[str]:
-    """A stage's test patients: ``spec['patients']`` of the sorted test half after ``spec['offset']``."""
-    offset = int(spec.get("offset", 0))
-    return sorted(cases.index[cases == cfg["intervene_split"]])[offset: offset + int(spec["patients"])]
 
 
 # Stage: the pointer computed by the program

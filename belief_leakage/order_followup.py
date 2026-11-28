@@ -39,9 +39,7 @@ CUE = " Your chart gives the verified patient information."
 ORDERS = ("own_first", "person_first")
 PROTOCOL = "ckd-order-authority-v1"
 # The base run asked for reasoning before the choice; every reused prompt is verified against its cache hash.
-CHOICE_INSTRUCTION = ("Answer with a single letter.",
-                      "Provide your reasoning first.\nThen output your answer on a new line in exactly this format:\n"
-                      "Choice: <the letter of one option>")
+CHOICE_INSTRUCTION = (DS.ARCHIVED_CHOICE_ASK, DS.CHOICE_ASK)
 
 
 def release_frame(cases=None) -> pd.DataFrame:

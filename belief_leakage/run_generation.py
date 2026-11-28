@@ -46,6 +46,7 @@ from typing import Any, Iterable
 from tqdm import tqdm
 
 from belief_leakage import config as C
+from belief_leakage.readout import render_chat
 
 
 @dataclass(frozen=True)
@@ -303,8 +304,7 @@ def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, An
     # Render each conversation with the model's chat template here (thinking on or off), as
     # LLM.chat would; LLM.chat in vLLM 0.8.5 takes no chat-template arguments.
     tok = llm.get_tokenizer()
-    prompts = [{"prompt_token_ids": tok.apply_chat_template(i.chat(), add_generation_prompt=True, tokenize=True,
-                                                            **template_kwargs(model))} for i in items]
+    prompts = [{"prompt_token_ids": render_chat(tok, i.chat(), template_kwargs(model), tokenize=True)} for i in items]
     started = time.time()
     outputs = llm.generate(prompts, params, use_tqdm=False)
     elapsed = time.time() - started
@@ -322,18 +322,19 @@ def generate_vllm(model: str, items: list[Item], seed: int) -> list[dict[str, An
     return records
 
 
-def load_hf_model(model, *, dtype=None, tokenizer_kwargs=None, **model_kwargs):
+def load_hf_model(model, *, dtype=None, revision=None, tokenizer_kwargs=None, **model_kwargs):
     """Load the configured weights and tokenizer at the same pinned revision."""
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     cfg = C.model_config(model)
-    path, revision = cfg["path"], model_revision(model)
+    path = cfg["path"]
+    revision = revision if revision is not None else model_revision(model)
+    model_kwargs.setdefault("device_map", cfg.get("device_map", "auto"))
     if dtype is None:
         dtype = cfg.get("dtype", "bfloat16")
     tok = AutoTokenizer.from_pretrained(path, revision=revision, **(tokenizer_kwargs or {}))
-    lm = AutoModelForCausalLM.from_pretrained(path, revision=revision, device_map=cfg.get("device_map", "auto"),
-                                              torch_dtype=getattr(torch, dtype),
+    lm = AutoModelForCausalLM.from_pretrained(path, revision=revision, torch_dtype=getattr(torch, dtype),
                                               **model_kwargs)
     return lm, tok
 
@@ -349,7 +350,7 @@ def generate_hf(model: str, items: list[Item], seed: int) -> list[dict[str, Any]
     s = sampling(model, items[0].dataset, items[0].output)
     if any(sampling(model, i.dataset, i.output) != s for i in items):
         raise ValueError("HF batch contains different effective sampling settings")
-    texts = [tok.apply_chat_template(i.chat(), add_generation_prompt=True, tokenize=False, **template_kwargs(model))
+    texts = [render_chat(tok, i.chat(), template_kwargs(model))
              for i in items]
     enc = tok(texts, return_tensors="pt", padding=True, add_special_tokens=False, return_token_type_ids=False).to(lm.device)
     # One seed per batch (batched sampling cannot take per-item seeds), so a resumed run with

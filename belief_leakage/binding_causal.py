@@ -47,14 +47,11 @@ import pandas as pd
 from belief_leakage import binding as B
 from belief_leakage import config as C
 from belief_leakage.beliefs import clip_logit
-from belief_leakage.leakage import slope
+from belief_leakage.leakage import interval, slope
 from belief_leakage.package_run import file_sha256
+from belief_leakage.readout import CausalReadout, NO_REASONING, PREFIX, REASONING, encode_prompt, no_reasoning, set_tf32
 
-PREFIX = '{"probability": 0.'
-REASONING = ("Provide your reasoning first.\nThen output valid JSON on a new line in exactly this structure:\n"
-             '{"probability": <number>}\n\nThe number must be between 0 and 1.')
-NO_REASONING = ('Do not explain. Output only valid JSON in exactly this structure:\n'
-                '{"probability": <number>}\n\nThe number must be between 0 and 1.')
+logit_of = clip_logit
 FILLER = "\n".join([
     "Clinic notice (not about this patient):",
     "The waiting room is open from 8 am to 6 pm on weekdays.",
@@ -123,12 +120,6 @@ DEFAULTS = {
 
 
 # Prompts and positions
-def no_reasoning(prompt: str) -> str:
-    if REASONING not in prompt:
-        raise ValueError("prompt lacks the probability instruction")
-    return prompt.replace(REASONING, NO_REASONING)
-
-
 def with_filler(prompt: str) -> str:
     """The prompt with the neutral filler block right after its first record block (prepended if it has only
     one), so the filler control's keys sit as close to the queries as the records do."""
@@ -148,14 +139,9 @@ class Encoded:
 
 def encode(tok, prompt: str, template_kwargs: dict) -> Encoded:
     """Chat template + forced prefix, with token positions of every role the causal tests use."""
-    chat = tok.apply_chat_template([{"role": "user", "content": prompt}], add_generation_prompt=True,
-                                   tokenize=False, **template_kwargs)
-    enc = tok(chat + PREFIX, add_special_tokens=False, return_offsets_mapping=True)
-    starts, ends = np.array(enc["offset_mapping"]).reshape(-1, 2).T
-    real = ends > starts  # tokens that cover text
-    base = chat.find(prompt)
-    if base < 0:
-        raise ValueError("prompt not found in the chat template")
+    ids, offsets, base, chat_end = encode_prompt(tok, prompt, template_kwargs, PREFIX)
+    starts, ends = offsets.T
+    real = ends > starts
 
     def last_token(char_end):  # token holding character char_end - 1
         return int(np.flatnonzero(real & (starts < char_end))[-1])
@@ -163,8 +149,9 @@ def encode(tok, prompt: str, template_kwargs: dict) -> Encoded:
     def span(a, b):  # tokens overlapping characters [a, b)
         return np.flatnonzero(real & (starts < b) & (ends > a)).tolist()
 
-    pos, groups = {}, {}
+    pos, groups, name = {}, {}, None
     for blk in B.record_blocks(prompt):
+        name = name or blk["name"]
         pos[f"{blk['owner']}_end"] = last_token(base + blk["end"])
         groups[blk["owner"]] = span(base + blk["start"], base + blk["end"])
     if FILLER in prompt:
@@ -175,7 +162,6 @@ def encode(tok, prompt: str, template_kwargs: dict) -> Encoded:
         raise ValueError("prompt lacks the probability question")
     q_start = base + question + 2
     q_end = base + prompt.index("?", question) + 1
-    name = B.person_name(prompt)
     if name:
         at = prompt.rfind(f" {name} ", question, q_end - base)
         if at < 0:
@@ -183,10 +169,10 @@ def encode(tok, prompt: str, template_kwargs: dict) -> Encoded:
         pos["name"] = last_token(base + at + 1 + len(name))
     pos["question_end"] = last_token(q_end)
     pos["prompt_end"] = last_token(base + len(prompt))
-    pos["gen_start"] = last_token(len(chat))
-    pos["answer"] = len(enc["input_ids"]) - 1
-    groups["readout"] = list(range(span(q_start, q_end)[0], len(enc["input_ids"])))
-    return Encoded(list(enc["input_ids"]), pos, groups)
+    pos["gen_start"] = last_token(chat_end)
+    pos["answer"] = len(ids) - 1
+    groups["readout"] = list(range(span(q_start, q_end)[0], len(ids)))
+    return Encoded(ids, pos, groups)
 
 
 # Interventions, one per batch row
@@ -198,7 +184,7 @@ class Variant:
     knock: list = field(default_factory=list)    # (start layer, query positions, key positions, include new tokens)
 
 
-class Lens:
+class Lens(CausalReadout):
     """A causal LM with per-row interventions: residual edits after decoder layers and attention-mask
     knockouts before attention (eager attention, so every layer receives the 4D mask)."""
 
@@ -206,24 +192,13 @@ class Lens:
                  dtype: str = "float32", statistic: str = "mean_logit"):
         # float32 by default: in bfloat16 the batch shape alone moves a readout by ~0.03 in probability,
         # as large as the effects the causal tests look for (batched rows are exact in float32).
-        import torch
-        self.torch = torch
         if statistic not in ("mean_logit", "expected_p"):
             raise ValueError(f"unknown readout statistic {statistic!r}")
-        self.statistic = statistic
         if lm is None:
             from belief_leakage.run_generation import load_hf_model, template_kwargs as tk
             lm, tok = load_hf_model(model, dtype=dtype, attn_implementation="eager")
             template_kwargs = tk(model)
-        lm.eval()
-        self.lm, self.tok = lm, tok
-        self.device = device or next(lm.parameters()).device
-        self.kw = template_kwargs if template_kwargs is not None else {"enable_thinking": False}
-        self.layers = lm.model.layers
-        self.n_layers = len(self.layers)
-        self.digits = [tok.convert_tokens_to_ids(str(d)) for d in range(10)]
-        if len(set(self.digits)) != 10 or any(d is None or d == tok.unk_token_id for d in self.digits):
-            raise ValueError("tokenizer lacks single-digit tokens")
+        super().__init__(lm, tok, device, template_kwargs, statistic)
         # State of the current forward pass (set by _run)
         self._rows: list[Variant] = []
         self._offset = 0              # absolute position of the pass's first query token
@@ -233,7 +208,6 @@ class Lens:
         self._captured = {}
         self._mask = None             # the pass's attention mask, built at layer 0 and extended layer by layer
         self._prefix = None           # (prefix ids, legacy cache) of the last shared prefix
-        self.batch_cap = None         # largest batch that fitted, once one ran out of memory
         self._handles = []
         for i, layer in enumerate(self.layers):
             self._handles.append(layer.register_forward_hook(self._edit_hook(i + 1)))
@@ -311,11 +285,7 @@ class Lens:
                 n = len(self._rows)
                 self._mask = mask.clone() if mask.shape[0] == n else mask.expand(n, *mask.shape[1:]).clone()
                 if self._tree:
-                    # Candidate answer tokens are parallel continuations: none sees another.
-                    t = self._tree
-                    block = torch.full((t, t), torch.finfo(mask.dtype).min, dtype=mask.dtype, device=mask.device)
-                    block.fill_diagonal_(0)
-                    self._mask[:, 0, :, -t:] = block
+                    self._isolate_branches(self._mask, self._tree)
             mask = self._mask
             q, k = mask.shape[2], mask.shape[3]
             low = torch.finfo(mask.dtype).min
@@ -361,41 +331,19 @@ class Lens:
         in one pass, as parallel continuations at the same position that each see only the prompt (tree mask),
         under the rows' interventions. A first digit with negligible probability in every row is valued at its
         interval midpoint. Returns (expected probability, digit mass of the first digit)."""
-        torch = self.torch
-        d1 = logits.softmax(-1)[:, self.digits]
-        mass = d1.sum(-1)
-        p1 = d1 / mass[:, None]
-        peak = p1.amax(0).tolist()
-        cand = [a for a in range(10) if peak[a] >= 1e-6]
-        n, t = len(rows), len(cand)
-        new = torch.tensor([[self.digits[a] for a in cand]] * n, device=self.device)
-        position = torch.tensor(lengths, device=self.device)[:, None].expand(-1, t)
-        if mask is not None:
-            mask = torch.cat([mask, torch.ones(n, t, dtype=mask.dtype, device=self.device)], 1)
-        with self._run(rows, offset=width, new_tokens=True, tree=t):
-            out = self.lm(new, attention_mask=mask, past_key_values=cache, position_ids=position, use_cache=True,
-                          logits_to_keep=t)
-        d2 = out.logits[:, -t:].float().softmax(-1)[:, :, self.digits]   # rows, candidates, second digit
-        end = (1 - d2.sum(-1)).clamp_min(0)                               # anything else ends the number
-        tenths = torch.arange(10, device=self.device, dtype=torch.float32)
-        a = torch.tensor(cand, device=self.device, dtype=torch.float32)
-        # f(p) is averaged over the two-digit answer distribution: the probability itself ("expected_p"), or its
-        # clipped logit ("mean_logit", as session 1's belief is the mean clipped logit of its samples). A mean
-        # logit is returned as the probability whose clipped logit it is, so logit_of(p) recovers it exactly.
-        if self.statistic == "expected_p":
-            def f(p):
-                return p
-        else:
-            def f(p):
-                p = p.clamp(0.01, 0.99)
-                return torch.log(p) - torch.log1p(-p)
-        cond = f(tenths / 10 + 0.045).repeat(n, 1)
-        cond[:, cand] = ((d2 * f(a[None, :, None] / 10 + tenths[None, None, :] / 100)).sum(-1)
-                         + end * f(a[None, :] / 10)) / (d2.sum(-1) + end)
-        value = (p1 * cond).sum(-1)
-        if self.statistic != "expected_p":
-            value = torch.sigmoid(value)
-        return value.cpu().numpy(), mass.cpu().numpy()
+        def continuations(tokens):
+            torch = self.torch
+            n, t = len(rows), len(tokens)
+            ids, position = self._branch_inputs(tokens, lengths)
+            attention = mask
+            if mask is not None:
+                attention = torch.cat([mask, mask.new_ones((n, t))], 1)
+            with self._run(rows, offset=width, new_tokens=True, tree=t):
+                out = self.lm(ids, attention_mask=attention, past_key_values=cache, position_ids=position,
+                              use_cache=True, logits_to_keep=t)
+            return out.logits[:, -t:].float()
+
+        return self._digit_readout(logits, continuations, min_share=1e-6)
 
     def _captures(self, n):
         """The captured rows (layers + 1, positions, hidden), None for rows that captured nothing."""
@@ -404,24 +352,9 @@ class Lens:
                 for r in range(n)]
 
     def _halving(self, items: list, size: int, run) -> list:
-        """``run`` on consecutive chunks of ``items``. A chunk that runs out of memory is retried at half the
-        size, which is kept (``batch_cap``) for every later call."""
-        torch = self.torch
-        size = min(size, self.batch_cap or size)
-        out, k = [], 0
-        while k < len(items):
-            try:
-                out.append(run(items[k:k + size]))
-            except torch.OutOfMemoryError:
-                self._captured = {}
-                if size == 1:
-                    raise
-                torch.cuda.empty_cache()
-                size = self.batch_cap = max(1, size // 2)
-                print(f"[lens] out of memory: batch -> {size}", flush=True)
-                continue
-            k += size
-        return out
+        def discard_captures():
+            self._captured.clear()
+        return list(self._batches(items, size, run, on_oom=discard_captures))
 
     def readout(self, ids, variants, *, hidden_at=None, reuse_prefix=True):
         """Expected probability over two digits after the forced prefix, one row per variant of one prompt.
@@ -461,27 +394,15 @@ class Lens:
         return tuple([out[i][j] for i in range(len(encodings))] for j in range(3))
 
     def _readout_padded(self, encs, hidden_at):
-        torch = self.torch
-        pad = self.tok.pad_token_id if self.tok.pad_token_id is not None else self.tok.eos_token_id
-        lengths = [len(e.ids) for e in encs]
-        width, n = max(lengths), len(encs)
-        ids = torch.tensor([[pad] * (width - m) + e.ids for e, m in zip(encs, lengths)], device=self.device)
-        mask = torch.tensor([[0] * (width - m) + [1] * m for m in lengths], device=self.device)
-        capture = [[width - m + q for q in a] if a else None for a, m in zip(hidden_at, lengths)]
+        ids, mask, lengths, starts = self._padded_tokens([e.ids for e in encs], left=True)
+        width, n = ids.shape[1], len(encs)
+        capture = [[start + q for q in a] if a else None for a, start in zip(hidden_at, starts)]
         with self._run(capture=capture if any(capture) else None):
             out = self.lm(ids, attention_mask=mask, position_ids=(mask.cumsum(-1) - 1).clamp_min(0),
                           use_cache=True, logits_to_keep=1)
         hidden = self._captures(n)
         p, mass = self._answer(out.logits[:, -1].float(), out.past_key_values, [Variant()] * n, width, lengths, mask)
         return [(float(p[r]), float(mass[r]), hidden[r]) for r in range(n)]
-
-    def close(self):
-        for h in self._handles:
-            h.remove()
-
-
-def logit_of(p):
-    return clip_logit(np.asarray(p, dtype=float))
 
 
 # Cells and prompts from session 1
@@ -1145,9 +1066,7 @@ def _boot(fns: dict, n: int, resamples: int, seed: int) -> dict:
     draws = [rng.integers(0, n, n) for _ in range(resamples)]
     out = {}
     for name, fn in fns.items():
-        d = np.array([fn(i) for i in draws], dtype=float)
-        d = d[np.isfinite(d)]
-        lo, hi = np.percentile(d, [2.5, 97.5]) if len(d) else (np.nan, np.nan)
+        lo, hi = interval([fn(i) for i in draws])
         out[name] = (float(fn(np.arange(n))), float(lo), float(hi))
     return out
 
@@ -1373,9 +1292,7 @@ def main():
         for stage in stages:
             if stage in GPU_STAGES:
                 if lens is None:
-                    import torch
-                    torch.backends.cuda.matmul.allow_tf32 = bool(cfg.get("tf32", True))
-                    torch.backends.cudnn.allow_tf32 = bool(cfg.get("tf32", True))
+                    set_tf32(bool(cfg.get("tf32", True)))
                     lens = Lens(args.model, dtype=cfg.get("dtype", "float32"),
                                 statistic=cfg.get("readout_statistic", "mean_logit"))
                 GPU_STAGE_FUNCTIONS[stage](run, source, args.model, lens, cfg)

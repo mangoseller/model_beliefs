@@ -309,11 +309,9 @@ def summarise(points, cpoints, draws, cdraws, take=None):
     crow = []
     for name, value in cpoints.items():
         d = cdraws[name] if take is None else cdraws[name][take]
-        total = len(d)
-        d = d[np.isfinite(d)]
-        lo, hi = np.percentile(d, [2.5, 97.5]) if len(d) else (np.nan, np.nan)
-        crow.append(dict(contrast=name, estimate=value, ci_lower=lo, ci_upper=hi, usable_draws=len(d),
-                         resamples=total))
+        (lo, hi), usable = L.finite_percentiles(d)
+        crow.append(dict(contrast=name, estimate=value, ci_lower=lo, ci_upper=hi, usable_draws=usable,
+                         resamples=len(d)))
     return cells, pd.DataFrame(crow)
 
 

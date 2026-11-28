@@ -15,12 +15,16 @@ def display(model: str) -> str:
     return MODEL_DISPLAY.get(model) or LOCAL_DISPLAY.get(model, model)
 
 
+def markdown_rows(frame, digits, rows):
+    """Render a Markdown table, retaining the caller's row value types and decimal precision."""
+    shown = frame.copy()
+    for column in shown.select_dtypes("float"):
+        shown[column] = shown[column].map(lambda v: "" if pd.isna(v) else f"{v:.{digits}f}")
+    head = "| " + " | ".join(map(str, shown.columns)) + " |\n|" + "---|" * len(shown.columns) + "\n"
+    return head + "".join("| " + " | ".join(map(str, row)) + " |\n" for row in rows(shown))
+
+
 def md_table(frame: pd.DataFrame, cols: list[str], digits: int = 3) -> str:
     if frame.empty:
         return "_(no rows)_\n"
-    f = frame[cols].copy()
-    for c in f.columns:
-        if f[c].dtype.kind == "f":
-            f[c] = f[c].map(lambda v: "" if pd.isna(v) else f"{v:.{digits}f}")
-    head = "| " + " | ".join(cols) + " |\n|" + "---|" * len(cols) + "\n"
-    return head + "".join("| " + " | ".join(str(v) for v in r) + " |\n" for r in f.to_numpy())
+    return markdown_rows(frame[cols], digits, pd.DataFrame.to_numpy)

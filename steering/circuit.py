@@ -40,7 +40,7 @@ from belief_leakage import config as experiment_config
 from steering import interventions
 from steering import prompts
 from steering import run
-from steering.run import patients_to_sample
+from steering.run import held_out_patients, patients_to_sample
 from steering.transcripts import WritingPoint, first_written_value
 from steering.engine import Edit, Job
 from steering.results import read_rows as read, reply_rows as sampled_reply_rows, write_rows as write
@@ -142,22 +142,18 @@ def toward_other(layout: prompts.Layout, query: str, alpha: float) -> float:
     return alpha if layout.block(query).slot == 0 else -alpha
 
 
-def is_clean_flip(right_sign: float, base: float, donor: float, min_gap) -> bool:
+def is_clean_flip(right_sign, base, donor, min_gap):
     """Whether a lookup counts: the base margin is right (has ``right_sign``), the donor's is the other
     record's, and they lie at least ``min_gap`` logits apart. ``min_gap`` None accepts any pair of margins
     that differ (for tests on a model that cannot do the task)."""
     if min_gap is None:
         return abs(base - donor) > 1e-9
-    return right_sign * base > 0 and right_sign * donor < 0 and right_sign * (base - donor) >= min_gap
+    return (right_sign * base > 0) & (right_sign * donor < 0) & (right_sign * (base - donor) >= min_gap)
 
 
 def all_heads(engine) -> list[tuple[int, int]]:
     """Every (layer, head), layer 0 being the first block."""
     return [(layer, head) for layer in range(engine.n_layers) for head in range(engine.n_heads)]
-
-
-def held_out_patients(cases: pd.Series, cfg: dict) -> list[str]:
-    return sorted(cases.index[cases == cfg["intervene_split"]])
 
 
 def fit_patients(cases: pd.Series) -> list[str]:
@@ -226,6 +222,11 @@ def lookup_runs(engine, vectors: dict, arm: str, pair: dict, alpha: float, atten
     return runs
 
 
+def value_margins(logits, pair: dict) -> list[float]:
+    """Per row: the logit of PERSON's value minus the model's."""
+    return (logits[:, pair["tp"]] - logits[:, pair["to"]]).tolist()
+
+
 def run_items(engine, pair: dict, items: list[dict], batch: int) -> list[float]:
     """The margin of each patched run. An item names its ``query`` and may carry ``resid`` (residual-stream
     edits), ``zpatch`` (head outputs to replace) and ``mpatch`` (MLP outputs to replace). The records are run
@@ -240,7 +241,7 @@ def run_items(engine, pair: dict, items: list[dict], batch: int) -> list[float]:
                                   edits=[item.get("resid") or [] for item in part],
                                   zpatch=[item.get("zpatch") for item in part],
                                   mpatch=[item.get("mpatch") for item in part])
-        return (logits[:, pair["tp"]] - logits[:, pair["to"]]).tolist()
+        return value_margins(logits, pair)
 
     return engine._halving(items, batch, run_batch)
 
@@ -300,8 +301,7 @@ def pairs_of(engine, cell_prompts: dict, fields: int):
 def case_cells(case: str, cases: pd.Series, cfg: dict) -> dict:
     """{(arm, order): prompt} of one patient's false-evidence cells (the prompt asking for PERSON's
     belief)."""
-    frame = prompts.build(cases.loc[[case]], cfg["pairs"]["false"])
-    frame = frame[frame.role == "C"]
+    frame = prompts.build(cases.loc[[case]], cfg["pairs"]["false"], roles=("C",))
     return {(row.arm, row.block_order): row.prompt for row in frame.itertuples()}
 
 
@@ -370,11 +370,7 @@ def effects(frame: pd.DataFrame, min_gap: float | None) -> pd.DataFrame:
     """The rows that count (see ``is_clean_flip``, by ``query``, ``base`` and ``donor``), with a column
     ``effect``: the share of the way from the base margin to the donor's that the patched margin has gone."""
     right_sign = np.where(frame["query"] == "person", 1.0, -1.0)
-    if min_gap is None:
-        counts = (frame.base - frame.donor).abs() > 1e-9
-    else:
-        gap = right_sign * (frame.base - frame.donor)
-        counts = (right_sign * frame.base > 0) & (right_sign * frame.donor < 0) & (gap >= min_gap)
+    counts = is_clean_flip(right_sign, frame.base, frame.donor, min_gap)
     kept = frame[counts].copy()
     kept["effect"] = (kept.patched - kept.base) / (kept.donor - kept.base)
     return kept
@@ -514,8 +510,7 @@ def test_head_sets(engine, run_dir: Path, cfg: dict, cases: pd.Series, vectors: 
     shown_columns = {head: engine.head_dims([head]) for head in shown}
     saved_sets = {"|".join(map(str, key)): heads for key, heads in head_sets.items()}
     (folder / "sets.json").write_text(json.dumps(saved_sets))
-    offset = int(settings.get("offset", 0))
-    patients = held_out_patients(cases, cfg)[offset: offset + int(settings["patients"])]
+    patients = held_out_patients(cases, cfg, settings)
     todo = (case for case in patients if not (folder / "faith" / f"{case}.parquet").exists())
     for done, case in enumerate(todo):
         started = time.time()
@@ -798,11 +793,7 @@ def reply_table(run_dir: Path, cfg: dict, draws: int = 1000) -> pd.DataFrame:
     min_gap = cfg["circuit"]["min_gap"]
     rng = np.random.default_rng(int(cfg["circuit"]["seed"]))
     right_sign = np.where(patched.wrote == "model's", 1.0, -1.0)
-    if min_gap is None:
-        flipped = (patched.base - patched.donor).abs() > 1e-9
-    else:
-        gap = right_sign * (patched.base - patched.donor)
-        flipped = (right_sign * patched.base > 0) & (right_sign * patched.donor < 0) & (gap >= min_gap)
+    flipped = is_clean_flip(right_sign, patched.base, patched.donor, min_gap)
     counted = patched[flipped].copy()
     counted["effect"] = (counted.patched - counted.base) / (counted.donor - counted.base)
     counted["value"] = np.where(counted.kind == "keep", 1 - counted.effect, counted.effect)
@@ -1647,7 +1638,7 @@ def run_with_knockouts(engine, pair: dict, query: str, items: list[dict], batch:
                                           knock=[item.get("knock_q") or None for item in part])
         logits, _, _ = engine.run([ids[tail_start:]] * len(part), state=question_state, keep=False,
                                   knock=[knockouts_from_tail(item) for item in part])
-        return (logits[:, pair["tp"]] - logits[:, pair["to"]]).tolist()
+        return value_margins(logits, pair)
 
     return engine._halving(items, batch, run_batch)
 
@@ -1777,8 +1768,7 @@ def test_lookup_steps(setup: ConcreteSetup, place_vectors: dict) -> None:
     seed = int(setup.cfg["circuit"]["seed"]) + 8
     reader_sets = reader_and_random_sets(engine, readers, seed) if readers else {}
     windows = interventions.windows(engine.n_layers, int(settings["parts"])) + [(1, engine.n_layers)]
-    offset = int(settings.get("offset", 0))
-    patients = held_out_patients(setup.cases, setup.cfg)[offset: offset + int(settings["patients"])]
+    patients = held_out_patients(setup.cases, setup.cfg, settings)
     todo = (case for case in patients if not (setup.folder / "test" / f"{case}.parquet").exists())
     for done, case in enumerate(todo):
         started = time.time()
@@ -1944,8 +1934,7 @@ def stage_concrete(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vect
                           batch=int(settings["batch"]))
     if not (folder / "place.pt").exists():
         fit_place_vectors(setup)
-    saved_vectors = engine.torch.load(folder / "place.pt", map_location="cpu")
-    place_vectors = {name: vector.to(engine.device) for name, vector in saved_vectors.items()}
+    place_vectors = load_place_vectors(engine, run_dir)
     if not (folder / "field_scan.parquet").exists():
         field_scan(setup)
     test_lookup_steps(setup, place_vectors)

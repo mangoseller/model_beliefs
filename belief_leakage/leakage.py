@@ -242,15 +242,25 @@ def _bootstrap_tables(frame, evaluate, resamples, seed):
     return {group: _bootstrap_summary(point, draws[group], len(frame), resamples) for group, point in points.items()}
 
 
+def finite_percentiles(draws, levels=(2.5, 97.5)):
+    """Percentiles and number of usable bootstrap draws, excluding NaNs and infinities."""
+    draws = np.asarray(draws, dtype=float)
+    finite = draws[np.isfinite(draws)]
+    values = np.percentile(finite, levels) if len(finite) else np.full(len(levels), np.nan)
+    return tuple(values), len(finite)
+
+
+def interval(draws) -> tuple[float, float]:
+    return finite_percentiles(draws)[0]
+
+
 def _bootstrap_summary(point, draws, n, resamples):
     rows = []
     for key, value in point.items():
-        d = np.asarray(draws[key], dtype=float)
-        d = d[np.isfinite(d)]
-        lo, med, hi = np.percentile(d, [2.5, 50, 97.5]) if len(d) else (np.nan, np.nan, np.nan)
+        (lo, med, hi), usable = finite_percentiles(draws[key], (2.5, 50, 97.5))
         rows.append({"statistic": key, "estimate": float(value), "boot_median": float(med),
                      "ci_lower": float(lo), "ci_upper": float(hi), "n_cases": n,
-                     "resamples": int(resamples), "usable_draws": len(d)})
+                     "resamples": int(resamples), "usable_draws": usable})
     if "beta_C" in point and "beta_D" in point:
         rows.append(fieller(point["beta_C"], point["beta_D"], np.asarray(draws["beta_C"]),
                             np.asarray(draws["beta_D"])) | {"n_cases": n, "resamples": int(resamples)})

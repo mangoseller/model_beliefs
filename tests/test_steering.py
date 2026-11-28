@@ -125,6 +125,27 @@ class EngineChecks(unittest.TestCase):
     def lay(self, arm="false_neutral", order="person_first"):
         return self.lays[(arm, order, "C", 0)]
 
+    def test_oom_retry_preserves_order_and_batch_cap(self):
+        from tests.test_binding_causal import tiny_lens
+
+        def run(batch):
+            if len(batch) > 2:
+                raise self.E.torch.OutOfMemoryError()
+            return batch
+
+        items = [0, 1, 2, 3, 4]
+        lens, previous_cap = tiny_lens(), self.E.batch_cap
+        try:
+            lens._captured = {0: {}}
+            self.assertEqual(lens._halving(items, 4, run), [[0, 1], [2, 3], [4]])
+            self.assertEqual(lens._captured, {})
+            self.assertEqual(self.E._halving(items, 4, run), items)
+            self.assertEqual((lens.batch_cap, self.E.batch_cap), (2, 2))
+            self.assertEqual(lens._halving(items, 8, list), [[0, 1], [2, 3], [4]])
+        finally:
+            lens.close()
+            self.E.batch_cap = previous_cap
+
     def test_chunks_and_padding_are_exact(self):
         E, a, b = self.E, self.lay().ids, self.lay("false_labelled").ids
         self.assertNotEqual(len(a), len(b))
