@@ -1,4 +1,4 @@
-"""The curse-of-knowledge experiment (see README.md and docs/design.md).
+"""The curse-of-knowledge experiment (see README.md).
 
-It builds on the first-order package ``latent_beliefs``, which it does not modify.
+It uses the latent model from the Smolin and Wilder replication package.
 """

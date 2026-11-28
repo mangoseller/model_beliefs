@@ -24,7 +24,7 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-from latent_beliefs.latent.model import OutputSpec
+from archive.smolin_wilder_replication.latent.model import OutputSpec
 from second_order import config as C
 from second_order import datasets as DS
 from second_order.conditions import CONDITIONS

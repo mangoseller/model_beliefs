@@ -31,8 +31,8 @@ import numpy as np
 import pandas as pd
 import torch
 
-from latent_beliefs.latent.domains import likelihood_values
-from latent_beliefs.latent.model import FitConfig, ProbabilisticLatentModel, fit_model
+from archive.smolin_wilder_replication.latent.domains import likelihood_values
+from archive.smolin_wilder_replication.latent.model import FitConfig, ProbabilisticLatentModel, fit_model
 from second_order import config as C
 from second_order.beliefs import clip_logit
 from second_order.responses import configured_specs

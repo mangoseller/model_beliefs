@@ -1,6 +1,6 @@
 """The two datasets, loaded verbatim: every prompt is sent exactly as the dataset gives it.
 
-* ``ckd``: ``datasets/ckd_second_order_v3`` (see docs/ckd.md).  150
+* ``ckd``: ``datasets/ckd_second_order_v3``.  150
   patients; per condition one probability question and 15 multiple-choice questions
   in two option orders, standalone comprehension checks after C, a high-threshold
   supplement and role-swap diagnostics.  One call per row; A and B

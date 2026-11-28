@@ -23,8 +23,6 @@ kept its private evidence out of PERSON's belief, $1$ means it all leaked in. He
 $\lambda = (\ell_C - \ell_M)/(\ell_D - \ell_M) \approx 0.84$; people score about $0.51$
 (Camerer, Loewenstein and Weber, 1989).
 
-![What λ, φ and τ measure](docs/curse_schematic.png)
-
 Across cases, with $x = \ell_A - \ell_B$ and $x'$ the same gap from a second, independent run:
 
 $$
@@ -38,8 +36,7 @@ where $\beta_C$ and $\beta_D$ are the slopes of $\ell_C - \ell_M$ and $\ell_D - 
 corrects for noise in $x$, $\varphi$ is how strongly PERSON's belief follows the evidence, and $\tau$
 is a theory-of-mind score.
 
-The study runs two settings, PERSON missing evidence and PERSON given altered evidence. The full
-design is in [`docs/design.md`](docs/design.md).
+The study runs two settings, PERSON missing evidence and PERSON given altered evidence.
 
 ## Running it
 
@@ -52,8 +49,7 @@ nohup bash run_experiment.sh > run.out 2>&1 &     # the full run
 ```
 
 This installs everything, runs the experiment on both models, and packages the results as
-`runs/<run_id>.tar.gz`. Start with `RUN_REPORT.md` inside it. Details are in
-[`docs/running.md`](docs/running.md).
+`runs/<run_id>.tar.gz`. Start with `RUN_REPORT.md` inside it.
 
 ## Layout
 
@@ -61,9 +57,9 @@ This installs everything, runs the experiment on both models, and packages the r
 second_order/      the experiment, and its config.yaml
 steering/          the lookup circuit behind the false-evidence leak: steering, patching, the lookup as a program (steering/README.md)
 datasets/          the experiment's input data
-latent_beliefs/    the paper's replication package (latent_beliefs/README.md)
-first_order/       first-order belief readouts on small models (first_order/README.md)
-docs/              design, running, data formats
+archive/
+  first_order_toolkit/         standalone first-order belief experiments
+  smolin_wilder_replication/   paper reproduction and latent model used by second_order/
 tests/             unit and end-to-end tests
 requirements/      pinned dependencies for run_experiment.sh and for steering/
 ```

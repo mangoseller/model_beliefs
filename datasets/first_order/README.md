@@ -1,7 +1,7 @@
 # Scenario format (for adding new beliefs / model organisms)
 
 Each scenario file contains the cases and question templates for one domain. The first-order toolkit expands
-them into the paper's 16 outputs per case. [Prompt builder](../../first_order/model_beliefs/questions.py)
+them into the paper's 16 outputs per case. [Prompt builder](../../archive/first_order_toolkit/model_beliefs/questions.py)
 
 ```json
 {
@@ -36,8 +36,8 @@ Rules:
   compared against it.
 - Other keys (`source`, per-case `meta`, `pair`, ...) are kept for reference and ignored by the code.
 
-From the `first_order/` toolkit directory, check that a new file renders properly:
+From the `archive/first_order_toolkit/` toolkit directory, check that a new file renders properly:
 
 ```bash
-.venv/bin/python -c "from model_beliefs.questions import *; s=load_scenario('../datasets/first_order/NEW.json'); q=build_questions(s); print(build_prompt(s,q[2],s['cases'][0])[0])"
+.venv/bin/python -c "from model_beliefs.questions import *; s=load_scenario('../../datasets/first_order/NEW.json'); q=build_questions(s); print(build_prompt(s,q[2],s['cases'][0])[0])"
 ```

@@ -1,11 +1,14 @@
-# downloaded and generated data (docs/data.md)
+# local documentation
+/docs/
+
+# downloaded and generated data
 /data/
 /build/
 /outputs/
 /figures/
 /runs/
-first_order/data/*
-!first_order/data/.gitkeep
+archive/first_order_toolkit/data/*
+!archive/first_order_toolkit/data/.gitkeep
 
 # large arrays
 *.pt
