@@ -22,10 +22,6 @@ class Condition:
     def about(self) -> str:
         return "self" if self.role in ("A", "B") else "person"
 
-    @property
-    def is_belief(self) -> bool:
-        return not self.role.startswith("probe")
-
 
 def _f(setting: str) -> str:
     return "_F" if setting == "false" else ""

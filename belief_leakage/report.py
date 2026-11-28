@@ -6,8 +6,7 @@ import pandas as pd
 
 from archive.smolin_wilder_replication.models import MODEL_DISPLAY
 
-LOCAL_DISPLAY = {"gemma3_4b_mlx": "Gemma 3 4B (local 4-bit)", "gemma3_12b_mlx": "Gemma 3 12B (local 4-bit)",
-                 "qwen3_8b": "Qwen3 8B", "qwen3_14b": "Qwen3 14B", "qwen3_8b_hf": "Qwen3 8B (transformers)",
+LOCAL_DISPLAY = {"qwen3_8b": "Qwen3 8B", "qwen3_14b": "Qwen3 14B", "qwen3_8b_hf": "Qwen3 8B (transformers)",
                  "qwen3_0_6b_hf": "Qwen3 0.6B (smoke)", "synthetic": "Synthetic"}
 
 

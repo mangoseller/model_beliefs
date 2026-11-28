@@ -192,9 +192,7 @@ def write_report(run_dir: Path) -> None:
              f"Created {manifest['created']}; report written {manifest.get('updated')}. "
              f"Models: {', '.join(display(m) for m in manifest['models'])}."
              f"{' **Smoke run** (reduced cases, samples and fits).' if manifest.get('smoke') else ''}\n\n"]
-    warnings = [f"Dataset file `{name}` does not match its recorded SHA-256." for name, ok in
-                manifest.get("datasets", {}).get("ckd_checksums", {}).items() if not ok]
-    warnings += [f"Stage `{s}` {r['status']}: {r.get('error', '')}" for s, r in manifest["stages"].items()
+    warnings = [f"Stage `{s}` {r['status']}: {r.get('error', '')}" for s, r in manifest["stages"].items()
                  if r.get("status") not in ("ok", "running")]
     if manifest.get("git", {}).get("dirty"):
         warnings.append("The repository had uncommitted changes (`record/` holds the exact settings used).")

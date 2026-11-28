@@ -31,6 +31,7 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -39,11 +40,11 @@ from belief_leakage import binding
 from belief_leakage import config as experiment_config
 from steering import interventions
 from steering import prompts
-from steering import run
-from steering.run import held_out_patients, patients_to_sample
 from steering.transcripts import WritingPoint, first_written_value
 from steering.engine import Edit, Job
-from steering.results import read_rows as read, reply_rows as sampled_reply_rows, write_rows as write
+from steering.results import (SIDE, case_prompts, each_patient, held_out_patients, load_vectors, meta_of,
+                              patients_to_sample, read_rows as read, replies_with_prompts, sample_patients,
+                              unedited_replies, unfinished, write_rows as write)
 
 # The tokens the two lookup questions share after the phrase that names the record, in order: before the
 # quoted field name, the field name, the rest of the question, the chat template's tail, and the answer
@@ -136,10 +137,11 @@ def place_sign(pair: dict, query: str) -> int:
     return 1 if pair["queries"][query]["lay"].block(query).slot == 0 else -1
 
 
-def toward_other(layout: prompts.Layout, query: str, alpha: float) -> float:
-    """The slot edit's signed strength that turns the reading away from the queried record: positive strength
-    moves it to the last record, negative to the first."""
-    return alpha if layout.block(query).slot == 0 else -alpha
+def slot_edit_away(layout: prompts.Layout, vectors: dict, arm: str, record: str, alpha: float) -> list[Edit]:
+    """The slot edit at strength ``alpha`` turned away from ``record``'s record, towards the other one (positive
+    strength moves the reading to the last record, negative to the first)."""
+    signed_alpha = alpha if layout.block(record).slot == 0 else -alpha
+    return interventions.mean_edits(layout, vectors, "slot", arm, alpha=signed_alpha)
 
 
 def is_clean_flip(right_sign, base, donor, min_gap):
@@ -168,6 +170,7 @@ class LookupRun:
     head_out: object                # the heads' outputs side by side [layers, tokens, heads x head_dim]
     attention: dict | None = None   # {token group: [layers, heads, 2]}: from the last token, and averaged
     mlp_out: object = None          # the MLPs' outputs [layers, tokens, hidden]
+    attention_map: object = None    # some heads' attention [heads, question tokens, every position]
 
 
 def attention_source_groups(pair: dict, query: str) -> dict:
@@ -187,12 +190,13 @@ def attention_source_groups(pair: dict, query: str) -> dict:
             "phrase": list(range(pair["start"], question["cut"]))}
 
 
-def lookup_runs(engine, vectors: dict, arm: str, pair: dict, alpha: float, attention: bool = False) -> dict:
+def lookup_runs(engine, vectors: dict, arm: str, pair: dict, alpha: float, attention: bool = False,
+                heads: list | None = None) -> dict:
     """The four unpatched runs of a pair: {(query, "clean" | "slot"): LookupRun}.
 
     "slot" is the same question with the records under the slot edit, turned towards the record not asked
     about. All four share one batch. With ``attention``, each run also holds its attention to
-    ``attention_source_groups``."""
+    ``attention_source_groups``; with ``heads``, the token-level attention of those heads."""
     n_ctx = pair["n_ctx"]
     keys, edits, groups = [], [], []
     for query in prompts.QUERIES:
@@ -200,11 +204,7 @@ def lookup_runs(engine, vectors: dict, arm: str, pair: dict, alpha: float, atten
         sources = attention_source_groups(pair, query)
         for condition in ("clean", "slot"):
             keys.append((query, condition))
-            if condition == "slot":
-                signed_alpha = toward_other(layout, query, alpha)
-                edits.append(interventions.mean_edits(layout, vectors, "slot", arm, alpha=signed_alpha))
-            else:
-                edits.append([])
+            edits.append(slot_edit_away(layout, vectors, arm, query, alpha) if condition == "slot" else [])
             groups.append(sources)
     ids = [pair["queries"][query]["ids"] for query, _ in keys]
     after_records = [list(range(n_ctx, len(row))) for row in ids]
@@ -219,31 +219,59 @@ def lookup_runs(engine, vectors: dict, arm: str, pair: dict, alpha: float, atten
         engine.run([row[n_ctx:] for row in ids], state=records_state, keep=False, groups=groups)
         for row, key in enumerate(keys):
             runs[key].attention = engine.attention[row]
+    if heads:
+        engine.run([row[n_ctx:] for row in ids], state=records_state, keep=False, attn_heads=heads)
+        for row, key in enumerate(keys):
+            runs[key].attention_map = engine.attention_maps[row]
     return runs
+
+
+# ==== Running the rest of a prompt from a cached state, one row per intervention
+
+def run_from(engine, state, rows: list[int], *chunks):
+    """The logits after ``chunks`` run one after another, each output row continuing the row of ``state`` that
+    ``rows`` names (a row may be named more than once). A chunk is (tokens, keywords): the tokens every row
+    runs, or a list of them per row, and that chunk's ``Engine.run`` keywords, each a list with one entry per
+    row."""
+    state = state.select(rows)
+    for index, (tokens, keywords) in enumerate(chunks):
+        sequences = tokens if isinstance(tokens[0], list) else [tokens] * len(rows)
+        if index == len(chunks) - 1:
+            logits, _, _ = engine.run(sequences, state=state, keep=False, **keywords)
+            return logits
+        _, state, _ = engine.run(sequences, state=state, **keywords)
+
+
+def margins(logits, first: int, second: int) -> list[float]:
+    """Per row: the logit of token ``first`` minus that of token ``second``."""
+    return (logits[:, first] - logits[:, second]).tolist()
 
 
 def value_margins(logits, pair: dict) -> list[float]:
     """Per row: the logit of PERSON's value minus the model's."""
-    return (logits[:, pair["tp"]] - logits[:, pair["to"]]).tolist()
+    return margins(logits, pair["tp"], pair["to"])
+
+
+def patched_margins(engine, state, items: list[dict], batch: int, question, tokens: tuple[int, int]) -> list:
+    """The margin (the logit of ``tokens[0]`` minus ``tokens[1]``) of each item after the tokens
+    ``question(item)``, run from row 0 of ``state`` under the item's ``resid`` (residual-stream edits),
+    ``zpatch`` (head outputs to replace) and ``mpatch`` (MLP outputs to replace)."""
+    def run_batch(part):
+        patches = dict(edits=[item.get("resid") or [] for item in part],
+                       zpatch=[item.get("zpatch") for item in part], mpatch=[item.get("mpatch") for item in part])
+        logits = run_from(engine, state, [0] * len(part), ([question(item) for item in part], patches))
+        return margins(logits, *tokens)
+
+    return engine._halving(items, batch, run_batch)
 
 
 def run_items(engine, pair: dict, items: list[dict], batch: int) -> list[float]:
-    """The margin of each patched run. An item names its ``query`` and may carry ``resid`` (residual-stream
-    edits), ``zpatch`` (head outputs to replace) and ``mpatch`` (MLP outputs to replace). The records are run
-    once and shared by every item."""
+    """The margin of each patched run of a lookup (see ``patched_margins``); an item names its ``query``. The
+    records are run once and shared by every item."""
     n_ctx = pair["n_ctx"]
     _, records_state, _ = engine.run([pair["queries"]["person"]["ids"][:n_ctx]])
-
-    def run_batch(part):
-        state = records_state.select([0] * len(part))
-        questions = [pair["queries"][item["query"]]["ids"][n_ctx:] for item in part]
-        logits, _, _ = engine.run(questions, state=state, keep=False,
-                                  edits=[item.get("resid") or [] for item in part],
-                                  zpatch=[item.get("zpatch") for item in part],
-                                  mpatch=[item.get("mpatch") for item in part])
-        return value_margins(logits, pair)
-
-    return engine._halving(items, batch, run_batch)
+    return patched_margins(engine, records_state, items, batch,
+                           lambda item: pair["queries"][item["query"]]["ids"][n_ctx:], (pair["tp"], pair["to"]))
 
 
 @dataclass
@@ -347,10 +375,8 @@ def scan_heads(engine, run_dir: Path, cfg: dict, cases: pd.Series, vectors: dict
     settings, folder = cfg["circuit"], run_dir / "circuit"
     heads = all_heads(engine)
     head_columns = {head: engine.head_dims([head]) for head in heads}
-    patients = fit_patients(cases)[: int(settings["scan_patients"])]
-    todo = (case for case in patients if not (folder / "scan" / f"{case}.parquet").exists())
-    for done, case in enumerate(todo):
-        started = time.time()
+
+    def run_patient(case):
         scan_rows, margin_rows, attention_rows = [], [], []
         for arm, order, pair in pairs_of(engine, case_cells(case, cases, cfg), int(settings["scan_fields"])):
             cell = dict(case_id=case, arm=arm, block_order=order)
@@ -361,18 +387,44 @@ def scan_heads(engine, run_dir: Path, cfg: dict, cases: pd.Series, vectors: dict
         write(folder / "clean_fit" / f"{case}.parquet", margin_rows)
         write(folder / "attention" / f"{case}.parquet", attention_rows)
         write(folder / "scan" / f"{case}.parquet", scan_rows)
-        seconds = time.time() - started
-        print(f"[circuit scan] {done + 1} patients, {len(scan_rows)} patched runs, {seconds:.1f}s",
-              flush=True)
+        return f"patients, {len(scan_rows)} patched runs"
+
+    patients = fit_patients(cases)[: int(settings["scan_patients"])]
+    each_patient(unfinished(patients, folder / "scan"), "circuit scan", run_patient, counted=False)
+
+
+def effect_of(patched, base, donor):
+    """The share of the way from the base margin to the donor's that the patched margin has gone."""
+    return (patched - base) / (donor - base)
+
+
+def right_sign(rows: pd.DataFrame):
+    """Per row, the sign of a right margin: of a lookup, +1 where it asks about PERSON's record (its margin is
+    PERSON's value minus the model's); of a reply (rows without ``query``), +1 where it wrote the model's value
+    (its margin is the model's value minus PERSON's)."""
+    if "query" in rows:
+        return np.where(rows["query"] == "person", 1.0, -1.0)
+    return np.where(rows.wrote == "model's", 1.0, -1.0)
+
+
+def flipped(rows: pd.DataFrame):
+    """Whether each patched margin gives the other record's answer."""
+    return right_sign(rows) * rows.patched < 0
+
+
+def cell_labels(rows: pd.DataFrame, cfg: dict) -> pd.Series:
+    """"labelled, person_first" and so on: the prompt format and page order of each row."""
+    labelled_arm = cfg["pairs"]["false"][1]
+    labelling = pd.Series(np.where(rows.arm == labelled_arm, "labelled", "unlabelled"), index=rows.index)
+    return labelling + ", " + rows.block_order
 
 
 def effects(frame: pd.DataFrame, min_gap: float | None) -> pd.DataFrame:
-    """The rows that count (see ``is_clean_flip``, by ``query``, ``base`` and ``donor``), with a column
+    """The rows that count (see ``is_clean_flip``, by ``right_sign``, ``base`` and ``donor``), with a column
     ``effect``: the share of the way from the base margin to the donor's that the patched margin has gone."""
-    right_sign = np.where(frame["query"] == "person", 1.0, -1.0)
-    counts = is_clean_flip(right_sign, frame.base, frame.donor, min_gap)
+    counts = is_clean_flip(right_sign(frame), frame.base, frame.donor, min_gap)
     kept = frame[counts].copy()
-    kept["effect"] = (kept.patched - kept.base) / (kept.donor - kept.base)
+    kept["effect"] = effect_of(kept.patched, kept.base, kept.donor)
     return kept
 
 
@@ -440,24 +492,33 @@ def ranked_and_random_sets(engine, ranking: dict, settings: dict) -> dict:
     return head_sets
 
 
-def set_test_items(engine, counterfactual: Counterfactual, n_ctx: int, set_columns: dict) -> list[dict]:
-    """Patches that test head sets as wholes.
+def head_set_patches(positions: list[int], donor_out, base_out, columns) -> tuple[list, list]:
+    """The two patches that test a head set (``columns``; None: every head) as a whole. "keep": every head's
+    output from the donor except the set's, held at their base values: how much of the base answer the set
+    restores. "swap": only the set's outputs from the donor."""
+    return [(positions, donor_out, None), (positions, base_out, columns)], [(positions, donor_out, columns)]
 
-    "keep": every head's output from the donor except the set, which is held at its base values: how much of
-    the base answer the set restores. "swap": only the set from the donor. First the two exact checks: no head
-    held (the donor's run) and every head held (the base run)."""
+
+def exact_check_items(engine, positions: list[int], donor_out, base_out) -> list[dict]:
+    """The two exact checks among the kept sets: no head held (the donor's run) and every head held (the base
+    run)."""
+    every_head_kept, _ = head_set_patches(positions, donor_out, base_out, None)
+    return [dict(kind="keep", k=0, set="none", zpatch=[(positions, donor_out, None)]),
+            dict(kind="keep", k=engine.n_layers * engine.n_heads, set="all", zpatch=every_head_kept)]
+
+
+def set_test_items(engine, counterfactual: Counterfactual, n_ctx: int, set_columns: dict) -> list[dict]:
+    """Patches that test head sets as wholes, kept and swapped (``head_set_patches``), after the exact
+    checks."""
     positions = counterfactual.positions
     donor_out, base_out = counterfactual.donor_head_out(), counterfactual.base_head_out(n_ctx)
-    all_from_donor = (positions, donor_out, None)
     margins = counterfactual.margins()
-    items = [dict(margins, kind="keep", ranking="", k=0, set="none", zpatch=[all_from_donor]),
-             dict(margins, kind="keep", ranking="", k=engine.n_layers * engine.n_heads, set="all",
-                  zpatch=[all_from_donor, (positions, base_out, None)])]
+    exact_checks = exact_check_items(engine, positions, donor_out, base_out)
+    items = [dict(margins, ranking="", **item) for item in exact_checks]
     for (which, size, name), columns in set_columns.items():
-        items.append(dict(margins, kind="keep", ranking=which, k=size, set=name,
-                          zpatch=[all_from_donor, (positions, base_out, columns)]))
-        items.append(dict(margins, kind="swap", ranking=which, k=size, set=name,
-                          zpatch=[(positions, donor_out, columns)]))
+        keep, swap = head_set_patches(positions, donor_out, base_out, columns)
+        items.append(dict(margins, kind="keep", ranking=which, k=size, set=name, zpatch=keep))
+        items.append(dict(margins, kind="swap", ranking=which, k=size, set=name, zpatch=swap))
     return items
 
 
@@ -478,6 +539,13 @@ def where_items(counterfactual: Counterfactual, pair: dict, shown_columns: dict)
     return items
 
 
+def block_by_block(engine, positions: list[int], donor_resid, **fields) -> list[dict]:
+    """Items that set the residual stream at ``positions`` to the donor's (``donor_resid``, [layers + 1,
+    positions, hidden]) after one block, for each block in turn (``layer`` 1..n), with ``fields``."""
+    return [dict(fields, layer=layer, resid=[Edit("set", positions, donor_resid, layers=(layer, layer))])
+            for layer in range(1, engine.n_layers + 1)]
+
+
 def layerpos_items(engine, counterfactual: Counterfactual, pair: dict) -> list[dict]:
     """The residual stream after one block, at one group of question tokens, taken from the other question's
     run: where "whose record" sits on its way from the phrase to the answer token."""
@@ -491,10 +559,8 @@ def layerpos_items(engine, counterfactual: Counterfactual, pair: dict) -> list[d
     by_group["phrase_last"] = ([base["cut"] - 1], [other["cut"] - 1 - n_ctx])
     items = []
     for group, (positions, donor_rows) in by_group.items():
-        donor_resid = counterfactual.donor.resid[:, donor_rows]
-        for layer in range(1, engine.n_layers + 1):
-            items.append(dict(counterfactual.margins(), kind="layerpos", group=group, layer=layer,
-                              resid=[Edit("set", positions, donor_resid, layers=(layer, layer))]))
+        items += block_by_block(engine, positions, counterfactual.donor.resid[:, donor_rows],
+                                **counterfactual.margins(), kind="layerpos", group=group)
     return items
 
 
@@ -510,10 +576,8 @@ def test_head_sets(engine, run_dir: Path, cfg: dict, cases: pd.Series, vectors: 
     shown_columns = {head: engine.head_dims([head]) for head in shown}
     saved_sets = {"|".join(map(str, key)): heads for key, heads in head_sets.items()}
     (folder / "sets.json").write_text(json.dumps(saved_sets))
-    patients = held_out_patients(cases, cfg, settings)
-    todo = (case for case in patients if not (folder / "faith" / f"{case}.parquet").exists())
-    for done, case in enumerate(todo):
-        started = time.time()
+
+    def run_patient(case):
         rows = {"layerpos": [], "where": [], "faith": []}
         margin_rows = []
         for arm, order, pair in pairs_of(engine, case_cells(case, cases, cfg), int(settings["fields"])):
@@ -531,12 +595,12 @@ def test_head_sets(engine, run_dir: Path, cfg: dict, cases: pd.Series, vectors: 
                 table, row = head_set_test_row(dict(cell, field=pair["code"]), item, margin)
                 rows[table].append(row)
         write(folder / "clean_test" / f"{case}.parquet", margin_rows)
-        write(folder / "layerpos" / f"{case}.parquet", rows["layerpos"])
-        write(folder / "where" / f"{case}.parquet", rows["where"])
-        write(folder / "faith" / f"{case}.parquet", rows["faith"])
-        patched_runs = len(rows["layerpos"]) + len(rows["where"]) + len(rows["faith"])
-        seconds = time.time() - started
-        print(f"[circuit test] {done + 1} patients, {patched_runs} patched runs, {seconds:.1f}s", flush=True)
+        for table in ("layerpos", "where", "faith"):
+            write(folder / table / f"{case}.parquet", rows[table])
+        return f"patients, {sum(len(table_rows) for table_rows in rows.values())} patched runs"
+
+    patients = held_out_patients(cases, cfg, settings)
+    each_patient(unfinished(patients, folder / "faith"), "circuit test", run_patient, counted=False)
 
 
 def head_set_test_row(lookup: dict, item: dict, patched: float) -> tuple[str, dict]:
@@ -551,7 +615,7 @@ def head_set_test_row(lookup: dict, item: dict, patched: float) -> tuple[str, di
     return "faith", dict(row, kind=item["kind"], ranking=item["ranking"], k=item["k"], set=item["set"])
 
 
-def stage_circuit(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors) -> None:
+def stage_circuit(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """Which heads carry the lookup: scan and rank them on fit patients, test the top sets on held-out
     patients."""
     vectors = load_vectors(run_dir, engine.device)
@@ -585,8 +649,7 @@ def answer_token_attention(folder: Path, attention: pd.DataFrame, min_gap) -> pd
     """Per head: its mean attention from the answer token to each token group, over the fit lookups the model
     answers right, unedited (``att_<group>``) and under the slot edit (``att_<group>_under_slot``)."""
     margins = read(folder / "clean_fit")
-    right_sign = np.where(margins["query"] == "person", 1.0, -1.0)
-    answered_right = (right_sign * margins["diff"] > 0) | (min_gap is None)
+    answered_right = (right_sign(margins) * margins["diff"] > 0) | (min_gap is None)
     right = margins[(margins.cond == "clean") & answered_right][LOOKUP_KEYS]
     attention = attention.merge(right, on=list(right.columns))
     wide = attention.pivot_table(index=["layer", "head"], columns=["cond", "group"], values="last",
@@ -693,14 +756,7 @@ def tables(run_dir: Path, cfg: dict, draws: int = 1000) -> dict:
     return out
 
 
-# ==== Replies: the token at which a reasoned reply first writes a disputed value
-
-def unedited_replies(run_dir: Path, cfg: dict, folders) -> pd.DataFrame:
-    replies = run.unedited_replies(run_dir, folders)
-    return replies[replies.arm.isin(cfg["pairs"]["false"])]
-
-
-# ==== Stage reply: the lookup's head sets at the writing token
+# ==== Stage reply: the lookup's head sets at the token where a reasoned reply first writes a disputed value
 
 def reply_head_set_rows(engine, vectors: dict, reply, point: WritingPoint, set_columns: dict, alpha: float,
                         batch: int) -> list[dict]:
@@ -711,42 +767,31 @@ def reply_head_set_rows(engine, vectors: dict, reply, point: WritingPoint, set_c
     ids, n_ctx = point.ids, point.layout.n_ctx
     own_token, person_token = point.own_token, point.person_token
     after_records = list(range(n_ctx, len(ids)))
-    signed_alpha = toward_other(point.layout, point.written_record, alpha)
-    slot_edit = interventions.mean_edits(point.layout, vectors, "slot", reply.arm, alpha=signed_alpha)
+    slot_edit = slot_edit_away(point.layout, vectors, reply.arm, point.written_record, alpha)
     _, records_state, _ = engine.run([ids[:n_ctx]] * 2, edits=[[], slot_edit])
     logits, _, _ = engine.run([ids[n_ctx:]] * 2, state=records_state, keep=False,
                               zcapture=[after_records, after_records])
-    base, donor = (float(logits[row, own_token] - logits[row, person_token]) for row in (0, 1))
+    base, donor = margins(logits, own_token, person_token)
     base_out, donor_out = engine.zcaptured[0][1], engine.zcaptured[1][1]
 
-    all_from_donor = (after_records, donor_out, None)
-    items = [dict(kind="keep", k=0, set="none", zpatch=[all_from_donor]),
-             dict(kind="keep", k=engine.n_layers * engine.n_heads, set="all",
-                  zpatch=[all_from_donor, (after_records, base_out, None)])]
+    items = exact_check_items(engine, after_records, donor_out, base_out)
     for (size, name), columns in set_columns.items():
-        items.append(dict(kind="keep", k=size, set=name,
-                          zpatch=[all_from_donor, (after_records, base_out, columns)]))
-        items.append(dict(kind="swap", k=size, set=name, zpatch=[(after_records, donor_out, columns)]))
+        keep, swap = head_set_patches(after_records, donor_out, base_out, columns)
+        items.append(dict(kind="keep", k=size, set=name, zpatch=keep))
+        items.append(dict(kind="swap", k=size, set=name, zpatch=swap))
         if name == "top":       # the set from the donor at the writing token alone
             items.append(dict(kind="swap_last", k=size, set=name,
                               zpatch=[(after_records[-1:], donor_out[:, -1:], columns)]))
-
-    base_states = records_state.select([0] * len(items))      # the unedited records, once per item
-    del records_state
-
-    def run_batch(part):
-        logits, _, _ = engine.run([ids[n_ctx:]] * len(part), state=base_states.select(list(range(len(part)))),
-                                  keep=False, zpatch=[item["zpatch"] for item in part])
-        return (logits[:, own_token] - logits[:, person_token]).tolist()
-
-    patched = engine._halving(items, batch, run_batch)
+    # every item runs from row 0, the unedited records
+    patched = patched_margins(engine, records_state, items, batch, lambda item: ids[n_ctx:],
+                              (own_token, person_token))
     meta = dict(case_id=reply.case_id, arm=reply.arm, block_order=reply.block_order, sample=int(reply.sample),
                 field=point.code, wrote=point.whose, tokens=len(ids) - n_ctx, base=base, donor=donor)
     return [dict(meta, kind=item["kind"], k=item["k"], set=item["set"], patched=margin)
             for item, margin in zip(items, patched)]
 
 
-def stage_reply(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors) -> None:
+def stage_reply(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """Do the lookup's heads also carry the value a reasoned reply writes?
 
     Unedited sampled replies of the false-evidence cells are fed back up to the first disputed value they
@@ -762,24 +807,22 @@ def stage_reply(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors
     head_sets = {(size, name): [tuple(head) for head in saved_sets[f"query|{size}|{name}"]]
                  for size in settings["ks"] for name in names}
     set_columns = {key: engine.head_dims(heads) for key, heads in head_sets.items()}
-    replies = unedited_replies(run_dir, cfg, settings["folders"])
+    replies = unedited_replies(run_dir, settings["folders"], cfg["pairs"]["false"])
     folder = run_dir / "circuit_reply"
-    todo = [case for case in sorted(set(replies.case_id)) if not (folder / f"{case}.parquet").exists()]
-    for done, case in enumerate(todo):
-        started = time.time()
+
+    def run_patient(case):
         rows = []
-        case_replies = replies[replies.case_id == case]
-        prompt_rows = run.case_prompts(case, cases, sorted(set(case_replies.arm)))
-        for reply in case_replies.itertuples():
-            prompt = prompt_rows[(reply.arm, reply.block_order, "C")]["prompt"]
+        for reply, prompt_of in replies_with_prompts(replies, case, cases):
+            prompt = prompt_of[(reply.arm, reply.block_order)]
             point = first_written_value(engine, prompt, reply.text, int(settings["max_tokens"]))
             if point is None:
                 continue
             rows += reply_head_set_rows(engine, vectors, reply, point, set_columns, alpha,
                                         int(settings["batch"]))
         write(folder / f"{case}.parquet", rows)
-        print(f"[circuit reply] {done + 1}/{len(todo)} patients, {len(rows)} patched runs, "
-              f"{time.time() - started:.1f}s", flush=True)
+        return f"patients, {len(rows)} patched runs"
+
+    each_patient(unfinished(sorted(set(replies.case_id)), folder), "circuit reply", run_patient)
 
 
 def reply_table(run_dir: Path, cfg: dict, draws: int = 1000) -> pd.DataFrame:
@@ -792,10 +835,8 @@ def reply_table(run_dir: Path, cfg: dict, draws: int = 1000) -> pd.DataFrame:
         return patched
     min_gap = cfg["circuit"]["min_gap"]
     rng = np.random.default_rng(int(cfg["circuit"]["seed"]))
-    right_sign = np.where(patched.wrote == "model's", 1.0, -1.0)
-    flipped = is_clean_flip(right_sign, patched.base, patched.donor, min_gap)
-    counted = patched[flipped].copy()
-    counted["effect"] = (counted.patched - counted.base) / (counted.donor - counted.base)
+    counts = is_clean_flip(right_sign(patched), patched.base, patched.donor, min_gap)
+    counted = effects(patched, min_gap)
     counted["value"] = np.where(counted.kind == "keep", 1 - counted.effect, counted.effect)
     counted["which"] = np.where(counted.set.str.startswith("random"), "random", counted.set)
     with_all = pd.concat([counted, counted.assign(arm="all", block_order="all", wrote="any")])
@@ -807,9 +848,15 @@ def reply_table(run_dir: Path, cfg: dict, draws: int = 1000) -> pd.DataFrame:
         rows.append(dict(keys, value=group.value.mean(), lower=lower, upper=upper, replies=replies))
     table = pd.DataFrame(rows)
     one_reply = [patched.case_id, patched.arm, patched.block_order, patched["sample"]]
-    per_reply = flipped.groupby(one_reply).first()
+    per_reply = counts.groupby(one_reply).first()
     table.attrs["flipped"] = float(per_reply.mean())
     return table
+
+
+def reply_tables(run_dir: Path, cfg: dict) -> dict:
+    """``reply_table`` under its name, once replies have been patched."""
+    table = reply_table(run_dir, cfg)
+    return {} if table.empty else {"circuit_reply": table}
 
 
 def reply_probes(engine, run_dir: Path, cfg: dict, cases: pd.Series, vectors: dict, folders, alpha: float,
@@ -827,18 +874,18 @@ def reply_probes(engine, run_dir: Path, cfg: dict, cases: pd.Series, vectors: di
                                         that states the value
         first_slot     0 if the written value's record is the first on the page, else 1
     """
-    replies = unedited_replies(run_dir, cfg, folders)
-    plain, labelled = cfg["pairs"]["false"]
+    false_arms = cfg["pairs"]["false"]
+    plain, labelled = false_arms
+    replies = unedited_replies(run_dir, folders, false_arms)
     for case in sorted(set(replies.case_id)):
-        case_replies = replies[replies.case_id == case]
-        prompt_rows = run.case_prompts(case, cases, cfg["pairs"]["false"])
-        for reply in case_replies.sort_values(["sample", "arm", "block_order"]).itertuples():
-            prompt = prompt_rows[(reply.arm, reply.block_order, "C")]["prompt"]
+        by_sample = replies_with_prompts(replies, case, cases, false_arms, ["sample", "arm", "block_order"])
+        for reply, prompt_of in by_sample:
+            prompt = prompt_of[(reply.arm, reply.block_order)]
             point = first_written_value(engine, prompt, reply.text, max_tokens)
             if point is None:
                 continue
             other_arm = labelled if reply.arm == plain else plain
-            twin_prompt = prompt_rows[(other_arm, reply.block_order, "C")]["prompt"]
+            twin_prompt = prompt_of[(other_arm, reply.block_order)]
             yield reply_probe(engine, vectors, reply, prompt, twin_prompt, point, alpha)
 
 
@@ -848,14 +895,13 @@ def reply_probe(engine, vectors: dict, reply, prompt: str, twin_prompt: str, poi
     layout = point.layout
     twin = prompts.layout(engine.tok, twin_prompt, engine.kw, prefix="")
     same_question = twin.ids[twin.n_ctx:] == layout.ids[layout.n_ctx:]
-    signed_alpha = toward_other(layout, point.written_record, alpha)
     up_to_line = prompts.chat_text(engine.tok, prompt, engine.kw) + reply.text[:point.line_start]
     line_token = len(engine.tok(up_to_line, add_special_tokens=False)["input_ids"])
     writing_token = len(point.ids)
     return dict(case_id=reply.case_id, arm=reply.arm, block_order=reply.block_order, sample=int(reply.sample),
                 field=point.code, wrote=point.whose, ids=point.ids, n_ctx=layout.n_ctx,
                 own_tok=point.own_token, person_tok=point.person_token,
-                slot_edits=interventions.mean_edits(layout, vectors, "slot", reply.arm, alpha=signed_alpha),
+                slot_edits=slot_edit_away(layout, vectors, reply.arm, point.written_record, alpha),
                 twin=twin.ids[:twin.n_ctx] if same_question else None, q_end=layout.tail[0],
                 prompt_len=len(layout.ids), line_tok=min(max(line_token, len(layout.ids)), writing_token - 1),
                 first_slot=layout.block(point.written_record).slot)
@@ -895,12 +941,11 @@ def greedy_search(engine, lookups: list[dict], candidates: list, settings: dict)
         columns = {head: engine.head_dims(chosen + [head]) for head in remaining}
         restored = np.zeros(len(remaining))
         for lookup in lookups:
-            all_from_donor = (lookup["positions"], lookup["donor_out"], None)
-            items = [dict(query=lookup["query"],
-                          zpatch=[all_from_donor, (lookup["positions"], lookup["base_out"], columns[head])])
+            items = [dict(query=lookup["query"], zpatch=head_set_patches(lookup["positions"], lookup["donor_out"],
+                                                                         lookup["base_out"], columns[head])[0])
                      for head in remaining]
             patched = np.array(run_items(engine, lookup["pair"], items, int(settings["batch"])))
-            restored += 1 - (patched - lookup["base"]) / (lookup["donor"] - lookup["base"])
+            restored += 1 - effect_of(patched, lookup["base"], lookup["donor"])
         best = int(np.argmax(restored))
         chosen.append(remaining[best])
         steps.append(dict(step=len(chosen), layer=remaining[best][0], head=remaining[best][1],
@@ -931,11 +976,10 @@ def greedy_set_rows(engine, pair: dict, counterfactual: Counterfactual, lookup: 
     donor_out, base_out = counterfactual.donor_head_out(), counterfactual.base_head_out(pair["n_ctx"])
     items = []
     for (_, size, name), columns in set_columns.items():
-        items.append(dict(lookup, kind="keep", k=size, set=name,
-                          zpatch=[(positions, donor_out, None), (positions, base_out, columns)]))
+        keep, swap = head_set_patches(positions, donor_out, base_out, columns)
+        items.append(dict(lookup, kind="keep", k=size, set=name, zpatch=keep))
         if name == "top":
-            items.append(dict(lookup, kind="swap", k=size, set=name,
-                              zpatch=[(positions, donor_out, columns)]))
+            items.append(dict(lookup, kind="swap", k=size, set=name, zpatch=swap))
     patched = run_items(engine, pair, items, batch)
     return [dict(lookup, kind=item["kind"], k=item["k"], set=item["set"], patched=margin)
             for item, margin in zip(items, patched)]
@@ -963,15 +1007,15 @@ def wiring_rows(engine, pair: dict, counterfactual: Counterfactual, lookup: dict
     change_size = (full_change ** 2).sum((1, 2)).clamp_min(1e-12)
     ids, n_ctx = pair["queries"][counterfactual.query]["ids"], pair["n_ctx"]
     _, records_state, _ = engine.run([ids[:n_ctx]])
-    one_per_head = records_state.select([0] * len(wired))
-    logits, _, _ = engine.run([ids[n_ctx:]] * len(wired), state=one_per_head, keep=False,
-                              zpatch=[[(positions, donor_out, wired_columns[head])] for head in wired],
-                              zcapture=[positions] * len(wired))
+    one_per_head = dict(zpatch=[[(positions, donor_out, wired_columns[head])] for head in wired],
+                        zcapture=[positions] * len(wired))
+    logits = run_from(engine, records_state, [0] * len(wired), (ids[n_ctx:], one_per_head))
+    up_margins = value_margins(logits, pair)
     rows = []
     for row, upstream in enumerate(wired):
         change = heads_apart(engine, engine.zcaptured[row][1], wired) - base_apart
         share = ((change * full_change).sum((1, 2)) / change_size).cpu().numpy()
-        up_effect = (float(logits[row, pair["tp"]] - logits[row, pair["to"]]) - base) / (donor - base)
+        up_effect = effect_of(up_margins[row], base, donor)
         for index, downstream in enumerate(wired):
             if downstream[0] <= upstream[0]:        # only heads in later blocks can react
                 continue
@@ -980,7 +1024,7 @@ def wiring_rows(engine, pair: dict, counterfactual: Counterfactual, lookup: dict
     return rows
 
 
-def stage_fine(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors) -> None:
+def stage_fine(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """The lookup circuit made finer.
 
     (a) A greedy search on fit patients for the smallest head set that restores the base answer
@@ -1008,10 +1052,8 @@ def stage_fine(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors)
     set_columns = {key: engine.head_dims(heads) for key, heads in head_sets.items()}
     wired = list(dict.fromkeys(greedy + candidates))[: int(settings["wiring_heads"])]
     wired_columns = {head: engine.head_dims([head]) for head in wired}
-    patients = held_out_patients(cases, cfg)[: int(settings["patients"])]
-    todo = (case for case in patients if not (folder / "wiring" / f"{case}.parquet").exists())
-    for done, case in enumerate(todo):
-        started = time.time()
+
+    def run_patient(case):
         set_rows, wire_rows = [], []
         for arm, order, pair in pairs_of(engine, case_cells(case, cases, cfg), 1):
             runs = lookup_runs(engine, vectors, arm, pair, alpha)
@@ -1026,9 +1068,10 @@ def stage_fine(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors)
                 wire_rows += wiring_rows(engine, pair, counterfactual, lookup, wired, wired_columns)
         write(folder / "test" / f"{case}.parquet", set_rows)
         write(folder / "wiring" / f"{case}.parquet", wire_rows)
-        seconds = time.time() - started
-        print(f"[circuit fine] {done + 1} test patients, {len(set_rows)} patched runs, "
-              f"{len(wire_rows)} head pairs, {seconds:.1f}s", flush=True)
+        return f"test patients, {len(set_rows)} patched runs, {len(wire_rows)} head pairs"
+
+    patients = held_out_patients(cases, cfg)[: int(settings["patients"])]
+    each_patient(unfinished(patients, folder / "wiring"), "circuit fine", run_patient, counted=False)
 
 
 # ==== Stage algorithm: what each head reads and writes, and how the question's "whose record" is coded
@@ -1062,25 +1105,6 @@ def question_and_source_groups(pair: dict, query: str) -> tuple[dict, dict]:
 def add_to_running_sum(sums: dict, key, value) -> None:
     total, count = sums.get(key, (0.0, 0))
     sums[key] = (total + value, count + 1)
-
-
-def attention_maps_of_runs(engine, vectors: dict, arm: str, pair: dict, runs: dict, heads: list,
-                           alpha: float):
-    """Token-level attention of ``heads`` in each of a pair's four runs: per run a tensor
-    [heads, question tokens, every position]. The runs are repeated in one batch, in the order of ``runs``."""
-    n_ctx = pair["n_ctx"]
-    ids, edits = [], []
-    for query, condition in runs:
-        layout = pair["queries"][query]["lay"]
-        ids.append(pair["queries"][query]["ids"])
-        if condition == "slot":
-            signed_alpha = toward_other(layout, query, alpha)
-            edits.append(interventions.mean_edits(layout, vectors, "slot", arm, alpha=signed_alpha))
-        else:
-            edits.append([])
-    _, records_state, _ = engine.run([row[:n_ctx] for row in ids], edits=edits)
-    engine.run([row[n_ctx:] for row in ids], state=records_state, keep=False, attn_heads=heads)
-    return engine.attention_maps
 
 
 def answer_readout(engine, lookup_run: LookupRun, pair: dict):
@@ -1204,7 +1228,7 @@ def code_rows(engine, code_sums: dict) -> list[dict]:
     return rows
 
 
-def stage_algorithm(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors) -> None:
+def stage_algorithm(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """What the circuit's heads do, on fit patients' lookups (both questions, unedited and slot-edited).
 
         reads    attention from each group of question tokens to each group of earlier tokens
@@ -1230,15 +1254,15 @@ def stage_algorithm(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vec
     patients = fit_patients(cases)[: int(settings["patients"])]
     for patient_index, case in enumerate(patients):
         for arm, order, pair in pairs_of(engine, case_cells(case, cases, cfg), 1):
-            runs = lookup_runs(engine, vectors, arm, pair, alpha)
-            maps = attention_maps_of_runs(engine, vectors, arm, pair, runs, heads, alpha)
+            runs = lookup_runs(engine, vectors, arm, pair, alpha, heads=heads)
             answered_right = {query: sign(query) * runs[(query, "clean")].margin > 0 or min_gap is None
                               for query in prompts.QUERIES}
-            for row, (query, condition) in enumerate(runs):
+            for (query, condition), lookup_run in runs.items():
                 if answered_right[query]:
-                    add_attention(attention_sums, (arm, order, query, condition), maps[row], pair, query)
-                margin = sign(query) * runs[(query, condition)].margin
-                contributions = direct_head_contributions(engine, runs[(query, condition)], pair, query)
+                    add_attention(attention_sums, (arm, order, query, condition), lookup_run.attention_map, pair,
+                                  query)
+                margin = sign(query) * lookup_run.margin
+                contributions = direct_head_contributions(engine, lookup_run, pair, query)
                 direct.append(dict(case_id=case, arm=arm, block_order=order, query=query, cond=condition,
                                    right=bool(answered_right[query]), margin=margin, dla=contributions))
             if not all(answered_right.values()):
@@ -1254,7 +1278,7 @@ def stage_algorithm(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vec
     (folder / "heads.json").write_text(json.dumps(heads))
 
 
-def algorithm_tables(run_dir: Path) -> dict:
+def algorithm_tables(run_dir: Path, cfg: dict) -> dict:
     """The tables of ``stage_algorithm``: ``circuit_reads`` (attention by head, condition and destination, one
     column per source), ``circuit_writes`` (direct contribution per head, unedited and under the slot edit)
     and ``circuit_code``."""
@@ -1430,29 +1454,49 @@ def place_owner_random_vectors(setup: ConcreteSetup, sums: dict) -> dict:
     return found
 
 
-def order_scan_rows(setup: ConcreteSetup, case: str, both_orders: dict, head_columns: dict) -> list[dict]:
-    """Each head patched alone from the order donor (the same question, the records in the other page order),
-    at the tokens after the phrase. Only lookups that count and whose donor is also answered right are
-    scanned."""
-    rows = []
+class OrderDonorLookup(NamedTuple):
+    """A lookup of the labelled arm and its order donor: the same question with the records in the other page
+    order."""
+    order: str
+    pair: dict
+    query: str
+    base: float               # the lookup's margin
+    other: float              # the margin of the other question over the same records
+    donor_pair: dict
+    donor: LookupRun          # the order donor's unpatched run
+    counts: bool              # the lookup counts (``is_clean_flip``) and its donor is answered right
+
+
+def order_donor_lookups(setup: ConcreteSetup, both_orders: dict):
+    """Each lookup of ``lookups_in_both_orders`` with its order donor, as ``OrderDonorLookup``."""
     for order, (pair, runs) in both_orders.items():
         other_order = [candidate for candidate in both_orders if candidate != order][0]
         donor_pair, donor_runs = both_orders[other_order]
         for query in prompts.QUERIES:
             base = runs[(query, "clean")].margin
             other_question = runs[(OTHER_QUERY[query], "clean")].margin
-            donor_right = sign(query) * donor_runs[(query, "clean")].margin > 0
-            if not is_clean_flip(sign(query), base, other_question, setup.min_gap) or not donor_right:
-                continue
-            positions, _ = after_phrase(pair, query)
-            _, donor_rows = after_phrase(donor_pair, query)
-            donor_out = donor_runs[(query, "clean")].head_out[:, donor_rows]
-            items = [dict(query=query, zpatch=[(positions, donor_out, columns)])
-                     for columns in head_columns.values()]
-            patched = run_items(setup.engine, pair, items, setup.batch)
-            lookup = dict(case_id=case, block_order=order, query=query)
-            rows += [dict(lookup, layer=layer, head=head, base=base, other=other_question, patched=margin)
-                     for (layer, head), margin in zip(head_columns, patched)]
+            donor = donor_runs[(query, "clean")]
+            counts = bool(is_clean_flip(sign(query), base, other_question, setup.min_gap)
+                          and sign(query) * donor.margin > 0)
+            yield OrderDonorLookup(order, pair, query, base, other_question, donor_pair, donor, counts)
+
+
+def order_scan_rows(setup: ConcreteSetup, case: str, both_orders: dict, head_columns: dict) -> list[dict]:
+    """Each head patched alone from the order donor, at the tokens after the phrase. Only lookups that count
+    are scanned."""
+    rows = []
+    for lookup in order_donor_lookups(setup, both_orders):
+        if not lookup.counts:
+            continue
+        positions, _ = after_phrase(lookup.pair, lookup.query)
+        _, donor_rows = after_phrase(lookup.donor_pair, lookup.query)
+        donor_out = lookup.donor.head_out[:, donor_rows]
+        items = [dict(query=lookup.query, zpatch=[(positions, donor_out, columns)])
+                 for columns in head_columns.values()]
+        patched = run_items(setup.engine, lookup.pair, items, setup.batch)
+        fields = dict(case_id=case, block_order=lookup.order, query=lookup.query)
+        rows += [dict(fields, layer=layer, head=head, base=lookup.base, other=lookup.other, patched=margin)
+                 for (layer, head), margin in zip(head_columns, patched)]
     return rows
 
 
@@ -1530,40 +1574,32 @@ def field_scan(setup: ConcreteSetup) -> None:
 def order_donor_rows(setup: ConcreteSetup, case: str) -> list[dict]:
     """Labelled arm: the residual stream after one block, at one question site (or at every token after the
     phrase: "suffix"), taken from the order donor. Where the record's place is carried, block by block."""
-    engine = setup.engine
     labelled = setup.cfg["pairs"]["false"][1]
-    both_orders = lookups_in_both_orders(setup, case, labelled)
     rows = []
-    for order, (pair, runs) in both_orders.items():
-        other_order = [candidate for candidate in both_orders if candidate != order][0]
-        donor_pair, donor_runs = both_orders[other_order]
-        for query in prompts.QUERIES:
-            base = runs[(query, "clean")].margin
-            other_question = runs[(OTHER_QUERY[query], "clean")].margin
-            donor_right = sign(query) * donor_runs[(query, "clean")].margin > 0
-            counts = bool(is_clean_flip(sign(query), base, other_question, setup.min_gap) and donor_right)
-            lookup = dict(case_id=case, arm=labelled, block_order=order, query=query, base=base,
-                          other=other_question, ok=counts)
-            items = []
-            for site in QUESTION_SITES + ["suffix"]:
-                if site == "suffix":
-                    positions, _ = after_phrase(pair, query)
-                    _, donor_rows = after_phrase(donor_pair, query)
-                else:
-                    positions, _ = group_positions(pair, query, site)
-                    _, donor_rows = group_positions(donor_pair, query, site)
-                donor_resid = donor_runs[(query, "clean")].resid[:, donor_rows]
-                items += [dict(query=query, test="order", group=site, layer=layer, variant="",
-                               resid=[Edit("set", positions, donor_resid, layers=(layer, layer))])
-                          for layer in range(1, engine.n_layers + 1)]
-            patched = run_items(engine, pair, items, setup.batch)
-            rows += [step_test_row(lookup, item, margin) for item, margin in zip(items, patched)]
+    for lookup in order_donor_lookups(setup, lookups_in_both_orders(setup, case, labelled)):
+        pair, query, donor_pair = lookup.pair, lookup.query, lookup.donor_pair
+        fields = dict(case_id=case, arm=labelled, block_order=lookup.order, query=query, base=lookup.base,
+                      other=lookup.other, ok=lookup.counts)
+        items = []
+        for site in QUESTION_SITES + ["suffix"]:
+            if site == "suffix":
+                positions, _ = after_phrase(pair, query)
+                _, donor_rows = after_phrase(donor_pair, query)
+            else:
+                positions, _ = group_positions(pair, query, site)
+                _, donor_rows = group_positions(donor_pair, query, site)
+            items += block_by_block(setup.engine, positions, lookup.donor.resid[:, donor_rows], query=query,
+                                    test="order", group=site, variant="")
+        patched = run_items(setup.engine, pair, items, setup.batch)
+        rows += [step_test_row(fields, item, margin) for item, margin in zip(items, patched)]
     return rows
 
 
-def window_spec(engine, low: int, high: int, keys: list[int]) -> dict:
-    """A knockout: every head of blocks low..high (counted from 1) barred from ``keys``."""
-    return {layer: (list(range(engine.n_heads)), keys) for layer in range(low - 1, high)} if keys else {}
+def bar_blocks(n_heads: int, keys: list[int], first_block: int, last_block: int) -> dict:
+    """A knockout: every head of blocks ``first_block``..``last_block`` (counted from 1) barred from ``keys``
+    (none without keys)."""
+    every_head = list(range(n_heads))
+    return {layer: (every_head, keys) for layer in range(int(first_block) - 1, int(last_block))} if keys else {}
 
 
 def knock_of(heads, keys: list[int]) -> dict:
@@ -1599,10 +1635,10 @@ def knockout_items(engine, pair: dict, query: str, windows: list, reader_sets: d
         if not record_keys[name]:
             continue
         items += [dict(test="knock_from_question", group=name, layer=high, variant=f"{low}-{high}",
-                       knock_q=window_spec(engine, low, high, record_keys[name])) for low, high in windows]
+                       knock_q=bar_blocks(engine.n_heads, record_keys[name], low, high)) for low, high in windows]
     for name, keys in question_keys.items():
         items += [dict(test="knock_from_tail", group=name, layer=high, variant=f"{low}-{high}",
-                       knock_t=window_spec(engine, low, high, keys)) for low, high in windows]
+                       knock_t=bar_blocks(engine.n_heads, keys, low, high)) for low, high in windows]
     for set_name, heads in reader_sets.items():
         for name in ("queried_lines", "other_lines"):
             items.append(dict(test="knock_heads", group=name, layer=0, variant=set_name,
@@ -1633,11 +1669,9 @@ def run_with_knockouts(engine, pair: dict, query: str, items: list[dict], batch:
 
     def run_batch(part):
         """The margins of one batch of items: the question under ``knock_q``, then the tail under both."""
-        state = records_state.select([0] * len(part))
-        _, question_state, _ = engine.run([ids[n_ctx:tail_start]] * len(part), state=state,
-                                          knock=[item.get("knock_q") or None for item in part])
-        logits, _, _ = engine.run([ids[tail_start:]] * len(part), state=question_state, keep=False,
-                                  knock=[knockouts_from_tail(item) for item in part])
+        logits = run_from(engine, records_state, [0] * len(part),
+                          (ids[n_ctx:tail_start], dict(knock=[item.get("knock_q") or None for item in part])),
+                          (ids[tail_start:], dict(knock=[knockouts_from_tail(item) for item in part])))
         return value_margins(logits, pair)
 
     return engine._halving(items, batch, run_batch)
@@ -1664,6 +1698,20 @@ def mlp_swap_items(engine, pair: dict, query: str, base: LookupRun, donor: Looku
     return items
 
 
+def added_vector_items(kind: str, vector, direction: float, strengths, windows, sites, **fields) -> list[dict]:
+    """Items that add ``vector`` (a place, owner or random vector) times ``direction`` and a strength, in a
+    window of blocks, at the positions of one site: every strength, window and site of ``sites`` ((group,
+    positions) pairs), with ``fields``."""
+    items = []
+    for strength in strengths:
+        for low, high in windows:
+            for group, positions in sites:
+                edit = Edit("add", positions, vector, scale=direction * float(strength), layers=(low, high))
+                items.append(dict(fields, test=f"add_{kind}", group=group, layer=high,
+                                  variant=f"{low}-{high}@{strength:g}", resid=[edit]))
+    return items
+
+
 def vector_items(pair: dict, query: str, place_vectors: dict, settings: dict) -> list[dict]:
     """The place, owner and random vectors added at the answer token ("last") or the template's tail, pointing
     away from the asked record: to the other place (place, random) or the other owner."""
@@ -1678,11 +1726,8 @@ def vector_items(pair: dict, query: str, place_vectors: dict, settings: dict) ->
             if vector is None:
                 continue
             away = -sign(query) if kind == "owner" else -place_sign(pair, query)
-            for strength in settings["vector_alphas"]:
-                for low, high in windows:
-                    edit = Edit("add", positions, vector, scale=away * float(strength), layers=(low, high))
-                    items.append(dict(query=query, test=f"add_{kind}", group=site, layer=high,
-                                      variant=f"{low}-{high}@{strength:g}", resid=[edit]))
+            items += added_vector_items(kind, vector, away, settings["vector_alphas"], windows,
+                                        [(site, positions)], query=query)
     return items
 
 
@@ -1744,10 +1789,9 @@ def field_donor_rows(setup: ConcreteSetup, case: str, arm: str, order: str) -> l
                                group_positions(donor_pair, query, "field")[1][-1:])
         sites["after_field"] = (sum((sites[group][0] for group in after_field), []),
                                 sum((sites[group][1] for group in after_field), []))
-        items = [dict(query=query, test="field", group=site, layer=layer, variant="",
-                      resid=[Edit("set", positions, donor.resid[:, donor_rows], layers=(layer, layer))])
-                 for site, (positions, donor_rows) in sites.items()
-                 for layer in range(1, engine.n_layers + 1)]
+        items = [item for site, (positions, donor_rows) in sites.items()
+                 for item in block_by_block(engine, positions, donor.resid[:, donor_rows], query=query,
+                                            test="field", group=site, variant="")]
         patched = run_items(engine, asked, items, setup.batch)
         rows += [step_test_row(lookup, item, margin) for item, margin in zip(items, patched)]
     return rows
@@ -1768,10 +1812,8 @@ def test_lookup_steps(setup: ConcreteSetup, place_vectors: dict) -> None:
     seed = int(setup.cfg["circuit"]["seed"]) + 8
     reader_sets = reader_and_random_sets(engine, readers, seed) if readers else {}
     windows = interventions.windows(engine.n_layers, int(settings["parts"])) + [(1, engine.n_layers)]
-    patients = held_out_patients(setup.cases, setup.cfg, settings)
-    todo = (case for case in patients if not (setup.folder / "test" / f"{case}.parquet").exists())
-    for done, case in enumerate(todo):
-        started = time.time()
+
+    def run_patient(case):
         rows = order_donor_rows(setup, case)
         for arm, order, pair in pairs_of(engine, case_cells(case, setup.cases, setup.cfg), 1):
             for query in prompts.QUERIES:
@@ -1779,9 +1821,10 @@ def test_lookup_steps(setup: ConcreteSetup, place_vectors: dict) -> None:
                                          windows)
             rows += field_donor_rows(setup, case, arm, order)
         write(setup.folder / "test" / f"{case}.parquet", rows)
-        seconds = time.time() - started
-        print(f"[circuit concrete] {done + 1} test patients, {len(rows)} patched runs, {seconds:.1f}s",
-              flush=True)
+        return f"test patients, {len(rows)} patched runs"
+
+    patients = held_out_patients(setup.cases, setup.cfg, settings)
+    each_patient(unfinished(patients, setup.folder / "test"), "circuit concrete", run_patient, counted=False)
 
 
 # -- 4. Replies: where the labelling difference enters, and the place vector at the writing token
@@ -1795,19 +1838,14 @@ def reply_vector_items(probe: dict, place_vectors: dict, settings: dict) -> list
     sites = (("writing token", writing_token), ("every reply token", reply_tokens))
     to_other_place = -1.0 if probe["first_slot"] == 0 else 1.0
     to_other_owner = 1.0 if probe["wrote"] == "model's" else -1.0      # owner vector: PERSON minus the model
+    windows = [tuple(window) for window in settings["vector_windows"]]
     items = []
     for kind in ("place", "owner", "random"):
         vector = place_vectors.get(f"{kind}|last")
         if vector is None:
             continue
-        scale = to_other_owner if kind == "owner" else to_other_place
-        for strength in settings["vector_alphas"]:
-            for low, high in [tuple(window) for window in settings["vector_windows"]]:
-                variant = f"{low}-{high}@{strength:g}"
-                for group, positions in sites:
-                    edit = Edit("add", positions, vector, scale=scale * float(strength), layers=(low, high))
-                    items.append(dict(test=f"add_{kind}", group=group, layer=high, variant=variant,
-                                      resid=[edit]))
+        direction = to_other_owner if kind == "owner" else to_other_place
+        items += added_vector_items(kind, vector, direction, settings["vector_alphas"], windows, sites)
     return items
 
 
@@ -1826,9 +1864,7 @@ def label_donor_items(engine, probe: dict, donor_resid) -> list[dict]:
         if not positions:
             continue
         value = donor_resid[:, [position - n_ctx for position in positions]]
-        items += [dict(test="label", group=group, layer=layer, variant="",
-                       resid=[Edit("set", positions, value, layers=(layer, layer))])
-                  for layer in range(1, engine.n_layers + 1)]
+        items += block_by_block(engine, positions, value, test="label", group=group, variant="")
     return items
 
 
@@ -1850,13 +1886,13 @@ def reply_step_rows(setup: ConcreteSetup, probe: dict, place_vectors: dict,
     recorded = [list(range(len(tokens), len(tokens) + reply_length)) for tokens in record_tokens]
     logits, _, hidden = engine.run([ids[n_ctx:]] * len(names), state=records_state, keep=False,
                                    capture=recorded)
-    margins = [float(logits[row, own_token] - logits[row, person_token]) for row in range(len(names))]
-    right_sign = 1.0 if probe["wrote"] == "model's" else -1.0
-    has_label_donor = len(margins) > 1
-    counts = bool(has_label_donor and is_clean_flip(right_sign, margins[0], margins[1], setup.min_gap))
+    unpatched = margins(logits, own_token, person_token)
+    wrote_sign = 1.0 if probe["wrote"] == "model's" else -1.0
+    has_label_donor = len(unpatched) > 1
+    counts = bool(has_label_donor and is_clean_flip(wrote_sign, unpatched[0], unpatched[1], setup.min_gap))
     lookup = {key: probe[key] for key in ("case_id", "arm", "block_order", "sample", "field", "wrote")}
-    other_margin = margins[1] if has_label_donor else float("nan")
-    lookup |= dict(base=margins[0], other=other_margin, tokens=reply_length, ok=counts)
+    other_margin = unpatched[1] if has_label_donor else float("nan")
+    lookup |= dict(base=unpatched[0], other=other_margin, tokens=reply_length, ok=counts)
 
     written_place = "first" if probe["first_slot"] == 0 else "second"
     rows = []
@@ -1870,14 +1906,8 @@ def reply_step_rows(setup: ConcreteSetup, probe: dict, place_vectors: dict,
     if counts:
         items += label_donor_items(engine, probe, hidden[1][1])
     _, base_state, _ = engine.run([ids[:n_ctx]])
-
-    def run_batch(part):
-        state = base_state.select([0] * len(part))
-        logits, _, _ = engine.run([ids[n_ctx:]] * len(part), state=state, keep=False,
-                                  edits=[item["resid"] for item in part])
-        return (logits[:, own_token] - logits[:, person_token]).tolist()
-
-    patched = engine._halving(items, int(settings["reply_batch"]), run_batch)
+    patched = patched_margins(engine, base_state, items, int(settings["reply_batch"]), lambda item: ids[n_ctx:],
+                              (own_token, person_token))
     rows += [step_test_row(lookup, item, margin) for item, margin in zip(items, patched)]
     return rows, counts
 
@@ -1911,7 +1941,7 @@ def test_reply_steps(setup: ConcreteSetup, place_vectors: dict) -> None:
           flush=True)
 
 
-def stage_concrete(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors) -> None:
+def stage_concrete(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """Each step of the lookup made concrete, in four parts (a part is skipped once its file exists).
 
     1. Fit patients: the place and owner vectors at each question site, and every head patched alone from
@@ -1954,7 +1984,7 @@ def scan_effects(run_dir: Path, scan: str) -> pd.Series | None:
     if rows.empty:
         return None
     donor_column = {"order": "other", "field": "donor"}[scan]
-    rows["share"] = (rows.patched - rows.base) / (rows[donor_column] - rows.base)
+    rows["share"] = effect_of(rows.patched, rows.base, rows[donor_column])
     return rows.groupby(["layer", "head"]).share.mean()
 
 
@@ -1970,14 +2000,44 @@ def head_classes(run_dir: Path, n_place: int = 16, n_value: int = 32) -> dict:
     return classes
 
 
+def named_sets(run_dir: Path, engine, cfg: dict) -> dict:
+    """Every head set the stages refer to by name, each a list of (layer, head):
+
+        lookup<k>          the k heads that carry most of a lookup (ranked on fit patients)
+        place16, value32   the heads that carry the asked record's place, and the asked value
+        readers            heads giving at least ``reader_attention`` of their attention to the asked value
+        place16+readers    the union of the two
+        random_<set>_<i>   for each set above, ``randoms`` random sets with as many heads in each layer
+        all                every head
+    """
+    settings = cfg["head_sets"]
+    selection = json.loads((run_dir / "circuit" / "selection.json").read_text())
+    ranked = [tuple(head) for head in selection["query"]]
+    sets = {f"lookup{size}": ranked[:size] for size in settings["lookup_sizes"]}
+    classes = head_classes(run_dir)
+    if "place carriers" in classes:
+        sets["place16"] = classes["place carriers"]
+    if "value heads" in classes:
+        sets["value32"] = classes["value heads"]
+    if (run_dir / "circuit_algorithm" / "attention.parquet").exists():
+        sets["readers"] = reader_heads(run_dir, float(settings["reader_attention"]))
+    if "place16" in sets and "readers" in sets:
+        sets["place16+readers"] = sorted(set(sets["place16"]) | set(sets["readers"]))
+    rng = np.random.default_rng(int(cfg["circuit"]["seed"]) + 25)
+    for name in sorted(sets):
+        for i in range(int(settings["randoms"])):
+            sets[f"random_{name}_{i}"] = random_like(sets[name], engine.n_heads, rng)
+    sets["all"] = all_heads(engine)
+    return {name: [(int(layer), int(head)) for layer, head in heads] for name, heads in sets.items()}
+
+
 def lookup_step_tables(test: pd.DataFrame) -> dict:
     """Per step test on lookups that count: the mean share of the way to the other answer and how often the
     answer flips (``concrete_lookup``), and the MLPs' direct contributions by block
     (``concrete_mlp_direct``)."""
     out = {}
-    right_sign = np.where(test["query"] == "person", 1.0, -1.0)
-    test["share"] = (test.patched - test.base) / (test.other - test.base)
-    test["flipped"] = right_sign * test.patched < 0
+    test["share"] = effect_of(test.patched, test.base, test.other)
+    test["flipped"] = flipped(test)
     patched = test[test.ok & (test.test != "mlp_direct")]
     out["concrete_lookup"] = patched.groupby(["test", "group", "variant", "layer"]).agg(
         share=("share", "mean"), flipped=("flipped", "mean"), lookups=("share", "size")).reset_index()
@@ -2011,10 +2071,9 @@ def reply_step_tables(replies: pd.DataFrame) -> dict:
     added vectors (``concrete_reply_add``) and the projection on the place vector
     (``concrete_reply_projection``)."""
     out = {}
-    right_sign = np.where(replies.wrote == "model's", 1.0, -1.0)
-    replies["share"] = (replies.patched - replies.base) / (replies.other - replies.base)
-    replies["flipped"] = right_sign * replies.patched < 0
-    replies["as_written"] = right_sign * replies.base > 0
+    replies["share"] = effect_of(replies.patched, replies.base, replies.other)
+    replies["flipped"] = flipped(replies)
+    replies["as_written"] = right_sign(replies) * replies.base > 0
     label = replies[(replies.test == "label") & replies.ok]
     if not label.empty:
         out["concrete_reply_label"] = label.groupby(["group", "layer"]).agg(
@@ -2055,10 +2114,6 @@ def concrete_tables(run_dir: Path, cfg: dict) -> dict:
 
 # ==== Sampled replies under the circuit's handles
 
-# Where the unlabelled ("plain") and the labelled arm stand in a pair of arms of the settings.
-ARM_OF_SIDE = {"plain": 0, "labelled": 1}
-
-
 def load_place_vectors(engine, run_dir: Path) -> dict:
     saved = engine.torch.load(run_dir / "circuit_concrete" / "place.pt", map_location="cpu")
     return {name: vector.to(engine.device) for name, vector in saved.items()}
@@ -2071,13 +2126,11 @@ def knockout_keys(layout: prompts.Layout, head_set: str, target: str) -> list[in
     tokens elsewhere, the first field line of each record. A record ("own", "person"): its field lines, or,
     for the head set "all", the whole record with header and end marker."""
     if target == "headers":
-        return [token for block in layout.blocks for token in block.header + block.extra]
+        return layout.header_tokens()
     if target == "first lines":
         return [token for block in layout.blocks for token in next(iter(block.lines.values())).tokens]
     block = layout.block(target)
-    if head_set == "all":
-        return block.header + block.line_tokens_all() + block.extra
-    return block.line_tokens_all()
+    return block.record_tokens() if head_set == "all" else block.line_tokens_all()
 
 
 def steer_job(prompt_row: dict, layout: prompts.Layout, condition: list, head_sets: dict, place_vectors: dict,
@@ -2091,10 +2144,10 @@ def steer_job(prompt_row: dict, layout: prompts.Layout, condition: list, head_se
                                     "<head set>:<record>": that head set barred from the record's lines too"""
     kind, first, second = condition
     if kind == "base":
-        return run.meta_of(prompt_row, part="reason", variant="base", kind="base"), Job(layout.ids)
+        return meta_of(prompt_row, part="reason", variant="base", kind="base"), Job(layout.ids)
     if kind == "knock":
         head_set, target = first, second
-        meta = run.meta_of(prompt_row, part="reason", variant=f"knock:{head_set}:{target}", kind="knock",
+        meta = meta_of(prompt_row, part="reason", variant=f"knock:{head_set}:{target}", kind="knock",
                            site=target, donor=head_set)
         knock = (layout.n_ctx, knock_of(head_sets[head_set], knockout_keys(layout, head_set, target)))
         return meta, Job(layout.ids, knock=knock)
@@ -2106,7 +2159,7 @@ def steer_job(prompt_row: dict, layout: prompts.Layout, condition: list, head_se
         head_set, record = also_knock.split(":")
         knock = (layout.n_ctx, knock_of(head_sets[head_set], layout.block(record).line_tokens_all()))
     variant = f"steer:{kind}" + (f"+knock:{also_knock}" if also_knock else "") + f"@{low}-{high}"
-    meta = run.meta_of(prompt_row, part="reason", variant=variant, kind="steer", site="answer",
+    meta = meta_of(prompt_row, part="reason", variant=variant, kind="steer", site="answer",
                        alpha=strength, lo=low, hi=high)
     at_last_token = Edit("add", [len(layout.ids) - 1], vector, scale=strength, layers=(low, high))
     return meta, Job(layout.ids, [at_last_token], steer=(vector, strength, (low, high)), knock=knock)
@@ -2115,7 +2168,7 @@ def steer_job(prompt_row: dict, layout: prompts.Layout, condition: list, head_se
 def stage_steer(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """Sampled reasoned replies under the circuit's two handles: the place vector at the answer position, and
     head sets barred from part of the page (see ``steer_job``). The head sets are the readers, two random sets
-    like them, and the named sets of ``steering.program``. Rows are in the reasoning stage's format, so the
+    like them, and the named sets of ``named_sets``. Rows are in the reasoning stage's format, so the
     analysis treats them as reasoning cells; one file per patient in the configured folder."""
     settings = cfg["circuit_steer"]
     engine.cast(settings["dtype"])
@@ -2124,8 +2177,7 @@ def stage_steer(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     head_sets = reader_and_random_sets(engine, readers, int(cfg["circuit"]["seed"]) + 8)
     (run_dir / "circuit_concrete" / "reader_sets.json").write_text(json.dumps(head_sets))
     if "head_sets" in cfg:
-        from steering import program      # imported here: ``program`` imports this module
-        named = program.named_sets(run_dir, engine, cfg)
+        named = named_sets(run_dir, engine, cfg)
         head_sets |= {name: heads for name, heads in named.items() if name not in head_sets}
     window = tuple(settings["window"])
     folder = run_dir / settings["folder"]
@@ -2133,22 +2185,22 @@ def stage_steer(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     todo = patients_to_sample(cases, cfg, folder, int(settings["patients"]))
 
     def add_jobs(case, batch):
-        prompt_rows = run.case_prompts(case, cases, cfg["pairs"]["false"])
+        prompt_rows = case_prompts(case, cases, cfg["pairs"]["false"])
         for side, order, conditions in settings["cells"]:
-            prompt_row = prompt_rows[(cfg["pairs"]["false"][ARM_OF_SIDE[side]], order, "C")]
+            prompt_row = prompt_rows[(cfg["pairs"]["false"][SIDE[side]], order, "C")]
             layout = prompts.layout(engine.tok, prompt_row["prompt"], engine.kw, prefix="")
             for condition in conditions:
                 meta, job = steer_job(prompt_row, layout, condition, head_sets, place_vectors, window)
                 batch.add(case, meta, job)
 
-    run.sample_patients(engine, folder, todo, settings, seed, "circuit steer", add_jobs)
+    sample_patients(engine, folder, todo, settings, seed, "circuit steer", add_jobs)
 
 
 def paired_head_columns(engine, run_dir: Path, cfg: dict, n_heads: int) -> tuple[dict, int]:
     """({head set name: columns of the heads' outputs, None meaning every head}, size of the lookup set).
 
     The sets: the top ``n_heads`` lookup heads, a random set like them, every other head, every head, and the
-    named sets of ``steering.program``. The first two (and the named ones) are saved beside the ranking."""
+    named sets of ``named_sets``. The first two (and the named ones) are saved beside the ranking."""
     seed = int(cfg["circuit"]["seed"]) + 11
     ranking = json.loads((run_dir / "circuit" / "selection.json").read_text())
     top = [tuple(head) for head in ranking["query"][:n_heads]]
@@ -2160,8 +2212,7 @@ def paired_head_columns(engine, run_dir: Path, cfg: dict, n_heads: int) -> tuple
     saved = {f"lookup{size}": top, f"random{size}": random_set}
     (run_dir / "circuit" / "paired_sets.json").write_text(json.dumps(saved))
     if "head_sets" in cfg:
-        from steering import program      # imported here: ``program`` imports this module
-        named = program.named_sets(run_dir, engine, cfg)
+        named = named_sets(run_dir, engine, cfg)
         columns |= {name: engine.head_dims(heads) for name, heads in named.items()
                     if name not in columns and name != "all"}
         saved_named = {name: heads for name, heads in named.items() if name != "all"}
@@ -2178,8 +2229,8 @@ def paired_jobs(engine, vectors: dict, prompt_rows: dict, cell: list, cfg: dict,
     records; otherwise the same records under the slot edit at ``strength``. A twin whose question tokenises
     differently gives no jobs. ``first_index``: the index the first job will have in the batch."""
     variant, side, order, donor, strength, set_names = cell
-    arm = cfg["pairs"][variant][ARM_OF_SIDE[side]]
-    other_arm = cfg["pairs"][variant][1 - ARM_OF_SIDE[side]]
+    arm = cfg["pairs"][variant][SIDE[side]]
+    other_arm = cfg["pairs"][variant][1 - SIDE[side]]
     prompt_row = prompt_rows[(arm, order, "C")]
     layout = prompts.layout(engine.tok, prompt_row["prompt"], engine.kw, prefix="")
     if donor == "twin":
@@ -2195,7 +2246,7 @@ def paired_jobs(engine, vectors: dict, prompt_rows: dict, cell: list, cfg: dict,
     jobs = []
     for set_name in set_names:
         set_name = set_name.format(n=size)
-        meta = run.meta_of(prompt_row, part="reason", variant=f"paired: {set_name} see {sees}", kind="paired",
+        meta = meta_of(prompt_row, part="reason", variant=f"paired: {set_name} see {sees}", kind="paired",
                            alpha=float(strength))
         jobs.append((meta, Job(layout.ids, split=layout.n_ctx)))
         leader_index = first_index + len(jobs) - 1
@@ -2204,7 +2255,7 @@ def paired_jobs(engine, vectors: dict, prompt_rows: dict, cell: list, cfg: dict,
     return jobs
 
 
-def stage_paired(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors) -> None:
+def stage_paired(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """Sampled replies in which only a head set reads other records.
 
     Each reply is sampled from a prompt as it is, while a second stream reads the same tokens after other
@@ -2222,14 +2273,14 @@ def stage_paired(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vector
     arms = sorted({arm for variant, *_ in settings["cells"] for arm in cfg["pairs"][variant]})
 
     def add_jobs(case, batch):
-        prompt_rows = run.case_prompts(case, cases, arms)
+        prompt_rows = case_prompts(case, cases, arms)
         for cell in settings["cells"]:
             cell_jobs = paired_jobs(engine, vectors, prompt_rows, cell, cfg, columns, size,
                                     first_index=len(batch.jobs))
             for meta, job in cell_jobs:
                 batch.add(case, meta, job)
 
-    run.sample_patients(engine, folder, todo, settings, seed, "circuit paired", add_jobs, paired=True)
+    sample_patients(engine, folder, todo, settings, seed, "circuit paired", add_jobs, paired=True)
 
 
 def reference_jobs(engine, cases: pd.Series, case: str, cfg: dict, cells: list, arms: list,
@@ -2243,7 +2294,7 @@ def reference_jobs(engine, cases: pd.Series, case: str, cfg: dict, cells: list, 
     frame = frame[frame.replicate == 0]
     jobs, wanted, job_of_prompt = [], [], {}
     for variant, side, order in cells:
-        arm = cfg["pairs"][variant][ARM_OF_SIDE[side]]
+        arm = cfg["pairs"][variant][SIDE[side]]
         for role in "ABMD":
             role_order = order if role in "MD" else "shared"
             match = (frame.arm == arm) & (frame.role == role) & (frame.block_order == role_order)
@@ -2252,7 +2303,7 @@ def reference_jobs(engine, cases: pd.Series, case: str, cfg: dict, cells: list, 
             if prompt not in job_of_prompt:
                 job_of_prompt[prompt] = first_index + len(jobs)
                 jobs.append(Job(prompts.layout(engine.tok, prompt, engine.kw, prefix="").ids))
-            meta = run.meta_of(prompt_row, part="refs", variant="base") | dict(cell_order=order)
+            meta = meta_of(prompt_row, part="refs", variant="base") | dict(cell_order=order)
             wanted.append((case, meta, job_of_prompt[prompt]))
     return jobs, wanted
 
@@ -2266,7 +2317,7 @@ def stage_references(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None
     folder = run_dir / "refs_own"
     seed = int(experiment_config.load()["seed"]) + 5
     todo = patients_to_sample(cases, cfg, folder, int(settings["patients"]))
-    arms = sorted({cfg["pairs"][variant][ARM_OF_SIDE[side]] for variant, side, _ in settings["cells"]})
+    arms = sorted({cfg["pairs"][variant][SIDE[side]] for variant, side, _ in settings["cells"]})
 
     def add_jobs(case, batch):
         case_jobs, case_wanted = reference_jobs(engine, cases, case, cfg, settings["cells"], arms,
@@ -2274,4 +2325,4 @@ def stage_references(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None
         batch.jobs.extend(case_jobs)
         batch.wanted.extend(case_wanted)
 
-    run.sample_patients(engine, folder, todo, settings, seed, "references", add_jobs)
+    sample_patients(engine, folder, todo, settings, seed, "references", add_jobs)

@@ -49,7 +49,7 @@ from belief_leakage import config as C
 from belief_leakage.beliefs import clip_logit
 from belief_leakage.leakage import interval, slope
 from belief_leakage.package_run import file_sha256
-from belief_leakage.readout import CausalReadout, NO_REASONING, PREFIX, REASONING, encode_prompt, no_reasoning, set_tf32
+from belief_leakage.readout import CausalReadout, PREFIX, encode_prompt, no_reasoning, set_tf32
 
 logit_of = clip_logit
 FILLER = "\n".join([
@@ -168,7 +168,6 @@ def encode(tok, prompt: str, template_kwargs: dict) -> Encoded:
             raise ValueError(f"{name} not found in the question")
         pos["name"] = last_token(base + at + 1 + len(name))
     pos["question_end"] = last_token(q_end)
-    pos["prompt_end"] = last_token(base + len(prompt))
     pos["gen_start"] = last_token(chat_end)
     pos["answer"] = len(ids) - 1
     groups["readout"] = list(range(span(q_start, q_end)[0], len(ids)))

@@ -254,7 +254,7 @@ def curse_bayes(points):
     save(fig, "curse_bayes")
 
 
-def curse_linearity(scatter, est, bins: int = 8):
+def curse_linearity(scatter, bins: int = 8):
     """Binned means of the two gap regressions' outcomes against x, with the fitted lines."""
     if scatter.empty:
         return
@@ -480,7 +480,7 @@ def main() -> None:
         curse_decomposition(est)
         curse_estimates(est)
         curse_scatter(scatter, est)
-        curse_linearity(scatter, est)
+        curse_linearity(scatter)
         curse_case_leakage(scatter)
         curse_comprehension(est)
     curse_thresholds(read("curse/thresholds.csv"))

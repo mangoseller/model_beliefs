@@ -31,6 +31,7 @@ from belief_leakage.beliefs import clip_logit
 from belief_leakage.leakage import interval
 from belief_leakage.report import markdown_rows
 from steering import prompts
+from steering import stages
 from steering import transcripts
 from steering.results import read_rows
 
@@ -429,37 +430,13 @@ def reply_tables(run_dir: Path, session1_beliefs: pd.DataFrame | None, resamples
 
 
 def other_module_tables(run_dir: Path, cfg: dict) -> dict:
-    """The tables of the circuit and program stages whose folders exist. Their modules are imported here, so
-    that the tables above need none of them."""
+    """The tables of the circuit and program stages whose folders exist (``steering.stages.TABLES``). Their
+    modules are imported only then, so that the tables above need none of them."""
     tables = {}
-    if (run_dir / "circuit").is_dir():
-        from steering import circuit
-        tables |= circuit.tables(run_dir, cfg)
-        reply = circuit.reply_table(run_dir, cfg)
-        if not reply.empty:
-            tables["circuit_reply"] = reply
-        tables |= circuit.algorithm_tables(run_dir)
-        tables |= circuit.concrete_tables(run_dir, cfg)
-    program_folders = ("circuit_program", "program_reason", "circuit_reply_headers",
-                       "circuit_reply_headers_cross", "circuit_reply_headers_lines")
-    if "head_sets" in cfg and any((run_dir / folder).is_dir() for folder in program_folders):
-        from steering import program
-        tables |= program.tables(run_dir, cfg)
-    if (run_dir / "circuit_tables").is_dir():
-        from steering import head_tables
-        tables |= head_tables.tables(run_dir, cfg)
-    if (run_dir / "circuit_tables_reply").is_dir():
-        from steering import head_tables
-        tables |= head_tables.reply_tables(run_dir, cfg)
-    if (run_dir / "circuit_match").is_dir():
-        from steering import circuit_steps
-        tables |= circuit_steps.tables(run_dir, cfg)
-    if (run_dir / "circuit_phrase").is_dir():
-        from steering import circuit_steps
-        tables |= circuit_steps.phrase_tables(run_dir, cfg)
-    if (run_dir / "circuit_tag").is_dir():
-        from steering import circuit_steps
-        tables |= circuit_steps.tag_tables(run_dir)
+    for entry in stages.TABLES:
+        wanted = entry.setting is None or entry.setting in cfg
+        if wanted and any((run_dir / folder).is_dir() for folder in entry.folders):
+            tables |= stages.function(entry.function)(run_dir, cfg)
     return tables
 
 

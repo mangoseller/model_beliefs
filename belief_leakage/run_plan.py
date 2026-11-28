@@ -225,13 +225,13 @@ def generate_items(root, model, items, label):
         raise RuntimeError("generation incomplete; rerun to retry failed calls")
 
 
-def capture(root: Path, model: str, replayer_factory=None, items=None) -> None:
-    """Residual-stream activations of every capture item (or of ``items``: plan item dicts). An existing
-    capture whose identity and checksum match is kept; a damaged one is replayed."""
+def capture(root: Path, model: str, replayer_factory=None) -> None:
+    """Residual-stream activations of every capture item. An existing capture whose identity and checksum
+    match is kept; a damaged one is replayed."""
     plan = read_plan(root)
     if model not in plan["models"]:
         raise ValueError(f"model {model} is not in the prepared plan")
-    capture_responses(root, model, capture_items(plan, model) if items is None else items, replayer_factory)
+    capture_responses(root, model, capture_items(plan, model), replayer_factory)
 
 
 def capture_responses(root, model, rows, replayer_factory=None):

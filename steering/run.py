@@ -58,7 +58,7 @@ import itertools
 import json
 import time
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import cache, partial
 from pathlib import Path
 from typing import NamedTuple
@@ -73,10 +73,12 @@ from belief_leakage import config
 from belief_leakage.package_run import file_sha256
 from steering import interventions
 from steering import prompts
+from steering import stages
 from steering import transcripts
-from steering.transcripts import value_token
 from steering.engine import Engine, Job, half_bits, to_device
-from steering.results import read_rows, reply_rows, stated_value, write_rows
+from steering.results import (SIDE, Timer, case_prompts, each_patient, load_vectors, meta_of, patients_to_sample,
+                              replies_with_prompts, sample_patients, stated_value, unedited_replies, unfinished,
+                              write_rows)
 
 DEFAULTS = {
     # ---- Model and numerics ----
@@ -241,15 +243,6 @@ DEFAULTS = {
         "owner_heads": [[11, 10], [3, 15], [3, 6], [9, 18], [3, 12], [9, 16], [5, 4], [1, 28],
                         [5, 13], [11, 9], [11, 8], [3, 7], [8, 4], [1, 31], [2, 31], [6, 8]]},
 }
-# The stages that "all" runs, in order.
-STAGES = ("baseline", "vectors", "dose", "reason")
-# The other stages the command line takes; each is run on its own.
-LATER_STAGES = ("controls", "probe", "branch", "decision", "circuit", "circuit_reply", "circuit_fine",
-                "circuit_algorithm", "circuit_concrete", "circuit_steer", "circuit_paired", "references",
-                "circuit_program", "program_reason", "circuit_tables", "circuit_tables_reply",
-                "circuit_match", "circuit_tag", "circuit_phrase", "circuit_redirect", "circuit_reply_headers")
-# Which arm of a pair a cell's "plain" or "labelled" names.
-SIDE = {"plain": 0, "labelled": 1}
 
 
 # Settings and files
@@ -284,31 +277,7 @@ def arms_of(cfg: dict) -> list[str]:
     return [arm for pair in cfg["pairs"].values() for arm in pair]
 
 
-class Timer:
-    """Seconds and patients of each stage, kept in timing.json."""
-
-    def __init__(self, run_dir: Path):
-        self.path = run_dir / "timing.json"
-        self.data = json.loads(self.path.read_text()) if self.path.exists() else {}
-
-    def add(self, stage: str, seconds: float, patients: int) -> None:
-        totals = self.data.setdefault(stage, {"seconds": 0.0, "patients": 0})
-        totals["seconds"] += seconds
-        totals["patients"] += patients
-        self.path.write_text(json.dumps(self.data, indent=1))
-
-
 # Result rows
-def meta_of(prompt_row: dict, **edit) -> dict:
-    """The columns that identify a result row: the prompt (patient, arm, page order, role, replicate) and the
-    edit made to it, which is none unless ``edit`` says otherwise."""
-    unedited = dict(case_id=prompt_row["case_id"], split=prompt_row["split"], arm=prompt_row["arm"],
-                    block_order=prompt_row["block_order"], role=prompt_row["role"],
-                    replicate=int(prompt_row["replicate"]),
-                    part="base", variant="base", kind="", site="", alpha=0.0, lo=0, hi=0, donor="")
-    return unedited | edit
-
-
 def result_rows(meta: dict, result: dict, lookup_meta: list[dict]) -> list[dict]:
     """The rows of one evaluated prompt: its belief, and one row per direct lookup (the logit of PERSON's
     value minus the model's)."""
@@ -321,13 +290,6 @@ def result_rows(meta: dict, result: dict, lookup_meta: list[dict]) -> list[dict]
 
 
 # Prompts and jobs
-def case_prompts(case: str, cases: pd.Series, arms) -> dict:
-    """A patient's two-record prompts in ``arms``: (arm, page order, role) -> the prompt table's row, for the
-    roles C, M and D."""
-    table = prompts.build(cases.loc[[case]], arms, roles=binding.TWO_RECORD_ROLES)
-    return {(row.arm, row.block_order, row.role): row._asdict() for row in table.itertuples(index=False)}
-
-
 def lookups_for(engine: Engine, prompt: str, cfg: dict) -> tuple[list, list[dict]]:
     """Direct lookup questions about the fields the prompt's two records disagree on (none for a one-record
     prompt): the questions' token ids, and for each the field it asks about and in whose record."""
@@ -487,10 +449,10 @@ def stage_baseline(engine: Engine, run_dir: Path, cfg: dict, cases: pd.Series) -
 
 
 # Stage: vectors
-def stage_vectors(run_dir: Path, cfg: dict) -> dict:
-    """The mean vectors from the baseline's running means, with random directions of each slot vector's size.
-    Writes ``vectors.pt``, ``vector_reliability.csv`` and ``lock.json`` (the file's hash; later stages refuse
-    vectors that no longer match it)."""
+def stage_vectors(engine: Engine | None, run_dir: Path, cfg: dict, cases: pd.Series) -> dict:
+    """The mean vectors from the baseline's running means, with random directions of each slot vector's size
+    (no model is needed: ``engine`` may be None). Writes ``vectors.pt``, ``vector_reliability.csv`` and
+    ``lock.json`` (the file's hash; later stages refuse vectors that no longer match it)."""
     import torch
     means = interventions.Means.load(run_dir / "means.pt")
     pairs = {variant: tuple(pair) for variant, pair in cfg["pairs"].items() if set(pair) <= set(means.arms())}
@@ -505,32 +467,20 @@ def stage_vectors(run_dir: Path, cfg: dict) -> dict:
     return lock
 
 
-def load_vectors(run_dir: Path, device) -> dict:
-    """The vectors of the vectors stage on ``device``, after checking the file against its lock."""
-    import torch
-    lock = json.loads((run_dir / "lock.json").read_text())
-    if file_sha256(run_dir / "vectors.pt") != lock["vectors_sha256"]:
-        raise ValueError("vectors.pt no longer matches lock.json: rerun the vectors stage and every later "
-                         "one")
-    return to_device(torch.load(run_dir / "vectors.pt", map_location="cpu"), device)
-
-
 # Stages: dose, controls, probe (the slot vector without reasoning)
 def run_sweep_stage(engine: Engine, run_dir: Path, cfg: dict, cases: pd.Series, stage: str,
                     jobs_for_case) -> None:
     """For each test patient not yet done: build the patient's jobs with ``jobs_for_case``, evaluate them and
     write ``<stage>/<patient>.parquet``."""
     vectors = load_vectors(run_dir, engine.device)
-    test_cases = cases.index[cases == cfg["intervene_split"]]
-    todo = [case for case in test_cases if not (run_dir / stage / f"{case}.parquet").exists()]
-    timer = Timer(run_dir)
-    for index, case in enumerate(todo):
-        started = time.time()
+
+    def run_patient(case):
         jobs = jobs_for_case(engine, vectors, cfg, case, cases)
         write_rows(run_dir / stage / f"{case}.parquet", run_jobs(engine, jobs, cfg))
-        timer.add(stage, time.time() - started, 1)
-        seconds = time.time() - started
-        print(f"[{stage}] {index + 1}/{len(todo)} patients, {len(jobs)} variants, {seconds:.1f}s", flush=True)
+        return f"patients, {len(jobs)} variants"
+
+    test_cases = cases.index[cases == cfg["intervene_split"]]
+    each_patient(unfinished(test_cases, run_dir / stage), stage, run_patient, timer=Timer(run_dir))
 
 
 def stage_dose(engine: Engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
@@ -683,61 +633,6 @@ def vector_reply_job(engine: Engine, vectors: dict, cell: ReasonCell, kind: str,
     return meta, Job(cell.layout.ids, edits)
 
 
-@dataclass
-class ReplyBatch:
-    """Jobs for one sampling pass and the result rows that refer to each job."""
-    jobs: list[Job] = field(default_factory=list)
-    wanted: list[tuple[str, dict, int]] = field(default_factory=list)
-
-    def add(self, case: str, meta: dict | None, job: Job):
-        if meta is not None:
-            self.wanted.append((case, meta, len(self.jobs)))
-        self.jobs.append(job)
-
-
-def held_out_patients(cases: pd.Series, cfg: dict, spec=None) -> list[str]:
-    patients = sorted(cases.index[cases == cfg["intervene_split"]])
-    if spec is None:
-        return patients
-    offset = int(spec.get("offset", 0))
-    return patients[offset:offset + int(spec["patients"])]
-
-
-def patients_to_sample(cases: pd.Series, cfg: dict, folder: Path, patients: int, offset=0) -> list[str]:
-    """Held-out patients in the requested slice who do not yet have a result file."""
-    pool = held_out_patients(cases, cfg)[offset:patients]
-    return [case for case in pool if not (folder / f"{case}.parquet").exists()]
-
-
-def sample_patients(engine, folder, todo, settings, seed, stage, add_jobs, *, group_size=None,
-                    paired=False, static_cache=True, timer=None):
-    """Resume per-patient reply files, sampling each group with its original first-patient seed."""
-    if group_size is None:
-        group_size = int(settings["group"])
-    for start in range(0, len(todo), group_size):
-        started, group = time.time(), todo[start:start + group_size]
-        batch = ReplyBatch()
-        for case in group:
-            add_jobs(case, batch)
-        group_seed = seed + sum(map(ord, group[0]))
-        samples, tokens = int(settings["samples"]), int(settings["max_new_tokens"])
-        if paired:  # leader and follower must stay in the same forward pass
-            generator = engine.torch.Generator(device=engine.device).manual_seed(group_seed)
-            replies = engine._generate(batch.jobs, samples, tokens, generator, True)
-        else:
-            replies = engine.generate(batch.jobs, samples, tokens, group_seed, int(settings["batch"]), static_cache)
-        rows = {case: [] for case in group}
-        for case, meta, index in batch.wanted:
-            rows[case].extend(reply_rows(meta, replies[index]))
-        for case in group:
-            write_rows(folder / f"{case}.parquet", rows[case])
-        if timer is not None:
-            timer.add(folder.name, time.time() - started, len(group))
-        answers = sum(len(replies[i]) for i in {index for _, _, index in batch.wanted})
-        print(f"[{stage}] {start + len(group)}/{len(todo)} patients, {answers} answers, "
-              f"{time.time() - started:.1f}s", flush=True)
-
-
 def stage_reason(engine: Engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """Sampled replies with reasoning to each cell's prompt, unedited and under its edits. Several patients
     share a pass, which lasts as long as its longest reply. Writes ``<folder>/<patient>.parquet``."""
@@ -754,16 +649,6 @@ def stage_reason(engine: Engine, run_dir: Path, cfg: dict, cases: pd.Series) -> 
 
     sample_patients(engine, folder, todo, settings, seed, "reason", add_jobs,
                     group_size=max(1, int(settings.get("group", 1))), static_cache=bool(settings.get("static_cache", True)), timer=Timer(run_dir))
-
-
-def unedited_replies(run_dir: Path, folders: list[str]) -> pd.DataFrame:
-    tables = [read_rows(run_dir / folder) for folder in folders]
-    tables = [table for table in tables if not table.empty]
-    if not tables:
-        raise ValueError(f"no sampled replies in {', '.join(folders)} under {run_dir}: "
-                         "run the reason stage first")
-    replies = pd.concat(tables, ignore_index=True)
-    return replies[replies.variant == "base"]
 
 
 # Stage: decision
@@ -855,20 +740,15 @@ def stage_decision(engine: Engine, run_dir: Path, cfg: dict, cases: pd.Series) -
     Writes ``decision/<patient>.parquet``."""
     settings = cfg["decision"]
     vectors = load_vectors(run_dir, engine.device)
-    replies = unedited_replies(run_dir, settings["folders"])
-    replies = replies[replies.arm.isin(cfg["pairs"]["false"])]
+    replies = unedited_replies(run_dir, settings["folders"], cfg["pairs"]["false"])
     windows = interventions.windows(engine.n_layers, int(settings["attention_parts"]))
-    todo = [case for case in sorted(set(replies.case_id))
-            if not (run_dir / "decision" / f"{case}.parquet").exists()]
-    timer, batch = Timer(run_dir), int(settings["batch"])
-    for index, case in enumerate(todo):
-        started = time.time()
-        case_replies = replies[replies.case_id == case]
-        prompt_rows = case_prompts(case, cases, sorted(set(case_replies.arm)))
+    batch = int(settings["batch"])
+
+    def run_patient(case):
         probes = []
-        for reply in case_replies.itertuples():
-            prompt = prompt_rows[(reply.arm, reply.block_order, "C")]["prompt"]
-            probes += decision_probes(engine, vectors, reply, prompt, settings["alphas"])
+        for reply, prompt_of in replies_with_prompts(replies, case, cases):
+            probes += decision_probes(engine, vectors, reply, prompt_of[(reply.arm, reply.block_order)],
+                                      settings["alphas"])
         probes.sort(key=lambda probe: len(probe.ids))
         rows = []
         for start in range(0, len(probes), batch):
@@ -877,9 +757,10 @@ def stage_decision(engine: Engine, run_dir: Path, cfg: dict, cases: pd.Series) -
             rows += [decision_row(probe, logits, attention, windows)
                      for probe, (logits, attention) in zip(chunk, readings)]
         write_rows(run_dir / "decision" / f"{case}.parquet", rows)
-        timer.add("decision", time.time() - started, 1)
-        seconds = time.time() - started
-        print(f"[decision] {index + 1}/{len(todo)} patients, {len(rows)} probes, {seconds:.1f}s", flush=True)
+        return f"patients, {len(rows)} probes"
+
+    todo = unfinished(sorted(set(replies.case_id)), run_dir / "decision")
+    each_patient(todo, "decision", run_patient, timer=Timer(run_dir))
 
 
 # Stage: branch
@@ -975,75 +856,21 @@ def stage_branch(engine: Engine, run_dir: Path, cfg: dict, cases: pd.Series) -> 
 
 
 # Running a stage
-def with_vectors(stage_function):
-    """A stage function that also takes the vector loader, as a function of (engine, run_dir, cfg, cases)."""
-    return lambda engine, run_dir, cfg, cases: stage_function(engine, run_dir, cfg, cases, load_vectors)
-
-
-# The stages of this file, by name. Each is called as f(engine, run_dir, cfg, cases).
-OWN_STAGES = {
-    "baseline": stage_baseline,
-    "vectors": lambda engine, run_dir, cfg, cases: stage_vectors(run_dir, cfg),
-    "dose": stage_dose,
-    "reason": stage_reason,
-    "controls": stage_controls,
-    "probe": stage_probe,
-    "branch": stage_branch,
-    "decision": stage_decision,
-}
-
-
-def other_module_stages() -> dict:
-    """The stages of the other modules, by name. The modules are imported here, when one of their stages is
-    first asked for, so that importing this file and running its own stages does not load them."""
-    from steering import circuit
-    from steering import circuit_steps
-    from steering import head_tables
-    from steering import program
-    return {
-        "circuit": with_vectors(circuit.stage_circuit),
-        "circuit_reply": with_vectors(circuit.stage_reply),
-        "circuit_fine": with_vectors(circuit.stage_fine),
-        "circuit_algorithm": with_vectors(circuit.stage_algorithm),
-        "circuit_concrete": with_vectors(circuit.stage_concrete),
-        "circuit_paired": with_vectors(circuit.stage_paired),
-        "circuit_steer": circuit.stage_steer,
-        "references": circuit.stage_references,
-        "circuit_match": with_vectors(circuit_steps.stage_match),
-        "circuit_tag": circuit_steps.stage_tag,
-        "circuit_phrase": circuit_steps.stage_phrase,
-        "circuit_program": program.stage_program,
-        "program_reason": program.stage_program_reason,
-        "circuit_redirect": program.stage_redirect,
-        "circuit_reply_headers": with_vectors(program.stage_reply_headers),
-        "circuit_tables": head_tables.stage_tables,
-        "circuit_tables_reply": with_vectors(head_tables.stage_tables_reply),
-    }
-
-
-def stage_dtype(stage: str, cfg: dict) -> str:
-    """The precision a stage starts in: the sampled stages of this file name their own, every other the
-    default (the sampled stages of the other modules switch to theirs themselves)."""
-    if stage in ("reason", "branch"):
-        return cfg[stage].get("dtype", cfg["dtype"])
-    return cfg["dtype"]
-
-
 def run_stage(stage: str, engine: Engine | None, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
-    """Run one stage by name on the run directory of one model. ``engine`` may be None for the vectors stage,
-    which needs no model."""
-    if engine is not None:
-        engine.cast(stage_dtype(stage, cfg))
-    stages = OWN_STAGES if stage in OWN_STAGES else other_module_stages()
-    if stage not in stages:
+    """Run one stage by name (``steering.stages``) on the run directory of one model. ``engine`` may be None
+    for the vectors stage, which needs no model."""
+    if stage not in stages.STAGES:
         raise ValueError(f"unknown stage {stage!r}")
-    stages[stage](engine, run_dir, cfg, cases)
+    entry = stages.STAGES[stage]
+    if engine is not None:
+        engine.cast(cfg[stage].get("dtype", cfg["dtype"]) if entry.own_dtype else cfg["dtype"])
+    stages.function(entry.function)(engine, run_dir, cfg, cases)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("stage", nargs="?", default="all", choices=STAGES + LATER_STAGES + ("analyse", "all"))
+    parser.add_argument("stage", nargs="?", default="all", choices=tuple(stages.STAGES) + ("analyse", "all"))
     parser.add_argument("--preset", choices=presets(), help="named settings from steering/presets.yaml")
     parser.add_argument("--config", type=Path, help="custom JSON settings applied after the run settings and preset")
     parser.add_argument("--model", default="qwen3_8b")
@@ -1064,14 +891,14 @@ def main():
         from steering import analysis
         analysis.analyse(run_dir, cfg, args.resamples, args.session1)
         return
-    stages = STAGES if args.stage == "all" else (args.stage,)
+    to_run = stages.ALL if args.stage == "all" else (args.stage,)
     engine = None
-    if stages != ("vectors",):
+    if to_run != ("vectors",):
         engine = Engine(args.model, device=args.device, dtype=cfg["dtype"], statistic=cfg["statistic"],
                         tf32=cfg["tf32"], revision=cfg["revisions"].get(args.model))
         print(f"[engine] {args.model} at {engine.revision}: {engine.n_layers} layers, hidden {engine.hidden},"
               f" {cfg['dtype']} on {engine.device}", flush=True)
-    for stage in stages:
+    for stage in to_run:
         run_stage(stage, engine, run_dir, cfg, cases)
 
 

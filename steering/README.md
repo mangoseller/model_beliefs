@@ -14,6 +14,8 @@ answers. Models: Qwen3 8B and 14B, through `transformers` with forward hooks.
 | `circuit_steps.py` | Single steps taken apart: how a record gets its place, where the owner is read, queries and keys exchanged |
 | `program.py` | The lookup as a program of four variables (owner, place, field, value), the stages that give the model the program's answer, invented records, and the redirect that removes the leak |
 | `head_tables.py` | Heads written from tables of the program's variables |
+| `stages.py` | Every stage and table by name, and the module that holds it |
+| `results.py` | What the stages share: the patients a stage runs on, the per-patient loop that resumes after the last file, result rows, sampled replies, the vectors file |
 | `engine.py` | The model wrapper: chunked forward passes over a shared cache, residual edits, attention knockouts, head and MLP patches, sampling |
 | `interventions.py` | Mean vectors and the edits built from them |
 | `prompts.py`, `transcripts.py` | Token layout of a prompt; which record's values a reply states |

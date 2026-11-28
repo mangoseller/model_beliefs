@@ -34,9 +34,9 @@ import numpy as np
 import pandas as pd
 
 from steering import circuit
-from steering import program
 from steering import prompts
-from steering.results import read_rows, write_rows
+from steering.results import (case_prompts, each_patient, held_out_patients, load_vectors, read_rows, unfinished,
+                              write_rows)
 
 ALIGNED = ("pre", "post", "tail", "last")       # token groups with the same tokens whatever the field
 UNRANKED = 10 ** 6                              # rank given to a head the lookup ranking does not list
@@ -201,10 +201,6 @@ def fit(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> Tables:
     return table
 
 
-def all_heads(engine) -> list[tuple[int, int]]:
-    return [(layer, head) for layer in range(engine.n_layers) for head in range(engine.n_heads)]
-
-
 def head_sets_to_write(engine, sets: dict, settings: dict) -> dict:
     """name -> the heads written from the tables under that name.
 
@@ -212,7 +208,7 @@ def head_sets_to_write(engine, sets: dict, settings: dict) -> dict:
     becomes a place without a list of heads: the heads of the blocks before a boundary (written with place and
     owner, the owner alone, the place alone, or neither, every later head live), and the heads of one band of
     blocks (written from the neutral table, every other head live). Reader heads are never in these sets."""
-    every_head = all_heads(engine)
+    every_head = circuit.all_heads(engine)
     readers = set(sets.get("readers", []))
     boundary = int(settings["boundary"])
     value_heads = sets.get("value32", [])
@@ -326,9 +322,8 @@ def table_conditions(table: Tables, torch, lookup: dict, positions: list[int], d
 def run_conditions(engine, lookup: dict, records_state, conditions: list[dict]) -> list[tuple[float, int]]:
     """(margin, top token) of the lookup under each condition's written head outputs."""
     question = lookup["ids"][lookup["pair"]["n_ctx"]:]
-    count = len(conditions)
-    logits, _, _ = engine.run([question] * count, state=records_state.select([0] * count), keep=False,
-                              zpatch=[condition["zpatch"] for condition in conditions])
+    logits = circuit.run_from(engine, records_state, [0] * len(conditions),
+                              (question, dict(zpatch=[condition["zpatch"] for condition in conditions])))
     return [(float(row[lookup["value"]] - row[lookup["other_value"]]), int(row.argmax())) for row in logits]
 
 
@@ -346,12 +341,11 @@ def stage_tables(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     import torch
     settings = cfg["circuit_tables"]
     out = run_dir / "circuit_tables"
-    held_out = [case for case in program.held_out(cases, cfg, settings)
-                if not (out / "rows" / f"{case}.parquet").exists()]
-    if not held_out:
+    todo = unfinished(held_out_patients(cases, cfg, settings), out / "rows")
+    if not todo:
         return
     table = fit(engine, run_dir, cfg, cases)
-    named = head_sets_to_write(engine, program.named_sets(run_dir, engine, cfg), settings)
+    named = head_sets_to_write(engine, circuit.named_sets(run_dir, engine, cfg), settings)
     dims = {name: engine.head_dims(heads) for name, heads in named.items() if heads}
     short_sets = {name: heads for name, heads in named.items() if len(heads) < 200}
     (out / "sets.json").write_text(json.dumps(short_sets))
@@ -361,8 +355,10 @@ def stage_tables(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     error = torch.zeros((engine.n_layers, engine.n_heads))
     variation = torch.zeros((engine.n_layers, engine.n_heads))
     n_lookups = 0
-    for done, case in enumerate(held_out):
-        started, rows = time.time(), []
+
+    def run_patient(case):
+        nonlocal error, variation, n_lookups
+        rows = []
         for lookup in lookups(engine, case, cases, cfg, n_fields):
             margin, head_outputs = run_clean(engine, lookup)
             if not table.usable(lookup) or margin < min_margin:
@@ -387,14 +383,14 @@ def stage_tables(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
                 rows.append(dict(meta, test=condition["test"], setting=condition["setting"],
                                  margin=patched_margin, top_right=top == right, top_other=top == other))
         write_rows(out / "rows" / f"{case}.parquet", rows)
-        seconds = time.time() - started
-        print(f"[circuit tables] {done + 1}/{len(held_out)} patients, {len(rows)} runs, {seconds:.1f}s",
-              flush=True)
+        return f"patients, {len(rows)} runs"
+
+    each_patient(todo, "circuit tables", run_patient)
     if n_lookups:
         share = (1 - error / variation.clamp_min(1e-12)).numpy()
         explained = [dict(layer=layer, head=head, explained=float(share[layer, head]),
                           variation=float(variation[layer, head] / n_lookups))
-                     for layer, head in all_heads(engine)]
+                     for layer, head in circuit.all_heads(engine)]
         pd.DataFrame(explained).to_parquet(out / "explained.parquet", index=False)
 
 
@@ -468,8 +464,7 @@ def reply_rows(engine, cfg: dict, cases: pd.Series, settings: dict, probe: dict,
     term. ``terms``: the tables' place and owner terms at the answer token and a random tensor of the place
     term's size, each [layers, 1, heads x head_dim]. Empty if the reply's own answer is not the value it went
     on to write."""
-    from steering import run
-    cell_prompts = run.case_prompts(probe["case_id"], cases, cfg["pairs"]["false"])
+    cell_prompts = case_prompts(probe["case_id"], cases, cfg["pairs"]["false"])
     prompt = cell_prompts[(probe["arm"], probe["block_order"], "C")]["prompt"]
     layout = prompts.layout(engine.tok, prompt, engine.kw, prefix="")
     field = probe["field"]
@@ -506,10 +501,9 @@ def reply_rows(engine, cfg: dict, cases: pd.Series, settings: dict, probe: dict,
         for what, move in moves:
             patch = ([writing], head_outputs + float(scale) * move, upstream_dims)
             conditions.append(dict(test="tables", what=f"{what} term x{scale:g}", zpatch=[patch]))
-    count = len(conditions)
-    patched, _, _ = engine.run([[ids[writing]]] * count, state=reply_state.select([0] * count), keep=False,
-                               force=[condition.get("force") for condition in conditions],
-                               zpatch=[condition.get("zpatch") for condition in conditions])
+    patched = circuit.run_from(engine, reply_state, [0] * len(conditions), ([ids[writing]], dict(
+        force=[condition.get("force") for condition in conditions],
+        zpatch=[condition.get("zpatch") for condition in conditions])))
     rows = []
     for condition, row_logits in zip(conditions, patched):
         margin = float(row_logits[probe["own_tok"]] - row_logits[probe["person_tok"]])
@@ -519,7 +513,7 @@ def reply_rows(engine, cfg: dict, cases: pd.Series, settings: dict, probe: dict,
     return rows
 
 
-def stage_tables_reply(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors) -> None:
+def stage_tables_reply(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """The program at the token where a reasoned reply writes a disputed value (unedited replies,
     teacher-forced to their first disputed value). (a) The pointer: the readers' attention set to the asked
     field's value token in the other record, or in the record the reply was about to quote. (b) The place
@@ -535,10 +529,10 @@ def stage_tables_reply(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_
     slot_vectors = load_vectors(run_dir, engine.device)
     fit_settings = cfg["circuit_tables"] | {"fit_patients": settings["fit_patients"]}
     table = fit(engine, run_dir, cfg | {"circuit_tables": fit_settings}, cases)
-    sets = program.named_sets(run_dir, engine, cfg)
+    sets = circuit.named_sets(run_dir, engine, cfg)
     readers = sets["readers"]
     boundary = int(settings["boundary"])
-    upstream = [head for head in all_heads(engine) if head[0] < boundary and head not in set(readers)]
+    upstream = [head for head in circuit.all_heads(engine) if head[0] < boundary and head not in set(readers)]
     upstream_dims = engine.head_dims(upstream)
     place_term, owner_term = table.coef["last"][1], table.coef["last"][2]      # [layers, 1, heads x head_dim]
     terms = dict(place=place_term, owner=owner_term, random=random_like(torch, place_term))
@@ -562,9 +556,7 @@ def reply_tables(run_dir: Path, cfg: dict) -> dict:
     rows = pd.read_parquet(path)
     if rows.empty:
         return {}
-    labelled_arm = cfg["pairs"]["false"][1]
-    labelling = pd.Series(np.where(rows.arm == labelled_arm, "labelled", "unlabelled"), index=rows.index)
-    rows["cell"] = labelling + ", " + rows.block_order + ", wrote " + rows.wrote
+    rows["cell"] = circuit.cell_labels(rows, cfg) + ", wrote " + rows.wrote
     summary = rows.groupby(["test", "what"]).agg(
         replies=("flipped", "size"), flipped=("flipped", "mean"), margin_before=("base", "mean"),
         margin_after=("patched", "mean")).reset_index()

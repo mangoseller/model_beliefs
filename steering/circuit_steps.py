@@ -28,7 +28,6 @@ the margin under an intervention.
 from __future__ import annotations
 
 import functools
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
@@ -38,15 +37,13 @@ import pandas as pd
 
 from belief_leakage import binding
 from steering import circuit
-from steering.circuit import value_margins
-from steering import interventions
+from steering.circuit import OTHER_QUERY, bar_blocks, value_margins
 from steering import program
 from steering import prompts
 from steering.engine import Edit
-from steering.results import read_rows, write_rows
+from steering.interventions import OTHER_ORDER
+from steering.results import each_patient, held_out_patients, load_vectors, read_rows, unfinished, write_rows
 
-OTHER_OWNER = {"person": "own", "own": "person"}
-OTHER_ORDER = {"person_first": "own_first", "own_first": "person_first"}
 # the record exchanges that are also run together with every query exchange
 WITH_QUERY_EXCHANGES = ("none", "keys, readers' blocks", "keys, readers' blocks, other page order")
 
@@ -79,24 +76,6 @@ def by_slot(layout_a: prompts.Layout, layout_b: prompts.Layout) -> tuple[list[in
     return positions_a, positions_b
 
 
-def bar_every_head(n_heads: int, keys: list[int], first_block: int, last_block: int) -> dict:
-    """A knockout that bars every head of blocks ``first_block``..``last_block`` (counted from 1) from
-    ``keys``."""
-    every_head = list(range(n_heads))
-    return {layer: (every_head, keys) for layer in range(int(first_block) - 1, int(last_block))}
-
-
-def pending(cases: pd.Series, cfg: dict, settings: dict, rows_dir: Path) -> list[str]:
-    held_out = program.held_out(cases, cfg, settings)
-    return [case for case in held_out if not (rows_dir / f"{case}.parquet").exists()]
-
-
-def answers_other_record(rows: pd.DataFrame) -> pd.Series:
-    """Whether the patched lookup answers with the other record's value (PERSON's value is the positive
-    side)."""
-    return np.where(rows["query"] == "person", 1.0, -1.0) * rows.patched < 0
-
-
 # What the reader heads match on
 @dataclass
 class MatchSetup:
@@ -120,19 +99,8 @@ def clean_lookups(engine, pair: dict, ids: list[int], other_ids: list[int]):
     _, state, _ = engine.run([ids[n_ctx:-1], other_ids[n_ctx:-1]], state=state)
     logits, _, captured = engine.run([[ids[-1]], [other_ids[-1]]], state=state, keep=False,
                                      capture=[[len(ids) - 1], [len(other_ids) - 1]])
-    base, donor = (float(logits[row, pair["tp"]] - logits[row, pair["to"]]) for row in (0, 1))
+    base, donor = value_margins(logits, pair)
     return base, donor, captured[0][1], captured[1][1]
-
-
-def tells_records_apart(base: float, donor: float, owner_sign: int, min_gap: float | None) -> bool:
-    """Whether the two questions' margins differ enough to measure a move between them: each on its own
-    record's side and at least ``min_gap`` apart, or (no ``min_gap``: a model that cannot do the task) merely
-    different."""
-    if abs(base - donor) < 1e-9:
-        return False
-    if min_gap is None:
-        return True
-    return owner_sign * base > 0 and owner_sign * donor < 0 and owner_sign * (base - donor) >= min_gap
 
 
 def query_exchanges(setup: MatchSetup, pair: dict, query: str, answer_position: list[int], own_state,
@@ -163,8 +131,7 @@ def record_exchanges(engine, setup: MatchSetup, cells: dict, arm: str, order: st
     readers, conversion = setup.reader_window, setup.convert_window
     lines = layout.line_tokens()
     # the record lines under the slot edit turned to the other record
-    slot_edit = interventions.mean_edits(layout, setup.slot_vectors, "slot", arm,
-                                         alpha=circuit.toward_other(layout, query, setup.slot_alpha))
+    slot_edit = circuit.slot_edit_away(layout, setup.slot_vectors, arm, query, setup.slot_alpha)
     _, _, captured = engine.run([record_ids], edits=[slot_edit], capture=[lines])
     edited = captured[0][1]
     exchanges = {"none": None,
@@ -203,12 +170,12 @@ def match_rows(engine, setup: MatchSetup, cells: dict, case: str, arm: str, orde
                query: str) -> list[dict]:
     """One lookup under every exchange of the record lines' keys and of the answer token's queries: the margin
     and the readers' attention to the asked field's value in the asked record and in the other one."""
-    other_owner = OTHER_OWNER[query]
+    other_owner = OTHER_QUERY[query]
     asked = pair["queries"][query]
     layout, ids, other_ids = asked["lay"], asked["ids"], pair["queries"][other_owner]["ids"]
     n_ctx = pair["n_ctx"]
     base, donor, own_state, other_state = clean_lookups(engine, pair, ids, other_ids)
-    if not tells_records_apart(base, donor, circuit.sign(query), setup.min_gap):
+    if not circuit.is_clean_flip(circuit.sign(query), base, donor, setup.min_gap):
         return []
     query_paths = query_exchanges(setup, pair, query, [len(ids) - 1], own_state, other_state)
     record_paths = record_exchanges(engine, setup, cells, arm, order, query, layout, ids[:n_ctx])
@@ -226,9 +193,9 @@ def match_rows(engine, setup: MatchSetup, cells: dict, case: str, arm: str, orde
     value_tokens = {"asked": layout.block(query).lines[pair["code"]].val,
                     "other": layout.block(other_owner).lines[pair["code"]].val}
     answer_paths = [[query_paths[name]] if query_paths[name] else [] for _, _, name in conditions]
-    logits, _, _ = engine.run([[ids[-1]]] * len(conditions), keep=False,
-                              state=question_state.select([row for row, _, _ in conditions]),
-                              paths=answer_paths, groups=[value_tokens] * len(conditions))
+    logits = circuit.run_from(engine, question_state, [row for row, _, _ in conditions],
+                              ([ids[-1]], dict(paths=answer_paths, groups=[value_tokens] * len(conditions))))
+    patched = value_margins(logits, pair)
 
     meta = dict(case_id=case, arm=arm, block_order=order, field=pair["code"], query=query, base=base,
                 donor=donor)
@@ -237,8 +204,7 @@ def match_rows(engine, setup: MatchSetup, cells: dict, case: str, arm: str, orde
     for index, (_, record_name, query_name) in enumerate(conditions):
         # name -> [layers, heads, 2]: the attention from the last token, and its mean over the chunk's tokens
         attention = engine.attention[index]
-        rows.append(dict(meta, records=record_name, queries=query_name,
-                         patched=float(logits[index, pair["tp"]] - logits[index, pair["to"]]),
+        rows.append(dict(meta, records=record_name, queries=query_name, patched=patched[index],
                          att_asked=float(attention["asked"][readers[0], readers[1], 0].mean()),
                          att_other=float(attention["other"][readers[0], readers[1], 0].mean())))
     return rows
@@ -248,22 +214,25 @@ def run_patient_lookups(engine, run_dir, cfg, cases, stage, rows_for_pair):
     """Run the stage's lookup pairs for each unfinished patient, preserving their configured order."""
     folder = run_dir / stage / "rows"
     fields = int(cfg["circuit"]["fields"])
-    for done, case in enumerate(pending(cases, cfg, cfg[stage], folder), 1):
-        started, rows = time.time(), []
+
+    def run_patient(case):
+        rows = []
         cells = circuit.case_cells(case, cases, cfg)
         for arm, order, pair in circuit.pairs_of(engine, cells, fields):
             rows.extend(rows_for_pair(case, cells, arm, order, pair))
         write_rows(folder / f"{case}.parquet", rows)
-        print(f"[{stage.replace('_', ' ')}] {done} patients, {len(rows)} runs, {time.time() - started:.1f}s",
-              flush=True)
+        return f"patients, {len(rows)} runs"
+
+    todo = unfinished(held_out_patients(cases, cfg, cfg[stage]), folder)
+    each_patient(todo, stage.replace("_", " "), run_patient, counted=False)
 
 
-def stage_match(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vectors) -> None:
+def stage_match(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """The readers' match taken apart on held-out patients: each lookup with the record lines' keys (or
     values) and the answer token's queries exchanged, alone and together. Writes
     circuit_match/rows/<patient>.parquet."""
     settings, circuit_settings = cfg["circuit_match"], cfg["circuit"]
-    readers = program.named_sets(run_dir, engine, cfg)["readers"]
+    readers = circuit.named_sets(run_dir, engine, cfg)["readers"]
     setup = MatchSetup(
         slot_vectors=load_vectors(run_dir, engine.device),
         place_vectors=circuit.load_place_vectors(engine, run_dir),
@@ -285,8 +254,8 @@ def tables(run_dir: Path, cfg: dict) -> dict:
     rows = read_rows(run_dir / "circuit_match" / "rows")
     if rows.empty:
         return {}
-    rows["moved"] = (rows.patched - rows.base) / (rows.donor - rows.base)
-    rows["flipped"] = answers_other_record(rows)
+    rows["moved"] = circuit.effect_of(rows.patched, rows.base, rows.donor)
+    rows["flipped"] = circuit.flipped(rows)
     summary = rows.groupby(["records", "queries"]).agg(
         lookups=("moved", "size"), moved=("moved", "mean"), flipped=("flipped", "mean"),
         readers_on_asked=("att_asked", "mean"), readers_on_other=("att_other", "mean")).reset_index()
@@ -341,7 +310,7 @@ def phrase_knockouts(layout: prompts.Layout, phrase: list[int], windows: list,
                      n_heads: int) -> list[Knockout]:
     """Per block window: the phrase's tokens, the tokens after it, or both barred from the records (whole,
     headers and end markers, field lines), and the tokens after the phrase barred from the phrase."""
-    headers_and_ends = [token for block in layout.blocks for token in block.header + block.extra]
+    headers_and_ends = layout.header_tokens()
     lines = layout.line_tokens()
     record_parts = (("the whole records", headers_and_ends + lines),
                     ("headers and end markers", headers_and_ends),
@@ -350,11 +319,11 @@ def phrase_knockouts(layout: prompts.Layout, phrase: list[int], windows: list,
     for first_block, last_block in windows:
         window = f"{first_block}-{last_block}"
         for part, keys in record_parts:
-            barred = bar_every_head(n_heads, keys, first_block, last_block)
+            barred = bar_blocks(n_heads, keys, first_block, last_block)
             knockouts += [Knockout(f"the phrase's tokens barred from {part}", window, barred, None),
                           Knockout(f"the tokens after the phrase barred from {part}", window, None, barred),
                           Knockout(f"every question token barred from {part}", window, barred, barred)]
-        from_phrase = bar_every_head(n_heads, phrase, first_block, last_block)
+        from_phrase = bar_blocks(n_heads, phrase, first_block, last_block)
         knockouts.append(Knockout("the tokens after the phrase barred from the phrase", window, None,
                                   from_phrase))
     return knockouts
@@ -364,12 +333,10 @@ def run_phrase_knockouts(engine, pair: dict, ids: list[int], phrase_end: int, re
                          knockouts: list[Knockout]) -> list[float]:
     """The lookup's margin under each knockout: the question up to the phrase's end under one knockout, the
     rest of the question under the other."""
-    n_ctx, count = pair["n_ctx"], len(knockouts)
-    state = records_state.select([0] * count)
-    at_phrase = [knockout.at_phrase for knockout in knockouts]
-    after_phrase = [knockout.after_phrase for knockout in knockouts]
-    _, state, _ = engine.run([ids[n_ctx:phrase_end]] * count, state=state, knock=at_phrase)
-    logits, _, _ = engine.run([ids[phrase_end:]] * count, state=state, keep=False, knock=after_phrase)
+    at_phrase = dict(knock=[knockout.at_phrase for knockout in knockouts])
+    after_phrase = dict(knock=[knockout.after_phrase for knockout in knockouts])
+    logits = circuit.run_from(engine, records_state, [0] * len(knockouts),
+                              (ids[pair["n_ctx"]:phrase_end], at_phrase), (ids[phrase_end:], after_phrase))
     return value_margins(logits, pair)
 
 
@@ -378,7 +345,7 @@ def phrase_rows(engine, settings: dict, case: str, arm: str, order: str, pair: d
     """One lookup with the phrase's tokens taken from the other page order, and under every knockout."""
     asked = pair["queries"][query]
     ids, layout, phrase_end, n_ctx = asked["ids"], asked["lay"], asked["cut"], pair["n_ctx"]
-    other_ids = pair["queries"][OTHER_OWNER[query]]["ids"]
+    other_ids = pair["queries"][OTHER_QUERY[query]]["ids"]
     _, records_state, _ = engine.run([ids[:n_ctx], other_ids[:n_ctx]])
     logits, _, _ = engine.run([ids[n_ctx:], other_ids[n_ctx:]], state=records_state, keep=False)
     base, donor = value_margins(logits, pair)
@@ -430,13 +397,6 @@ def stage_phrase(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     run_patient_lookups(engine, run_dir, cfg, cases, "circuit_phrase", rows_for_pair)
 
 
-def cell_labels(rows: pd.DataFrame, cfg: dict) -> pd.Series:
-    """"labelled, person_first" and so on: the prompt format and page order of each row."""
-    labelled_arm = cfg["pairs"]["false"][1]
-    labelling = pd.Series(np.where(rows.arm == labelled_arm, "labelled", "unlabelled"), index=rows.index)
-    return labelling + ", " + rows.block_order
-
-
 def phrase_tables(run_dir: Path, cfg: dict) -> dict:
     """Per phrase condition: how far the margin moves toward the other record's answer and the share of
     lookups flipped, over all lookups and by prompt format and page order."""
@@ -444,8 +404,8 @@ def phrase_tables(run_dir: Path, cfg: dict) -> dict:
     if rows.empty:
         return {}
     effects = circuit.effects(rows, cfg["circuit"]["min_gap"])
-    effects["flipped"] = answers_other_record(effects)
-    effects["cell"] = cell_labels(effects, cfg)
+    effects["flipped"] = circuit.flipped(effects)
+    effects["cell"] = circuit.cell_labels(effects, cfg)
     condition = ["test", "what", "window"]
     summary = effects.groupby(condition).agg(lookups=("effect", "size"), moved=("effect", "mean"),
                                              flipped=("flipped", "mean")).reset_index()
@@ -457,13 +417,13 @@ def phrase_tables(run_dir: Path, cfg: dict) -> dict:
 def tag_conditions(first_record: prompts.Block, windows: list, n_heads: int) -> list[tuple]:
     """(what the second record cannot see, block window, knockout): nothing, then per window the first record
     whole, its header and end marker, and its field lines."""
-    key_sets = {"the first record": first_record.header + first_record.line_tokens_all() + first_record.extra,
+    key_sets = {"the first record": first_record.record_tokens(),
                 "the first record's header and end marker": first_record.header + first_record.extra,
                 "the first record's lines": first_record.line_tokens_all()}
     conditions = [("nothing", "", None)]
     for first_block, last_block in windows:
         for name, keys in key_sets.items():
-            knockout = bar_every_head(n_heads, keys, first_block, last_block)
+            knockout = bar_blocks(n_heads, keys, first_block, last_block)
             conditions.append((name, f"{first_block}-{last_block}", knockout))
     return conditions
 
@@ -519,7 +479,7 @@ def stage_tag(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     wins."""
     settings = cfg["circuit_tag"]
     rows_dir = run_dir / "circuit_tag" / "rows"
-    for done, case in enumerate(pending(cases, cfg, settings, rows_dir)):
+    for done, case in enumerate(unfinished(held_out_patients(cases, cfg, settings), rows_dir)):
         rows = []
         for item in program.ckd_items(case, cases, cfg):
             rows += tag_rows(engine, settings, case, item)
@@ -527,7 +487,7 @@ def stage_tag(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
         print(f"[circuit tag] {done + 1} patients, {len(rows)} runs", flush=True)
 
 
-def tag_tables(run_dir: Path) -> dict:
+def tag_tables(run_dir: Path, cfg: dict) -> dict:
     """The share of lookups answered from the asked record, per barring condition and kind of question, over
     all prompts and (unbarred against the first record barred) by prompt format and page order."""
     rows = read_rows(run_dir / "circuit_tag" / "rows")
