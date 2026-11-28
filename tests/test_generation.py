@@ -11,11 +11,11 @@ from unittest.mock import patch
 
 import numpy as np
 
-from second_order import config as C
-from second_order import datasets as DS
-from second_order import run_generation as G
-from second_order import synthetic as S
-from second_order.responses import comprehension, visible_text
+from belief_leakage import config as C
+from belief_leakage import datasets as DS
+from belief_leakage import run_generation as G
+from belief_leakage import synthetic as S
+from belief_leakage.responses import comprehension, visible_text
 
 CKD_CASES = DS.case_ids("ckd")[:3]
 BESPOKE_CASES = DS.case_ids("bespoke")[:2]
@@ -60,7 +60,7 @@ class CacheIntegrity(TempCache):
 
     def test_one_parsed_of_one_hundred(self):
         import pandas as pd
-        from second_order.responses import retention
+        from belief_leakage.responses import retention
         frame = pd.DataFrame(dict(model="m", condition="C", dataset="ckd", output="probability/normal",
                                   status=["parsed", "call_error"] + ["not_generated"] * 98))
         summary = retention(frame).iloc[0]

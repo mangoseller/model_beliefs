@@ -25,10 +25,10 @@ import numpy as np
 import pandas as pd
 
 from archive.smolin_wilder_replication.latent.model import OutputSpec
-from second_order import config as C
-from second_order import datasets as DS
-from second_order.conditions import CONDITIONS
-from second_order.run_generation import FOLLOWUP, Item, experiment_items, followup_plan, lookup
+from belief_leakage import config as C
+from belief_leakage import datasets as DS
+from belief_leakage.conditions import CONDITIONS
+from belief_leakage.run_generation import FOLLOWUP, Item, experiment_items, followup_plan, lookup
 
 CHECKS = ("check", "role_check")
 THINK = re.compile(r"<think>.*?</think>", flags=re.S)
@@ -144,7 +144,7 @@ def collect(model: str, dataset: str, case_ids: list[str], write: bool = True) -
 @lru_cache(maxsize=None)
 def split(model: str) -> pd.Series:
     """Seeded train/val/test split over CKD patients (the latent fit's split)."""
-    from second_order.fit_pooled import stable_seed
+    from belief_leakage.fit_pooled import stable_seed
 
     ids = DS.case_ids("ckd")
     rng = np.random.default_rng(stable_seed(int(C.load()["seed"]), model, "split"))

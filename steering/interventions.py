@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from second_order import binding
+from belief_leakage import binding
 from steering import prompts
 from steering.engine import Edit
 

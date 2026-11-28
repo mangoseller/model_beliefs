@@ -10,13 +10,13 @@ from unittest.mock import Mock, patch
 import numpy as np
 import torch
 
-from second_order import config as C
-from second_order import datasets as DS
-from second_order import freeze as F
-from second_order import tune as T
-from second_order.responses import score_answer
-from second_order.run_generation import FOLLOWUP, Item
-from second_order.runner import last_line
+from belief_leakage import config as C
+from belief_leakage import datasets as DS
+from belief_leakage import freeze as F
+from belief_leakage import tune as T
+from belief_leakage.responses import score_answer
+from belief_leakage.run_generation import FOLLOWUP, Item
+from belief_leakage.runner import last_line
 
 
 def trial(tok_s: float, parse: float = 0.95, truncated: float = 0.0, seqs: int = 256, ok: bool = True) -> dict:
@@ -111,7 +111,7 @@ class AnchoredExport(unittest.TestCase):
     def test_withheld_decision_cannot_change_its_predictor(self):
         import pandas as pd
         from archive.smolin_wilder_replication.latent.model import OutputSpec, ProbabilisticLatentModel
-        from second_order.fit_pooled import posteriors
+        from belief_leakage.fit_pooled import posteriors
 
         specs = [OutputSpec("probability/normal", "probability"), OutputSpec("decision/normal", "binary"),
                  OutputSpec("decision/flip", "binary")]
@@ -125,8 +125,8 @@ class AnchoredExport(unittest.TestCase):
 
     def test_roundtrip_reproduces_curves_and_distinguishes_cutoffs(self):
         from archive.smolin_wilder_replication.latent.model import OutputSpec, restore_model
-        from second_order.fit_pooled import AnchoredLatentModel, parameter_frame
-        from second_order.responses import cutoff
+        from belief_leakage.fit_pooled import AnchoredLatentModel, parameter_frame
+        from belief_leakage.responses import cutoff
 
         specs = [OutputSpec("probability/normal", "probability"),
                  OutputSpec("threshold_0.5/normal", "binary", cutoff("threshold_0.5")),

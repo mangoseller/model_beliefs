@@ -1,6 +1,6 @@
 """End to end on the synthetic backend: generation -> parsing -> fits -> beliefs -> estimators -> report.
 
-The synthetic model (``second_order/synthetic.py``) writes response text from
+The synthetic model (``belief_leakage/synthetic.py``) writes response text from
 known parameters, so the run must recover them.  Short latent fits and 100
 CKD patients keep it to a few minutes; run it on its own:
 
@@ -28,7 +28,7 @@ class SyntheticPipeline(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         tmp = Path(cls.tmp.name)
-        cfg = yaml.safe_load((ROOT / "second_order" / "config.yaml").read_text())
+        cfg = yaml.safe_load((ROOT / "belief_leakage" / "config.yaml").read_text())
         cfg["datasets"]["bespoke"]["samples"] = 20
         cfg["latent_fit"] = {"epochs": 1500, "patience": 100}
         cfg["models"]["synthetic"]["truth"].update({"parse_failure_rate": 0.01, "think_tags": True})
@@ -37,10 +37,10 @@ class SyntheticPipeline(unittest.TestCase):
         env = {**os.environ, "SO_CONFIG": str(tmp / "config.yaml"), "SO_DATA_DIR": str(tmp / "data"),
                "SO_RESULTS_DIR": str(tmp / "results"), "SO_FIGURES_DIR": str(tmp / "figures"),
                "PYTHONPATH": str(ROOT)}
-        steps = [["second_order.run_generation", "--model", "synthetic", "--cases", "100"],
-                 ["second_order.phase3", "--model", "synthetic", "--cases", "100"],
-                 ["second_order.curse", "--models", "synthetic", "--resamples", "100"],
-                 ["second_order.figures"]]
+        steps = [["belief_leakage.run_generation", "--model", "synthetic", "--cases", "100"],
+                 ["belief_leakage.phase3", "--model", "synthetic", "--cases", "100"],
+                 ["belief_leakage.curse", "--models", "synthetic", "--resamples", "100"],
+                 ["belief_leakage.figures"]]
         for step in steps:
             done = subprocess.run([sys.executable, "-m", *step], cwd=ROOT, env=env, capture_output=True, text=True)
             if done.returncode:

@@ -18,9 +18,9 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from second_order import binding as B
-from second_order import binding_causal as BC
-from second_order import config as C
+from belief_leakage import binding as B
+from belief_leakage import binding_causal as BC
+from belief_leakage import config as C
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = "c1899de289a04d12100db370d81485cdf75e47ca"
@@ -375,11 +375,11 @@ class StagesEndToEnd(unittest.TestCase):
                       "all", "--direct-samples", "1"],
                      ["generate", "--run", str(source), "--model", "synthetic"],
                      ["export", "--run", str(source), "--model", "synthetic"]):
-            done = subprocess.run([sys.executable, "-m", "second_order.binding", *args], cwd=ROOT, env=env,
+            done = subprocess.run([sys.executable, "-m", "belief_leakage.binding", *args], cwd=ROOT, env=env,
                                   capture_output=True, text=True)
             self.assertEqual(done.returncode, 0, done.stderr[-2000:])
         # The analysis only needs the direct beliefs here (no latent arms): rewrite the spec's latent arms.
-        from second_order import binding_analysis as BA
+        from belief_leakage import binding_analysis as BA
         saved = (C.CONFIG_PATH, C.CACHE)
         try:
             plan = B.read_plan(source)

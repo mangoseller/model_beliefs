@@ -1,6 +1,6 @@
 """Freeze residual-stream activations for later interpretability work (no generation).
 
-    python -m second_order.freeze --model qwen3_8b [--dataset ckd bespoke]
+    python -m belief_leakage.freeze --model qwen3_8b [--dataset ckd bespoke]
 
 vLLM does not expose hidden states, so this is a separate prefill-only pass with
 transformers, after generation: each prompt is replayed together with the model's
@@ -46,8 +46,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from second_order import config as C
-from second_order.run_generation import Item, experiment_items, lookup, model_revision, template_kwargs
+from belief_leakage import config as C
+from belief_leakage.run_generation import Item, experiment_items, lookup, model_revision, template_kwargs
 
 POSITIONS = ("evidence_end", "prompt_end", "pre_answer")
 ANSWER_JSON = re.compile(r'\{\s*"probability"')
@@ -243,7 +243,7 @@ def _freeze(folder, model, dataset, case_ids, conditions, replayer):
 
 
 def main() -> None:
-    from second_order.run_generation import dataset_cases
+    from belief_leakage.run_generation import dataset_cases
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--model", required=True)

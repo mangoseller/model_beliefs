@@ -33,9 +33,9 @@ import torch
 
 from archive.smolin_wilder_replication.latent.domains import likelihood_values
 from archive.smolin_wilder_replication.latent.model import FitConfig, ProbabilisticLatentModel, fit_model
-from second_order import config as C
-from second_order.beliefs import clip_logit
-from second_order.responses import configured_specs
+from belief_leakage import config as C
+from belief_leakage.beliefs import clip_logit
+from belief_leakage.responses import configured_specs
 
 QUADRATURE_POINTS = 128
 PROBABILITY_EPSILON = 1e-4
@@ -58,7 +58,7 @@ def new_model() -> ProbabilisticLatentModel:
 
 def groups(conditions: Sequence[str]) -> list[tuple[str, ...]]:
     """Fit groups (one per fit family) for the conditions present, in a stable order."""
-    from second_order.conditions import CONDITIONS, fit_family
+    from belief_leakage.conditions import CONDITIONS, fit_family
 
     ordered = [c for c in CONDITIONS if c in set(conditions)]
     return [group for family in ("self", "person")

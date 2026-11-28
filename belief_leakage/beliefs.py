@@ -18,7 +18,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from second_order import config as C
+from belief_leakage import config as C
 
 COLUMNS = ["model", "dataset", "case_id", "split", "condition", "replicate", "method",
            "value", "sd", "value_calibrated", "n_samples", "mean_probability", "logit_of_mean_probability"]

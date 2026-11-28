@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from second_order import binding
+from belief_leakage import binding
 
 # How a reply names each yes/no field, and the wording around the name that says yes or no.
 TERMS = {"diab": r"diabet",

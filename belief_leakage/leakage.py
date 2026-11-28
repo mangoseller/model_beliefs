@@ -51,7 +51,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
-from second_order.conditions import SETTINGS, references, setting_conditions
+from belief_leakage.conditions import SETTINGS, references, setting_conditions
 
 # Ratio statistic -> the denominator whose interval must exclude 0.
 DENOMINATOR = {

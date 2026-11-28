@@ -31,9 +31,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from second_order import config as C
-from second_order.beliefs import clip_logit as logit
-from second_order.conditions import condition_key
+from belief_leakage import config as C
+from belief_leakage.beliefs import clip_logit as logit
+from belief_leakage.conditions import condition_key
 
 CKD_FILES = {"main": "ckd_second_order_v3.csv", "high_thresholds": "ckd_second_order_v3_high_thresholds.csv",
              "role_swap": "ckd_second_order_v3_role_swap.csv"}

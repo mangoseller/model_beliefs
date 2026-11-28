@@ -66,9 +66,9 @@ from typing import NamedTuple
 import numpy as np
 import pandas as pd
 
-from second_order import binding
-from second_order import binding_causal
-from second_order import config
+from belief_leakage import binding
+from belief_leakage import binding_causal
+from belief_leakage import config
 from steering import interventions
 from steering import prompts
 from steering import transcripts

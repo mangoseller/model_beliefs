@@ -6,8 +6,8 @@ import re
 import unittest
 
 
-from second_order import datasets as DS
-from second_order.conditions import CONDITIONS, setting_conditions
+from belief_leakage import datasets as DS
+from belief_leakage.conditions import CONDITIONS, setting_conditions
 
 CKD = DS.rows("ckd", list(DS.CKD_FILES))
 BESPOKE = DS.rows("bespoke")

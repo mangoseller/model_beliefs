@@ -1,6 +1,6 @@
 """Smoke-test and tune local inference before the main run (the runner's ``tune`` stage).
 
-    python -m second_order.tune --model qwen3_8b --out runs/<run_id>/record/tuning/qwen3_8b.json
+    python -m belief_leakage.tune --model qwen3_8b --out runs/<run_id>/record/tuning/qwen3_8b.json
 
 1. **Benchmark set**: ``tuning.items`` real calls of the experiment, a seeded sample over
    both datasets, every condition and output (main run, first sample).
@@ -37,8 +37,8 @@ from pathlib import Path
 
 import numpy as np
 
-from second_order import config as C
-from second_order import datasets as DS
+from belief_leakage import config as C
+from belief_leakage import datasets as DS
 
 
 def settings() -> dict:
@@ -47,7 +47,7 @@ def settings() -> dict:
 
 def benchmark_items(model: str, n: int, seed: int) -> list[dict]:
     """A seeded sample of the experiment's calls (main run, first sample), as plain dicts."""
-    from second_order.run_generation import dataset_cases, experiment_items
+    from belief_leakage.run_generation import dataset_cases, experiment_items
 
     rng = np.random.default_rng(seed)
     shares = {"ckd": 1 - settings()["bespoke_share"], "bespoke": settings()["bespoke_share"]}
@@ -68,8 +68,8 @@ def benchmark_items(model: str, n: int, seed: int) -> list[dict]:
 
 
 def smoke_stats(items, records) -> dict:
-    from second_order.responses import score_answer
-    from second_order.run_generation import FOLLOWUP
+    from belief_leakage.responses import score_answer
+    from belief_leakage.run_generation import FOLLOWUP
 
     stats: dict = {"calls": len(items), "by_output": {}}
     parsed, truncated, thinking, lengths = [], [], [], []
@@ -102,7 +102,7 @@ def smoke_stats(items, records) -> dict:
 
 def trial(model: str, engine: dict, items_path: Path, out: Path) -> None:
     """One engine configuration in this process: load, generate every benchmark item, time it."""
-    from second_order.run_generation import Item, followup_item, generate_vllm
+    from belief_leakage.run_generation import Item, followup_item, generate_vllm
 
     C.load()["models"][model]["engine"] = engine  # this process only
     items = [Item(**d) for d in json.loads(items_path.read_text())]
@@ -179,7 +179,7 @@ def tune(model: str, out: Path, n: int | None = None, candidates: list[dict] | N
     for k, engine in enumerate(candidates, 1):
         print(f"[tune {model}] trial {k}/{len(candidates)}: {engine}", flush=True)
         path = work / f"trial_{k}.json"
-        code = subprocess.run([sys.executable, "-m", "second_order.tune", "trial", "--model", model,
+        code = subprocess.run([sys.executable, "-m", "belief_leakage.tune", "trial", "--model", model,
                                "--engine", json.dumps(engine), "--items", str(work / "items.json"),
                                "--out", str(path)], env=os.environ).returncode
         result = json.loads(path.read_text()) if path.exists() else {"engine": engine, "ok": False,

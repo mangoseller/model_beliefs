@@ -15,8 +15,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from second_order import binding as B
-from second_order import binding_causal as BC
+from belief_leakage import binding as B
+from belief_leakage import binding_causal as BC
 from steering import interventions as I
 from steering import prompts as P
 from steering.engine import Edit, Engine, Job, stated_probability
@@ -777,7 +777,7 @@ class EndToEnd(unittest.TestCase):
             case_r = sorted(cases.index[cases == "test"])[0]
             pr_ = R.case_prompts(case_r, cases, ["false_neutral"])[("false_neutral", "person_first", "C")]["prompt"]
             lay_r = P.layout(E.tok, pr_, E.kw, prefix="")
-            plain_r = E.generate([Job(lay_r.ids)], 2, 5, seed=int(__import__("second_order.config", fromlist=["x"]).load()["seed"]) + sum(map(ord, case_r)), batch=8)
+            plain_r = E.generate([Job(lay_r.ids)], 2, 5, seed=int(__import__("belief_leakage.config", fromlist=["x"]).load()["seed"]) + sum(map(ord, case_r)), batch=8)
             got_r = [list(rdr[(rdr.variant == "redirect: all") & (rdr["sample"] == s_)].text)[0] for s_ in (0, 1)]
             self.assertNotEqual(got_r, [x["text"] for x in plain_r[0]])
             cfg["circuit_tables_reply"] |= {"folders": ["reason"], "max_tokens": 700, "fit_patients": 2, "boundary": 2, "scales": [1.0]}

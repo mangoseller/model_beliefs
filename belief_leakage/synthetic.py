@@ -31,9 +31,9 @@ from typing import Any
 
 import numpy as np
 
-from second_order import config as C
-from second_order import datasets as DS
-from second_order.conditions import CONDITIONS
+from belief_leakage import config as C
+from belief_leakage import datasets as DS
+from belief_leakage.conditions import CONDITIONS
 
 DEFAULTS = {"lambda_partial": 0.5, "lambda_false": 0.3, "phi": 0.8, "intercept": 0.2, "call_noise": 0.35,
             "probability_precision": 40.0, "decision_slope": 3.0, "comprehension_accuracy": 0.9,
@@ -110,7 +110,7 @@ def believed_logit(model: str, dataset: str, meta: dict) -> float:
 # Answer formats
 def choice_value(question: str, z: float, t: dict[str, Any], rng: np.random.Generator) -> float:
     """The meaning of the simulated choice given the call's belief z (logit)."""
-    from second_order.responses import cutoff
+    from belief_leakage.responses import cutoff
 
     if question in ("likert", "quintile"):
         return float(1 + np.sum(1.5 * z + rng.logistic() > 1.5 * ORDINAL_CUTS))
@@ -132,7 +132,7 @@ def wrong_statement(answer: str) -> str:
 
 
 def respond(model: str, item, seed: int) -> str:
-    from second_order.run_generation import FOLLOWUP
+    from belief_leakage.run_generation import FOLLOWUP
 
     t = truth(model)
     rng = rng_for(seed, item.key)

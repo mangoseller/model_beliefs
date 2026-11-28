@@ -1,6 +1,6 @@
 """Prompts and token layouts.
 
-Every prompt is rebuilt from the released CKD data with ``second_order.binding.transform``, so a cell here is
+Every prompt is rebuilt from the released CKD data with ``belief_leakage.binding.transform``, so a cell here is
 the binding experiment's cell, character for character. A ``Layout`` names the tokens of one encoded prompt:
 each record block's header, its field lines (field name, value, line end) and end marker, the question, and
 the chat-template tail with the forced answer prefix.
@@ -14,9 +14,9 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-from second_order import binding
-from second_order import binding_causal
-from second_order import config
+from belief_leakage import binding
+from belief_leakage import binding_causal
+from belief_leakage import config
 
 ROLES = ("A", "B", "C", "M", "D")
 TOKROLES = ("name", "val", "eol")   # within a field line; "hdr" is the last token of a block's header

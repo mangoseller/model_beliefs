@@ -9,8 +9,8 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-from second_order import config as C, datasets as DS, run_generation as G
-from second_order import order_followup as F
+from belief_leakage import config as C, datasets as DS, run_generation as G
+from belief_leakage import order_followup as F
 
 
 class Design(unittest.TestCase):

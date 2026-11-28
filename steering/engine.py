@@ -133,8 +133,8 @@ def load_model(model: str, device, dtype: str, tf32: bool, revision: str | None)
     """Returns (model, tokenizer, device, revision, chat-template settings)."""
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
-    from second_order import config
-    from second_order.run_generation import model_revision, template_kwargs
+    from belief_leakage import config
+    from belief_leakage.run_generation import model_revision, template_kwargs
     settings = config.model_config(model)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     if tf32:

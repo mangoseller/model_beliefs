@@ -36,7 +36,7 @@ from typing import NamedTuple
 import numpy as np
 import pandas as pd
 
-from second_order import binding
+from belief_leakage import binding
 from steering import circuit
 from steering import interventions
 from steering import program

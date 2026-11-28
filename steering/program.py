@@ -35,9 +35,9 @@ from typing import NamedTuple
 import numpy as np
 import pandas as pd
 
-from second_order import binding
-from second_order import config
-from second_order.beliefs import clip_logit
+from belief_leakage import binding
+from belief_leakage import config
+from belief_leakage.beliefs import clip_logit
 from steering import circuit
 from steering import prompts
 from steering.engine import Edit, Job, stated_probability

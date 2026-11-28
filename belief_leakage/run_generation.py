@@ -14,7 +14,7 @@ prompt, the cached C response and the row's question, generated after the C answ
 The CKD checks are ordinary standalone rows.
 
 Backends: ``vllm`` (local open weights on CUDA, one seed per item), ``hf``
-(transformers fallback) and ``synthetic`` (``second_order/synthetic.py``: text from
+(transformers fallback) and ``synthetic`` (``belief_leakage/synthetic.py``: text from
 known parameters, for end-to-end checks).  A single user message and no system
 prompt; temperature from ``generation`` and the token limit per answer type (reasoning
 then JSON for probabilities, reasoning then a Choice line otherwise: ``datasets.<name>.max_tokens``),
@@ -23,7 +23,7 @@ both overridable per model (``temperature``, ``top_p``, ``top_k``, ``max_tokens`
 generated token (``generation.logprobs``, off by default); multiple-choice answers reason
 first, so that token is not the answer letter.
 
-    python -m second_order.run_generation --model qwen3_8b [--dataset ckd bespoke] [--stage all]
+    python -m belief_leakage.run_generation --model qwen3_8b [--dataset ckd bespoke] [--stage all]
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ from typing import Any, Iterable
 
 from tqdm import tqdm
 
-from second_order import config as C
+from belief_leakage import config as C
 
 
 @dataclass(frozen=True)
@@ -224,7 +224,7 @@ def lookup(items: list[Item]) -> list[dict[str, Any] | None]:
 # Generation backends
 def sampling(model: str, dataset: str, output: str) -> dict[str, Any]:
     """Temperature, top-p, top-k, token limit and log-probabilities, overridable per model."""
-    from second_order.datasets import max_tokens
+    from belief_leakage.datasets import max_tokens
 
     gen, mcfg = C.load()["generation"], C.model_config(model)
     return {"temperature": float(mcfg.get("temperature", gen["temperature"])),
@@ -367,7 +367,7 @@ def generate_hf(model: str, items: list[Item], seed: int) -> list[dict[str, Any]
 
 
 def generate_synthetic(model: str, items: list[Item], seed: int) -> list[dict[str, Any]]:
-    from second_order.synthetic import generate
+    from belief_leakage.synthetic import generate
 
     return generate(model, items, seed)
 
@@ -440,7 +440,7 @@ def run(items: list[Item], *, label: str = "") -> dict:
 def experiment_items(model: str, dataset: str, case_ids: list[str], conditions: list[str] | None = None,
                      outputs: tuple[str, ...] | None = None, batteries=None) -> list[Item]:
     """Every prompt of a dataset for these cases, each run and sample of it."""
-    from second_order import datasets as DS
+    from belief_leakage import datasets as DS
 
     frame = DS.rows(dataset, batteries)
     frame = frame[frame.case_id.isin(set(case_ids))]
@@ -458,7 +458,7 @@ def experiment_items(model: str, dataset: str, case_ids: list[str], conditions: 
 
 
 def followup_item(parent: Item, answer: str) -> Item:
-    from second_order import datasets as DS
+    from belief_leakage import datasets as DS
     question = DS.row(parent.dataset, parent.case_id, parent.condition, parent.output)["comprehension_q"]
     chat = (("user", parent.prompt), ("assistant", answer or ""), ("user", question))
     return Item(parent.model, parent.case_id, parent.condition, FOLLOWUP, parent.replicate, question,
@@ -467,7 +467,7 @@ def followup_item(parent: Item, answer: str) -> Item:
 
 def followup_plan(model: str, dataset: str, case_ids: list[str]) -> list[tuple[Item, Item | None]]:
     """One entry per scheduled parent, in trial order. A missing or failed parent has no child yet."""
-    from second_order.datasets import COMPREHENSION_CONDITIONS
+    from belief_leakage.datasets import COMPREHENSION_CONDITIONS
 
     if dataset != "bespoke":
         return []
@@ -491,7 +491,7 @@ def select_cases(n: int | str) -> list[str]:
     """CKD patients: all, or a seeded sample of ``n``."""
     import numpy as np
 
-    from second_order import datasets as DS
+    from belief_leakage import datasets as DS
 
     ids = DS.case_ids("ckd")
     if n == "all":
@@ -505,7 +505,7 @@ def dataset_cases(dataset: str, cases: str | None = None) -> list[str]:
 
     An integer selects CKD patients only; the bespoke dataset runs every item unless a file of ids names some.
     """
-    from second_order import datasets as DS
+    from belief_leakage import datasets as DS
 
     if cases and Path(cases).exists():
         wanted = set(Path(cases).read_text().split())

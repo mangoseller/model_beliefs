@@ -6,7 +6,7 @@
 #   bash run_experiment.sh --core --no-install-agents  # main experiment only, skip coding-agent installation
 #   bash run_experiment.sh --smoke                     # 20 CKD cases, 3 samples: a quick full check first
 #   bash run_experiment.sh --run-id <run_id>           # resume an interrupted run (nothing is regenerated)
-#   bash run_experiment.sh --help                      # every option (second_order/runner.py)
+#   bash run_experiment.sh --help                      # every option (belief_leakage/runner.py)
 #
 # Needs: Linux, an NVIDIA GPU with CUDA 12 drivers (48 GB or more runs Qwen3 14B in bf16 comfortably;
 # 24 GB is enough for Qwen3 8B alone), about 120 GB of free disk, internet access.
@@ -77,4 +77,4 @@ fi
 
 export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 export TOKENIZERS_PARALLELISM=false
-exec "$VENV/bin/python" -m second_order.runner "$@"
+exec "$VENV/bin/python" -m belief_leakage.runner "$@"

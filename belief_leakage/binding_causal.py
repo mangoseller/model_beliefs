@@ -29,7 +29,7 @@ Run after session 1 (``binding`` profile ``full``) and its analysis.  Stages, in
 
 ``benchmark`` (not part of ``all``) times one patient through the GPU stages and measures batch invariance.
 
-    python -m second_order.binding_causal <stage> --run runs/binding-causal --source runs/binding-full --model qwen3_8b
+    python -m belief_leakage.binding_causal <stage> --run runs/binding-causal --source runs/binding-full --model qwen3_8b
 """
 from __future__ import annotations
 
@@ -45,10 +45,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from second_order import binding as B
-from second_order import config as C
-from second_order.beliefs import clip_logit
-from second_order.leakage import slope
+from belief_leakage import binding as B
+from belief_leakage import config as C
+from belief_leakage.beliefs import clip_logit
+from belief_leakage.leakage import slope
 
 PREFIX = '{"probability": 0.'
 REASONING = ("Provide your reasoning first.\nThen output valid JSON on a new line in exactly this structure:\n"
@@ -213,7 +213,7 @@ class Lens:
         self.statistic = statistic
         if lm is None:
             from transformers import AutoModelForCausalLM, AutoTokenizer
-            from second_order.run_generation import model_revision, template_kwargs as tk
+            from belief_leakage.run_generation import model_revision, template_kwargs as tk
             cfg = C.model_config(model)
             tok = AutoTokenizer.from_pretrained(cfg["path"], revision=model_revision(model))
             lm = AutoModelForCausalLM.from_pretrained(
@@ -595,7 +595,7 @@ def noreason_beliefs(frame: pd.DataFrame) -> pd.DataFrame:
 # Stage: gate (fit half only)
 def stage_gate(run: Path, source: Path, model: str, cfg: dict, resamples: int) -> pd.DataFrame:
     """No-reasoning lambda against session 1's reasoning lambda, both on the fit half (``binding_analysis.gate``)."""
-    from second_order import binding_analysis as BA
+    from belief_leakage import binding_analysis as BA
     d = out_dir(run, model)
     frame = pd.read_parquet(d / "noreason_responses.parquet")
     fit = set(frame.case_id[frame.split == "fit"])

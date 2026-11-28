@@ -1,6 +1,6 @@
 """Record a run's constants and write its RUN_REPORT.md (the runner's ``report`` stage).
 
-    python -m second_order.runner_record runs/<run_id>
+    python -m belief_leakage.runner_record runs/<run_id>
 
 Runs inside the run's environment (``SO_CONFIG`` etc. point at the run), so every
 value below is the one the run used.  Writes into ``runs/<run_id>/``:
@@ -24,14 +24,14 @@ from pathlib import Path
 import pandas as pd
 
 from archive.smolin_wilder_replication.latent.model import FitConfig
-from second_order import config as C
-from second_order import datasets as DS
-from second_order import leakage
-from second_order.conditions import CONDITIONS, SETTINGS, references
-from second_order.fit_pooled import PROBABILITY_EPSILON, QUADRATURE_POINTS
-from second_order.report import display, md_table
-from second_order.responses import configured_specs
-from second_order.run_generation import FOLLOWUP, sampling, settings_signature, template_kwargs
+from belief_leakage import config as C
+from belief_leakage import datasets as DS
+from belief_leakage import leakage
+from belief_leakage.conditions import CONDITIONS, SETTINGS, references
+from belief_leakage.fit_pooled import PROBABILITY_EPSILON, QUADRATURE_POINTS
+from belief_leakage.report import display, md_table
+from belief_leakage.responses import configured_specs
+from belief_leakage.run_generation import FOLLOWUP, sampling, settings_signature, template_kwargs
 
 ESTIMATOR = """# Estimators, as implemented
 
@@ -301,7 +301,7 @@ def write_results(parts: list[str], run_dir: Path, manifest: dict, use: dict) ->
     acts = manifest.get("activations", {})
     if acts:
         parts.append("## Frozen activations\n\nResidual stream at the end of the evidence, the end of the prompt and "
-                     "just before the answer, every layer, bfloat16 (`second_order/freeze.py`; `freeze.load` reads "
+                     "just before the answer, every layer, bfloat16 (`belief_leakage/freeze.py`; `freeze.load` reads "
                      f"them). In `{manifest['run_id']}_activations.tar`, not the main tarball.\n\n"
                      + md_table(pd.DataFrame([{"model": m, **v} for m, v in acts.items()]),
                                 ["model", "exit_code", "gb", "minutes"], 2) + "\n")

@@ -23,14 +23,14 @@ reproduces a base-run prompt reuses the archived answer, and an arm that reprodu
 order-follow-up prompt gets that plan's exact item key, so answers move between the two
 plans with ``import-cache``.
 
-    python -m second_order.binding prepare --run runs/binding-pilot --profile pilot \\
+    python -m belief_leakage.binding prepare --run runs/binding-pilot --profile pilot \\
         --base-run <base run dir or tarball> --base-activations <base run dir or activations tar>
-    python -m second_order.binding status   --run runs/binding-pilot
-    python -m second_order.binding verify   --run runs/binding-pilot
-    python -m second_order.binding import-cache --run runs/binding-full --from runs/binding-pilot
-    python -m second_order.binding generate --run runs/binding-pilot --model qwen3_8b
-    python -m second_order.binding capture  --run runs/binding-pilot --model qwen3_8b
-    python -m second_order.binding export   --run runs/binding-pilot --model qwen3_8b
+    python -m belief_leakage.binding status   --run runs/binding-pilot
+    python -m belief_leakage.binding verify   --run runs/binding-pilot
+    python -m belief_leakage.binding import-cache --run runs/binding-full --from runs/binding-pilot
+    python -m belief_leakage.binding generate --run runs/binding-pilot --model qwen3_8b
+    python -m belief_leakage.binding capture  --run runs/binding-pilot --model qwen3_8b
+    python -m belief_leakage.binding export   --run runs/binding-pilot --model qwen3_8b
 """
 from __future__ import annotations
 
@@ -49,8 +49,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from second_order import config as C, datasets as DS, run_generation as G
-from second_order import order_followup as F
+from belief_leakage import config as C, datasets as DS, run_generation as G
+from belief_leakage import order_followup as F
 
 PROTOCOL = "ckd-binding-v1"
 TAG = "binding_v1"
@@ -615,7 +615,7 @@ def synthetic_backend(model):
     if C.model_config(model)["backend"] != "synthetic":
         yield
         return
-    from second_order import binding_synthetic
+    from belief_leakage import binding_synthetic
     saved = G.BACKENDS["synthetic"]
     G.BACKENDS["synthetic"] = binding_synthetic.generate
     try:

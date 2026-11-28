@@ -35,8 +35,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from second_order import binding
-from second_order import config as experiment_config
+from belief_leakage import binding
+from belief_leakage import config as experiment_config
 from steering import interventions
 from steering import prompts
 from steering import run
