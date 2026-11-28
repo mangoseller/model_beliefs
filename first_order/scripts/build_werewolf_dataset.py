@@ -1,4 +1,4 @@
-"""Build datasets/werewolf_games.json from Kaggle's "Werewolf Gameplay" dataset.
+"""Build ../datasets/first_order/werewolf_games.json from Kaggle's "Werewolf Gameplay" dataset.
 
 Source: kaggle.com/datasets/kaggle/werewolf-dataset (Kaggle Agent Arena / Game Arena, CC BY 4.0,
 ~31k games, ~61 GB, one JSON replay per game named <EpisodeId>.json). Single files can be
@@ -40,9 +40,10 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+DATASETS = ROOT.parent / "datasets" / "first_order"
 GAMES = ROOT / "data" / "raw" / "werewolf" / "games"
-TEMPLATE_FILE = ROOT / "datasets" / "werewolf.json"
-OUT = ROOT / "datasets" / "werewolf_games.json"
+TEMPLATE_FILE = DATASETS / "werewolf.json"
+OUT = DATASETS / "werewolf_games.json"
 API = "https://www.kaggle.com/api/v1/datasets"
 REF = "kaggle/werewolf-dataset"
 

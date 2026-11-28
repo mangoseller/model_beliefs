@@ -6,12 +6,14 @@
 |---|---|---|
 | `datasets/ckd_second_order_v3/` | yes | Three prompt batteries and the patient metadata. [CKD file guide](ckd.md) |
 | `datasets/second_order_simple_prompts.csv` | yes | The bespoke items |
+| `datasets/first_order/` | yes | Six scenario JSONs for the first-order toolkit. [Scenario format](../datasets/first_order/README.md) |
+| `datasets/steering/` | yes | Domain definitions and names for the invented two- and three-owner records |
 | `data/` | no | Downloaded and generated data: `release/` (the paper's results bundle, for reproducing the paper), `generation_cache/`, `responses/`, `latents/`, `beliefs/`, `activations/` |
 | `outputs/`, `figures/` | no | Tables, `curse/RESULTS.md`, figures |
 | `runs/` | no | One folder (and tarball) per `run_experiment.sh` run, holding its own `data/`, `outputs/` and `figures/` |
 
-`first_order/` is a separate toolkit with its own `datasets/`; the experiment does not
-read it. `SO_DATASETS_DIR` points the experiment at another copy of `datasets/`.
+The first-order toolkit accepts a scenario file via `--scenario`. The second-order and steering experiments
+use `SO_DATASETS_DIR` to read from another copy of `datasets/`.
 
 ## CKD: `ckd_second_order_v3`
 

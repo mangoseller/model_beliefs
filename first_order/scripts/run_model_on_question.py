@@ -12,12 +12,12 @@ Saves, per run directory:
                             row k matches the k-th row for this case in responses.jsonl
 
 Examples:
-  python scripts/run_model_on_question.py --scenario datasets/ckd.json
-  python scripts/run_model_on_question.py --scenario datasets/werewolf.json --model Qwen/Qwen2.5-0.5B-Instruct --n-cases 2
+  python scripts/run_model_on_question.py --scenario ../datasets/first_order/ckd.json
+  python scripts/run_model_on_question.py --scenario ../datasets/first_order/werewolf.json --model Qwen/Qwen2.5-0.5B-Instruct --n-cases 2
   # in-context belief (ICL): give the model a belief in the system prompt
-  python scripts/run_model_on_question.py --scenario datasets/ckd.json --system "You believe every patient over 60 has CKD." --tag icl_over60
+  python scripts/run_model_on_question.py --scenario ../datasets/first_order/ckd.json --system "You believe every patient over 60 has CKD." --tag icl_over60
   # model organism as a LoRA adapter
-  python scripts/run_model_on_question.py --scenario datasets/insecure_code.json --model Qwen/Qwen2.5-7B-Instruct --adapter <hf-adapter-id>
+  python scripts/run_model_on_question.py --scenario ../datasets/first_order/insecure_code.json --model Qwen/Qwen2.5-7B-Instruct --adapter <hf-adapter-id>
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ CHOICE_RE = re.compile(r"(?:[Cc]hoice|[Aa]nswer|ANSWER)\s*:?\s*\**\s*(?:[Oo]ptio
 
 def parse_args():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--scenario", required=True, help="path to a datasets/*.json scenario file")
+    p.add_argument("--scenario", required=True, help="path to a scenario JSON file")
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--adapter", default=None, help="optional PEFT/LoRA adapter (model organism)")
     p.add_argument("--system", default=None, help="system prompt text, or @path/to/file.txt (ICL beliefs)")

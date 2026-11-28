@@ -1,7 +1,7 @@
 """Builds the 16 prompts per case used by Smolin & Wilder (2026), "Beliefs and Behavior
 in Language Models" (arXiv:2609.07943), Supplementary Section E.
 
-A scenario JSON file gives the domain-specific wording (see datasets/README.md).
+A scenario JSON file gives the domain-specific wording (see datasets/first_order/README.md).
 This module expands it into the 16 outputs:
 
   1  probability          numeric probability, JSON {"probability": x}

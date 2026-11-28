@@ -21,6 +21,9 @@ answers. Models: Qwen3 8B and 14B, through `transformers` with forward hooks.
 | `scripts/` | CPU analyses of finished runs |
 | `configs/` | Settings of each pass, named stage, variant, model |
 
+The invented-record stages sample their fields, values and owner names from the shared dataset.
+[Invented record definitions](../datasets/steering/invented_records.json)
+
 ## Stages
 
 A stage writes one file per patient under `<out>/<model>/<stage>/` and skips patients it has already written.

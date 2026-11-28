@@ -1,4 +1,4 @@
-"""Build datasets/ckd_nhanes.json from real NHANES 2017-2018 (cycle J) patients.
+"""Build ../datasets/first_order/ckd_nhanes.json from real NHANES 2017-2018 (cycle J) patients.
 
 Replicates the patient format of Smolin & Wilder (2026), Supplementary E.1.
 
@@ -32,6 +32,7 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
+DATASETS = ROOT.parent / "datasets" / "first_order"
 RAW = ROOT / "data" / "raw" / "nhanes"
 BASE_URL = "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/{}.xpt"
 FILES = ["DEMO_J", "BPQ_J", "DIQ_J", "MCQ_J", "PAQ_J", "SMQ_J", "BMX_J",
@@ -155,7 +156,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=500)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out", default=str(ROOT / "datasets" / "ckd_nhanes.json"))
+    ap.add_argument("--out", default=str(DATASETS / "ckd_nhanes.json"))
     args = ap.parse_args()
 
     download()
@@ -166,7 +167,7 @@ def main():
     print(f"eligible adults (20+, complete): {len(f)}, CKD prevalence {f.label.mean():.3f}")
     print(f"sampled: {len(sample)}, CKD prevalence {sample.label.mean():.3f}")
 
-    template = json.loads((ROOT / "datasets" / "ckd.json").read_text())
+    template = json.loads((DATASETS / "ckd.json").read_text())
     scenario = {
         "domain": template["domain"],
         "event": template["event"],
