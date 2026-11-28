@@ -36,7 +36,7 @@ import pandas as pd
 from belief_leakage import binding as B
 from belief_leakage import config as C
 from belief_leakage import leakage as L
-from belief_leakage import order_followup as F
+from belief_leakage import run_plan
 from belief_leakage.beliefs import clip_logit
 
 ROLES = ("A", "B", "C", "M", "D")
@@ -66,7 +66,7 @@ def load(root: Path, model: str) -> tuple[pd.DataFrame, dict]:
 
 def load_order_followup(root: Path, model: str) -> tuple[pd.DataFrame, dict]:
     """The order follow-up's export in this module's schema, so it gets the same estimators."""
-    F.read_plan(root)
+    run_plan.read_plan(root)
     long = pd.read_parquet(root / "outputs" / f"{model}_responses.parquet")
     long["arm"] = [B.FOLLOWUP_ARM[(s, w)] for s, w in zip(long.setting, long.wording)]
     long["variant"], long["binding"], long["absence"] = long.setting, long.wording, "implicit"
@@ -814,7 +814,7 @@ def main():
     parser.add_argument("--order-followup", action="store_true", help="the run is an order_followup plan")
     args = parser.parse_args()
     root = args.run.resolve()
-    (F.read_plan if args.order_followup else B.read_plan)(root)  # points the config at the run
+    (run_plan.read_plan if args.order_followup else B.read_plan)(root)  # points the config at the run
     resamples = args.resamples or int(C.load()["analysis"]["bootstrap_resamples"])
     analyse(root, args.model, resamples, order_followup=args.order_followup, rule_resamples=args.rule_resamples)
 

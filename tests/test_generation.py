@@ -6,6 +6,7 @@ import hashlib
 import json
 import tempfile
 import unittest
+from contextvars import Context
 from pathlib import Path
 from unittest.mock import patch
 
@@ -57,6 +58,17 @@ class CacheIntegrity(TempCache):
         with patch.dict(G.BACKENDS, synthetic=lambda *args: [{"ok": True, "text": "answer"}]):
             self.assertEqual(G.run([item])["successful"], 1)
             self.assertFalse(G.pending([item]))
+
+    def test_binding_backend_is_local_to_its_run_context(self):
+        from belief_leakage import binding
+
+        items = G.experiment_items("synthetic", "ckd", CKD_CASES, ["A"], ("probability/normal",))[:3]
+        with binding.synthetic_backend("synthetic"):
+            G.run(items[:1])
+            Context().run(G.run, items[1:2])
+        G.run(items[2:])
+        # Only the binding simulator supplies token ID lists for activation capture.
+        self.assertEqual(["token_ids" in row for row in G.lookup(items)], [True, False, False])
 
     def test_one_parsed_of_one_hundred(self):
         import pandas as pd

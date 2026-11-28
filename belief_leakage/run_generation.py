@@ -36,6 +36,7 @@ import os
 import re
 import sys
 import time
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import lru_cache
 from itertools import groupby
@@ -372,6 +373,8 @@ def generate_synthetic(model: str, items: list[Item], seed: int) -> list[dict[st
     return generate(model, items, seed)
 
 
+# Binding runs simulate from the transformed prompt. Other runs use the configured backend.
+synthetic_override = ContextVar("synthetic_override", default=None)
 BACKENDS = {"vllm": generate_vllm, "hf": generate_hf, "synthetic": generate_synthetic}
 
 
@@ -397,7 +400,9 @@ def run(items: list[Item], *, label: str = "") -> dict:
     if not todo:
         return summary
     backend = C.model_config(model)["backend"]
-    generate = BACKENDS[backend]
+    generate = synthetic_override.get() if backend == "synthetic" else None
+    if generate is None:
+        generate = BACKENDS[backend]
     batch = int(C.model_config(model).get("batch_size", 32))
     seed = int(C.load()["seed"])
     cache = cache_index(model, C.CACHE)

@@ -16,26 +16,24 @@ new prompts within the plan are one item, so only missing calls are made:
     python -m belief_leakage.order_followup capture  --run runs/<name> --model qwen3_8b
     python -m belief_leakage.order_followup export   --run runs/<name> --model qwen3_8b
 
-``binding`` reuses this module's plan files, caches, scoring and activation capture.
+``run_plan`` handles the plan files, caches, scoring and activation capture for both CKD follow-ups.
 """
 from __future__ import annotations
 
 import argparse
 import fcntl
-import hashlib
-import io
 import json
-import os
-import re
-import tarfile
 from collections import Counter
-from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-from belief_leakage import config as C, datasets as DS, run_generation as G
+from belief_leakage import config as C, datasets as DS, run_generation as G, run_plan
+# Existing run scripts also import these helpers from order_followup.
+from belief_leakage.run_plan import (atomic_json, capture, capture_items, configure, copy_baseline, digest,
+                                     file_sha256, install_config, item_from, new_items, read_member, read_plan,
+                                     score, scored_trials, stream_member, write_plan)
 
 CUE = " Your chart gives the verified patient information."
 ORDERS = ("own_first", "person_first")
@@ -44,10 +42,6 @@ PROTOCOL = "ckd-order-authority-v1"
 CHOICE_INSTRUCTION = ("Answer with a single letter.",
                       "Provide your reasoning first.\nThen output your answer on a new line in exactly this format:\n"
                       "Choice: <the letter of one option>")
-
-
-def digest(value) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
 
 def release_frame(cases=None) -> pd.DataFrame:
@@ -76,15 +70,8 @@ def transform(prompt: str, order: str | None = None, neutral: bool = False) -> s
     return result
 
 
-def make_plan(model: str, cases=None) -> tuple[list[dict], dict]:
-    """(trials, items): every trial of the design, and one item per distinct prompt (per patient, output and
-    replicate; replicates are never merged). A prompt identical to a base-run prompt keeps the base run's key."""
-    frame = release_frame(cases)
-    originals = {}
-    for r in frame.to_dict("records"):
-        item = G.Item(model, r["case_id"], r["condition"], r["output"], r["replicate"], r["prompt"])
-        originals.setdefault((item.case_id, item.output, item.replicate, item.prompt_sha), item)
-    trials, items = [], {}
+def order_trials(model, frame):
+    """Yield each trial and its candidate item in the order used to assign canonical keys."""
     for setting, wording in [("partial", "original"), ("false", "verified"), ("false", "neutral")]:
         for role in ["A", "B", "M", "C", "D"]:
             base = role + ("_F" if setting == "false" else "")
@@ -94,92 +81,22 @@ def make_plan(model: str, cases=None) -> tuple[list[dict], dict]:
                     prompt = transform(r["prompt"], order if ordered else None, wording == "neutral")
                     condition = f"followup_v1__{setting}__{wording}__{order if ordered else 'shared'}__{role}"
                     candidate = G.Item(model, r["case_id"], condition, r["output"], r["replicate"], prompt)
-                    original = originals.get((candidate.case_id, candidate.output, candidate.replicate,
-                                              candidate.prompt_sha))
-                    item = original or candidate
-                    source = "baseline" if original else "new"
-                    trials.append(dict(model=model, dataset="ckd", case_id=r["case_id"], setting=setting,
-                                       wording=wording, block_order=order, source_block_order=r["block_order"],
-                                       role=role, base_condition=base, output=r["output"], replicate=r["replicate"],
-                                       sample=0, check_answer=r["check_answer"], check_fact=r["check_fact"],
-                                       check_relation=r["check_relation"], item_key=item.key, source=source))
-                    items[item.key] = asdict(item) | {"key": item.key, "prompt_sha": item.prompt_sha, "source": source}
-    # Identical new prompts of different cells (e.g. neutral D = partial D) become one item; trials keep their cell.
-    canonical, aliases = {}, {}
-    for key, item in items.items():
-        identity = (item["case_id"], item["output"], item["replicate"], item["prompt_sha"])
-        aliases[key] = canonical.setdefault(identity, key)
-    for row in trials:
-        row["item_key"] = aliases[row["item_key"]]
-    return trials, {key: value for key, value in items.items() if aliases[key] == key}
+                    trial = dict(model=model, dataset="ckd", case_id=r["case_id"], setting=setting,
+                                 wording=wording, block_order=order, source_block_order=r["block_order"],
+                                 role=role, base_condition=base, output=r["output"], replicate=r["replicate"],
+                                 sample=0, check_answer=r["check_answer"], check_fact=r["check_fact"],
+                                 check_relation=r["check_relation"])
+                    yield trial, candidate
 
 
-# Run directory
-def stream_member(source, suffix):
-    """Yield one file of a run directory or run tarball, without extracting the archive."""
-    source = Path(source)
-    if source.is_dir():
-        with (source / suffix).open("rb") as f:
-            yield f
-    else:
-        with tarfile.open(source, "r|*") as tar:
-            for member in tar:
-                if member.isfile() and member.name.endswith("/" + suffix):
-                    yield tar.extractfile(member)
-                    return
-        raise ValueError(f"{suffix} missing in {source}")
-
-
-def read_member(source, suffix) -> bytes:
-    for f in stream_member(source, suffix):
-        return f.read()
-
-
-def atomic_json(path: Path, value) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(value, indent=2))
-    tmp.replace(path)
-
-
-def configure(root: Path) -> None:
-    """Point the config and the generation cache at a run directory."""
-    C.CONFIG_PATH = root / "config.yaml"
-    C.load.cache_clear()
-    C.CACHE = root / "data/generation_cache"
-    G.cache_index.cache_clear()
-
-
-def install_config(root: Path, config_bytes: bytes) -> None:
-    """Write the run's config (refusing to replace a different one) and configure the run."""
-    path = root / "config.yaml"
-    if path.exists() and path.read_bytes() != config_bytes:
-        raise ValueError(f"{root} already uses a different config")
-    path.write_bytes(config_bytes)
-    configure(root)
-
-
-def write_plan(root: Path, plan: dict) -> None:
-    """Add the plan's digest and write it, refusing to replace a different plan."""
-    plan["digest"] = digest(plan)
-    path = root / "plan.json"
-    if path.exists() and json.loads(path.read_text())["digest"] != plan["digest"]:
-        raise ValueError("plan changed; use another run directory")
-    atomic_json(path, plan)
-
-
-def item_from(row: dict) -> G.Item:
-    return G.Item(**{k: row[k] for k in G.Item.__dataclass_fields__})
-
-
-def new_items(plan: dict, model: str) -> list[G.Item]:
-    return [item_from(v) for v in plan["items"].values() if v["model"] == model and v["source"] == "new"]
-
-
-def capture_items(plan: dict, model: str) -> list[dict]:
-    """New stated-probability items of replicate 0: the items whose activations are captured."""
-    return [v for v in plan["items"].values() if v["model"] == model and v["source"] == "new"
-            and v["output"] == "probability/normal" and v["replicate"] == 0]
+def make_plan(model: str, cases=None) -> tuple[list[dict], dict]:
+    """(trials, items): every trial of the design, and one item per distinct prompt (per patient, output and
+    replicate; replicates are never merged). A prompt identical to a base-run prompt keeps the base run's key."""
+    frame = release_frame(cases)
+    builder = run_plan.Builder(model, run_plan.released_items(model, frame.to_dict("records")))
+    for trial, item in order_trials(model, frame):
+        builder.add(trial, item)
+    return builder.trials, builder.items
 
 
 # Stages
@@ -188,60 +105,12 @@ def prepare(args) -> None:
     root.mkdir(parents=True, exist_ok=True)
     # The archived config carries the pinned weight revisions and sampling settings.
     install_config(root, read_member(args.base_run, "config.yaml"))
-    trials, items, signatures = [], {}, {}
-    for model in args.models:
-        ts, its = make_plan(model)
-        trials.extend(ts)
-        items.update(its)
-        signatures[model] = G.settings_signature(model, "ckd")
+    trials, items, signatures = run_plan.collect_models(args.models, make_plan)
     plan = dict(protocol=PROTOCOL, models=args.models, settings=signatures,
                 base_run=str(args.base_run.resolve()), base_activations=str(args.base_activations.resolve()),
                 trials=trials, items=items)
     write_plan(root, plan)
-    for model in args.models:
-        wanted = {k: v for k, v in items.items() if v["model"] == model and v["source"] == "baseline"}
-        copy_baseline(root, model, wanted, signatures[model], args.base_run, args.base_activations)
-    atomic_json(root / "prepared.json", {"plan_digest": plan["digest"], "budget": summary(plan)})
-    print(json.dumps(summary(plan), indent=2))
-
-
-def copy_baseline(root, model, wanted, signature, base_run, base_activations) -> None:
-    """Copy the reused base-run answers (verified against prompt and settings) and write references to their
-    archived activation rows; the arrays themselves are never copied or recomputed."""
-    dest = root / "baseline_cache" / f"{model}.jsonl"
-    dest.parent.mkdir(exist_ok=True)
-    if not dest.exists():
-        found, tmp = set(), dest.with_suffix(".tmp")
-        with tmp.open("w") as out:
-            for f in stream_member(base_run, f"data/generation_cache/{model}.jsonl"):
-                for line in f:
-                    record = json.loads(line)
-                    key = record["key"]
-                    if key not in wanted or not record.get("ok"):
-                        continue
-                    if record["prompt_sha"] != wanted[key]["prompt_sha"] or record["settings_sha"] != signature:
-                        raise ValueError(f"baseline prompt/settings mismatch: {key}")
-                    if key not in found:
-                        out.write(json.dumps(record) + "\n")
-                        found.add(key)
-        if found != set(wanted):
-            raise ValueError(f"{model}: {len(set(wanted) - found)} baseline generations missing; "
-                             "refusing to regenerate them")
-        tmp.replace(dest)
-    from belief_leakage.freeze import index_digest
-    member = f"data/activations/{model}/ckd"
-    index = pd.read_parquet(io.BytesIO(read_member(base_activations, f"{member}/index.parquet")))
-    meta = json.loads(read_member(base_activations, f"{member}/meta.json"))
-    if index_digest(index) != meta["items_sha256"] or not meta["complete"]:
-        raise ValueError("baseline activation index integrity failure")
-    wanted_acts = {k for k, v in wanted.items() if v["output"] == "probability/normal" and v["replicate"] == 0}
-    refs = index[index.item_key.isin(wanted_acts)].copy()
-    if set(refs.item_key) != wanted_acts:
-        raise ValueError("missing baseline activation references")
-    refs["source"] = "baseline"
-    refs["array_member"] = f"{member}/acts.npy"
-    refs["array_sha256"] = meta["array_sha256"]
-    refs.to_parquet(root / f"baseline_activations_{model}.parquet", index=False)
+    run_plan.finish_prepare(root, plan, summary, require_baseline=True)
 
 
 def summary(plan: dict) -> dict:
@@ -255,28 +124,8 @@ def summary(plan: dict) -> dict:
     return result
 
 
-def read_plan(root: Path) -> dict:
-    """The run's plan, after checking its digest, its preparation and the current settings signatures."""
-    configure(root)
-    plan = json.loads((root / "plan.json").read_text())
-    if digest({k: v for k, v in plan.items() if k != "digest"}) != plan["digest"]:
-        raise ValueError("plan checksum mismatch")
-    prepared = root / "prepared.json"
-    if not prepared.exists() or json.loads(prepared.read_text()).get("plan_digest") != plan["digest"]:
-        raise ValueError("baseline preparation is incomplete; rerun prepare before inference")
-    for model in plan["models"]:
-        if G.settings_signature(model, "ckd") != plan["settings"][model]:
-            raise ValueError("sampling settings changed since preparation")
-    return plan
-
-
 def status(root: Path, plan: dict | None = None, budget=summary) -> dict:
-    plan = plan or read_plan(root)
-    result = budget(plan)
-    for model in plan["models"]:
-        result[model]["pending_generations"] = len(G.pending(new_items(plan, model)))
-    print(json.dumps(result, indent=2))
-    return result
+    return run_plan.status(plan or read_plan(root), budget)
 
 
 def generate(root: Path, model: str) -> None:
@@ -287,96 +136,7 @@ def generate(root: Path, model: str) -> None:
     # Small durable batches limit repeated work after an interruption; sampling is unchanged.
     if C.model_config(model)["backend"] == "vllm":
         C.model_config(model)["batch_size"] = 128
-    result = G.run(items, label=f"{model}/order-followup")
-    atomic_json(root / f"generation_{model}.json", result)
-    if G.pending(items):
-        raise RuntimeError("generation incomplete; rerun to retry failed calls")
-
-
-def capture(root: Path, model: str, replayer_factory=None, items=None) -> None:
-    """Residual-stream activations of every capture item (or of ``items``: plan item dicts). An existing
-    capture whose identity and checksum match is kept; a damaged one is replayed."""
-    from belief_leakage.freeze import POSITIONS, Replayer
-    plan = read_plan(root)
-    if model not in plan["models"]:
-        raise ValueError(f"model {model} is not in the prepared plan")
-    items = [item_from(v) for v in (capture_items(plan, model) if items is None else items)]
-    records = G.lookup(items)
-    if any(not r or not r.get("ok") for r in records):
-        raise ValueError("finish generation before capturing activations")
-    replayer = None
-    for item, record in zip(items, records):
-        folder = root / "data/activations" / model / "ckd" / item.key
-        folder.mkdir(parents=True, exist_ok=True)
-        meta_path, array_path = folder / "meta.json", folder / "acts.npy"
-        identity = dict(item_key=item.key, prompt_sha=item.prompt_sha, settings_sha=record["settings_sha"],
-                        response_sha=digest([record["text"], record["token_ids"]]), revision=G.model_revision(model))
-        if meta_path.exists():
-            meta = json.loads(meta_path.read_text())
-            if any(meta[k] != v for k, v in identity.items()):
-                raise ValueError("existing activation identity mismatch")
-            if array_path.exists() and file_sha256(array_path) == meta["array_sha256"]:
-                continue
-        if replayer is None:
-            replayer = (replayer_factory or Replayer)(model)
-        ids, positions, n_prompt = replayer.tokens_and_positions(item, record)
-        acts = replayer.run(ids, positions)[None, ...]
-        tmp = folder / "acts.tmp"
-        with tmp.open("wb") as f:
-            np.save(f, acts)
-            f.flush()
-            os.fsync(f.fileno())
-        tmp.replace(array_path)
-        atomic_json(meta_path, identity | dict(
-            complete=True, shape=list(acts.shape), dtype="uint16 bfloat16 bits", positions=list(POSITIONS),
-            token_positions=positions, n_prompt_tokens=n_prompt, n_tokens=len(ids),
-            **{f"token_{p}": k for p, k in zip(POSITIONS, positions)},
-            array_sha256=file_sha256(array_path), layers="0 embedding; i after block i; last after final norm"))
-        print(f"[capture {model}] saved {item.case_id}/{item.condition} -> {folder}", flush=True)
-    print(f"{model}: {len(items)} activation rows verified/captured (old arrays untouched)")
-
-
-def file_sha256(path: Path) -> str:
-    with path.open("rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
-
-
-_CHOICE_LINE = re.compile(r"(?:^|[\s>#*_`:])choice[\s*_`]*:[\s*_`]*(.*?)\s*$", flags=re.I)
-
-
-def score(item: G.Item, record: dict | None, trial: dict):
-    """``responses.score_answer`` on the answer after the base run's parser cleanup: for choices, the last
-    "Choice:" line and the lines after it, without Markdown emphasis; for probabilities, trailing emphasis
-    stripped (unless the answer ends in a code fence) so a terminal JSON object is found."""
-    from belief_leakage.responses import score_answer, visible_text
-    text = visible_text((record or {}).get("text", "")) or ""
-    if item.output.startswith("probability"):
-        if not text.endswith("```"):
-            text = text.rstrip("*_` \t\n")
-    else:
-        lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
-        at = [k for k, line in enumerate(lines) if _CHOICE_LINE.search(line)]
-        if at:
-            text = " ".join([_CHOICE_LINE.search(lines[at[-1]]).group(1), *lines[at[-1] + 1:]]).strip()
-        text = re.sub(r"[*_`]", "", text)
-    return score_answer(item, None if record is None else record | {"text": text}, trial)
-
-
-def scored_trials(root: Path, plan: dict, model: str):
-    """(trial, item, record, score) for every trial of ``model``; each answer's prompt and settings are
-    checked against the plan."""
-    if model not in plan["models"]:
-        raise ValueError(f"model {model} is not in the prepared plan")
-    caches = {"baseline": G.Cache(model, root / "baseline_cache"), "new": G.Cache(model, C.CACHE)}
-    for trial in plan["trials"]:
-        if trial["model"] != model:
-            continue
-        data = plan["items"][trial["item_key"]]
-        item = item_from(data)
-        record = caches["baseline" if data["source"] == "baseline" else "new"].get(item.key)
-        if record and (record["prompt_sha"] != item.prompt_sha or record["settings_sha"] != plan["settings"][model]):
-            raise ValueError("response provenance mismatch")
-        yield trial, item, record, score(item, record, trial)
+    run_plan.generate_items(root, model, items, f"{model}/order-followup")
 
 
 def export(root: Path, model: str) -> None:

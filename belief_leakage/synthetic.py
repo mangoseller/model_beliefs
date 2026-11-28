@@ -131,6 +131,16 @@ def wrong_statement(answer: str) -> str:
     return re.sub(r"(:\s*(?:says\s+)?\"?)([A-Za-z]+)", r"\1other", answer, count=1)
 
 
+def probability_answer(z, t, rng, *, think_tags=False):
+    p = 1 / (1 + np.exp(-z))
+    k = float(t["probability_precision"])
+    report = float(np.clip(rng.beta(p * k, (1 - p) * k), 0.001, 0.999))
+    reasoning = "Weighing the evidence step by step."
+    if think_tags:
+        reasoning = f"<think>\n{reasoning}\n</think>\n\n{reasoning}"
+    return f'{reasoning}\n{{"probability": {report:.3f}}}'
+
+
 def respond(model: str, item, seed: int) -> str:
     from belief_leakage.run_generation import FOLLOWUP
 
@@ -150,23 +160,17 @@ def respond(model: str, item, seed: int) -> str:
     if rng.random() < float(t["parse_failure_rate"]):
         return "I cannot give a single answer."
     if question == "probability":
-        p = 1 / (1 + np.exp(-z))
-        k = float(t["probability_precision"])
-        report = float(np.clip(rng.beta(p * k, (1 - p) * k), 0.001, 0.999))
-        reasoning = "Weighing the evidence step by step."
-        if t["think_tags"]:
-            reasoning = f"<think>\n{reasoning}\n</think>\n\n{reasoning}"
-        return f'{reasoning}\n{{"probability": {report:.3f}}}'
+        return probability_answer(z, t, rng, think_tags=t["think_tags"])
     letter = letter_for(question, item.prompt, choice_value(question, z, t, rng))
     answer = f"{letter}. {DS.options(item.prompt)[letter]}" if rng.random() < 0.2 else letter
     return f"Weighing the options step by step.\nChoice: {answer}"
 
 
+def generation_record(item, text, seed, **fields):
+    return {"text": text, "ok": True, "error": None, "stop_reason": "end", **fields,
+            "usage": {"input_tokens": len(item.prompt.split()), "output_tokens": len(text.split())},
+            "seed": seed}
+
+
 def generate(model: str, items: list, seed: int) -> list[dict[str, Any]]:
-    out = []
-    for item in items:
-        text = respond(model, item, seed)
-        out.append({"text": text, "ok": True, "error": None, "stop_reason": "end",
-                    "usage": {"input_tokens": len(item.prompt.split()), "output_tokens": len(text.split())},
-                    "seed": seed})
-    return out
+    return [generation_record(item, respond(model, item, seed), seed) for item in items]

@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import re
 
-import numpy as np
-
 from belief_leakage import binding as B
 from belief_leakage import datasets as DS
 from belief_leakage import synthetic as S
@@ -85,20 +83,11 @@ def respond(model: str, item, seed: int) -> str:
     if rng.random() < float(t["parse_failure_rate"]):
         return "I cannot give a single answer."
     if question == "probability":
-        p = 1 / (1 + np.exp(-z))
-        k = float(t["probability_precision"])
-        report = float(np.clip(rng.beta(p * k, (1 - p) * k), 0.001, 0.999))
-        return f'Weighing the evidence step by step.\n{{"probability": {report:.3f}}}'
+        return S.probability_answer(z, t, rng)
     letter = S.letter_for(question, item.prompt, S.choice_value(question, z, t, rng))
     return f"Weighing the evidence.\nChoice: {letter}"
 
 
 def generate(model: str, items: list, seed: int) -> list[dict]:
-    out = []
-    for item in items:
-        text = respond(model, item, seed)
-        out.append({"text": text, "ok": True, "error": None, "stop_reason": "end",
-                    "prompt_token_ids": [], "token_ids": [],
-                    "usage": {"input_tokens": len(item.prompt.split()), "output_tokens": len(text.split())},
-                    "seed": seed})
-    return out
+    return [S.generation_record(item, respond(model, item, seed), seed, prompt_token_ids=[], token_ids=[])
+            for item in items]
