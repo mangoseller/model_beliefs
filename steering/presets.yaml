@@ -1,0 +1,214 @@
+# Select one named override with --preset. A << entry inherits the settings of its YAML anchor.
+
+# Circuit and held-out patients
+circuit_14b:
+  circuit: {alpha: 0.25, scan_patients: 8, scan_fields: 1, patients: 24, fields: 1, batch: 96,
+            ks: [4, 8, 16, 32, 64, 128, 256, 512], randoms: 3, where_heads: 24, min_gap: 5.0, seed: 0}
+circuit_concrete_14b:
+  circuit_concrete: {fit_patients: 16, scan_patients: 6, field_patients: 6, patients: 16, parts: 6, batch: 96,
+                     knock_batch: 32, require_crossed: true, reader_attention: 0.1, vector_alphas: [1.0, 2.0],
+                     vector_layers: [24, 25, 26, 27, 28, 29, 30], vector_windows: [[26, 28], [25, 27], [24, 30]],
+                     replies: 40, reply_tokens: 250, reply_batch: 32}
+circuit_heldout_8b:
+  circuit: {alpha: 0.25, scan_patients: 12, scan_fields: 1, patients: 34, offset: 40, fields: 1, batch: 96,
+            ks: [4, 8, 16, 32, 64, 128, 256, 512], randoms: 3, where_heads: 24, min_gap: 5.0, seed: 0}
+  circuit_concrete: {fit_patients: 16, scan_patients: 8, field_patients: 8, patients: 34, offset: 40, parts: 6,
+                     batch: 96, knock_batch: 48, require_crossed: true, reader_attention: 0.1,
+                     vector_alphas: [1.0, 2.0], vector_layers: [20, 21, 22, 23, 24, 25, 26],
+                     vector_windows: [[22, 24], [20, 26]], replies: 60, reply_tokens: 250, reply_batch: 48}
+
+# Record matching, phrasing, and tags
+circuit_match_14b:
+  dtype: bfloat16
+  circuit_match: &match_14b {patients: 24, offset: 24, reader_window: [25, 39], convert_window: [13, 24],
+                  scales: [1.0, 2.0]}
+circuit_match_8b_bf16:
+  dtype: bfloat16
+  circuit_match: &match_8b_bf16 {patients: 34, offset: 40, reader_window: [23, 35], convert_window: [12, 20],
+                  scales: [1.0, 2.0]}
+circuit_match_owners_14b:
+  dtype: bfloat16
+  circuit_match: {<<: *match_14b, scales: [1.0], owners: true}
+circuit_match_owners_8b:
+  dtype: bfloat16
+  circuit_match: {<<: *match_8b_bf16, scales: [1.0], owners: true}
+circuit_phrase_14b:
+  dtype: bfloat16
+  circuit_phrase: {patients: 24, offset: 24, blocks: [4, 8, 12, 14, 16, 18, 20, 22, 24, 26, 28, 32],
+                   windows: [[14, 28], [1, 13], [1, 40]], batch: 32}
+circuit_phrase_8b:
+  dtype: bfloat16
+  circuit_phrase: {patients: 34, offset: 40, blocks: [4, 8, 10, 12, 14, 16, 18, 20, 22, 24, 28],
+                   windows: [[13, 24], [1, 12], [1, 36]], batch: 48}
+circuit_tag_14b:
+  dtype: bfloat16
+  circuit_tag: {patients: 24, offset: 24, windows: [[1, 40], [1, 7], [8, 20], [21, 40]]}
+circuit_tag_8b:
+  dtype: bfloat16
+  circuit_tag: {patients: 34, offset: 40, windows: [[1, 36], [1, 6], [7, 18], [19, 36]]}
+
+# Paired replies
+circuit_paired_14b:
+  circuit_paired: {folder: reason_paired, patients: 24, samples: 4, max_new_tokens: 1100, dtype: bfloat16,
+    group: 2, heads: 64,
+    cells: [
+      ["false", plain, person_first, twin, 0.0, ["lookup{n}", "random{n}"]],
+      ["false", plain, person_first, slot, -0.25, ["lookup{n}"]]]}
+circuit_paired_8b:
+  circuit_paired: &paired_8b {patients: 24, samples: 4, max_new_tokens: 1100, dtype: bfloat16, group: 2,
+    heads: 64,
+    cells: [
+      ["false", plain, person_first, twin, 0.0, ["lookup{n}", "random{n}", "all but lookup{n}"]],
+      ["false", plain, person_first, slot, -0.25, ["lookup{n}"]],
+      [strong, labelled, person_first, slot, -0.25, ["lookup{n}", "random{n}"]]]}
+circuit_paired_steps_8b:
+  circuit_paired: &paired_steps_8b {<<: *paired_8b, folder: reason_paired2,
+    cells: [
+      ["false", plain, person_first, twin, 0.0,
+       [place16, value32, readers, random_lookup64_0, random_lookup64_1, random_place16_0]],
+      ["false", plain, person_first, slot, -0.25, [random_lookup64_0]],
+      [strong, labelled, person_first, slot, -0.25,
+       [random_lookup64_0, random_lookup64_1, random_lookup64_2, place16, value32, every head]]]}
+circuit_paired_steps_8b_80gb:
+  circuit_paired: {<<: *paired_steps_8b, group: 1}
+
+# Redirected replies
+circuit_redirect_14b:
+  circuit_redirect: {patients: 32, samples: 4, max_new_tokens: 1100, dtype: bfloat16, group: 4, batch: 96,
+                     sets: [lookup128, lookup64, other value heads than lookup128 0, other value heads than lookup128 1]}
+  head_sets: &wide_head_sets {lookup_sizes: [16, 32, 64, 128, 256], reader_attention: 0.1, randoms: 3}
+circuit_redirect_8b:
+  circuit_redirect: &redirect_8b {patients: 32, samples: 4, max_new_tokens: 1100, dtype: bfloat16, group: 4,
+                     batch: 96,
+                     sets: [lookup64, "place16+readers", readers, random_lookup64_0, random_lookup64_1]}
+circuit_redirect_b_8b:
+  circuit_redirect: {<<: *redirect_8b, folder: reason_redirect_b,
+                     sets: [other value heads than lookup64 0, other value heads than lookup64 1, other value heads than lookup64 2, "other value heads than place16+readers 0"]}
+circuit_redirect_full_8b:
+  circuit_redirect: {<<: *redirect_8b, folder: reason_redirect_full, patients: 74, batch: 48,
+                     sets: [other value heads than lookup64 0, lookup64]}
+
+# Reply headers
+circuit_reply_headers_14b:
+  dtype: bfloat16
+  circuit_reply_headers: {folders: [reason, reason_ext, reason_headers], max_tokens: 700, replies: 40,
+                          dtype: bfloat16,
+                          owner_heads: [[9, 3], [1, 37], [4, 14], [3, 2], [12, 11], [9, 2], [12, 14], [3, 4], [3, 39], [9, 1], [4, 10], [1, 1], [5, 19], [1, 36], [12, 28], [6, 27]]}
+circuit_reply_headers_8b:
+  dtype: bfloat16
+  circuit_reply_headers: &reply_headers_8b {folders: [reason, reason_ext, reason_headers], max_tokens: 700,
+                          replies: 40, dtype: bfloat16,
+                          owner_heads: [[11, 10], [3, 15], [3, 6], [9, 18], [3, 12], [9, 16], [5, 4], [1, 28], [5, 13], [11, 9], [11, 8], [3, 7], [8, 4], [1, 31], [2, 31], [6, 8]]}
+circuit_reply_headers_cross_8b:
+  dtype: bfloat16
+  circuit_reply_headers: &reply_headers_cross_8b {<<: *reply_headers_8b, folder: circuit_reply_headers_cross,
+                          cross: true}
+circuit_reply_headers_lines_8b:
+  dtype: bfloat16
+  circuit_reply_headers: {<<: *reply_headers_cross_8b, folder: circuit_reply_headers_lines, layout: 12}
+
+# Steering interventions
+circuit_steer_block_14b:
+  circuit_steer: &steer_block_14b {folder: reason_program, patients: 32, samples: 4, max_new_tokens: 1100,
+    dtype: bfloat16, group: 8, batch: 96, window: [26, 28], reader_attention: 0.1,
+    cells: [
+      [plain, person_first,
+       [[knock, place16, own], [knock, "place16+readers", own], [knock, lookup64, own],
+        [knock, random_lookup64_0, own], [knock, all, own]]]]}
+circuit_steer_block_8b:
+  circuit_steer: &steer_block_8b {folder: reason_program, patients: 32, samples: 4, max_new_tokens: 1100,
+    dtype: bfloat16, group: 8, batch: 96, window: [22, 24], reader_attention: 0.1,
+    cells: [
+      [plain, person_first,
+       [[knock, place16, own], [knock, "place16+readers", own], [knock, lookup64, own],
+        [knock, random_lookup64_0, own], [knock, random_place16_0, own], [knock, all, own]]]]}
+circuit_steer_block_full_8b:
+  circuit_steer: {<<: *steer_block_8b, folder: reason_program_full, patients: 74,
+    cells: [
+      [plain, person_first,
+       [[knock, lookup64, own], [knock, random_lookup64_0, own], [knock, random_lookup64_1, own],
+        [knock, random_lookup64_2, own], [knock, all, own]]]]}
+circuit_steer_block_wide_14b:
+  circuit_steer: {<<: *steer_block_14b, folder: reason_program_wide,
+    cells: [
+      [plain, person_first, [[knock, lookup128, own], [knock, lookup256, own], [knock, random_lookup256_0, own]]]]}
+  head_sets: *wide_head_sets
+circuit_steer_headers_14b:
+  circuit_steer: &steer_headers {folder: reason_headers, patients: 32, samples: 4, max_new_tokens: 1100, dtype: bfloat16,
+    group: 4, batch: 96, window: [26, 28], reader_attention: 0.1,
+    cells: [
+      [labelled, person_first, [[knock, all, headers], [knock, all, first lines]]],
+      [labelled, own_first, [[base, null, null], [knock, all, headers]]],
+      [plain, person_first, [[knock, all, headers], [knock, all, first lines]]],
+      [plain, own_first, [[knock, all, headers]]]]}
+circuit_steer_headers_8b:
+  circuit_steer: {<<: *steer_headers, window: [22, 24]}
+
+# Program and head tables
+circuit_program_14b:
+  circuit_program: {patients: 24, offset: 24, pointer_sets: [readers, value32], convert_window: [14, 25],
+                    place_window: [26, 28], per_domain: 6, seed: 2511, batch: 32}
+circuit_tables_14b:
+  dtype: bfloat16
+  circuit_tables: &tables_14b {fit_patients: 76, patients: 24, offset: 24, fields: 1, min_margin: 5.0,
+                   boundary: 28, sets: [lookup64], batch: 32}
+circuit_tables_reply_8b:
+  dtype: bfloat16
+  circuit_tables_reply: {folders: [reason, reason_ext], max_tokens: 700, fit_patients: 76, boundary: 24,
+                         scales: [1.0, 2.0]}
+circuit_tables_sweep_14b:
+  dtype: bfloat16
+  circuit_tables: {<<: *tables_14b, boundaries: [8, 12, 15, 18, 20, 22, 24, 26, 28],
+                   bands: [[0, 7], [8, 13], [14, 17], [18, 20], [21, 24], [25, 27]]}
+circuit_tables_sweep_8b:
+  dtype: bfloat16
+  circuit_tables: {fit_patients: 76, patients: 34, offset: 40, fields: 1, min_margin: 5.0, boundary: 24,
+                   sets: [lookup64], batch: 48, boundaries: [6, 9, 12, 14, 16, 18, 20, 22, 24],
+                   bands: [[0, 5], [6, 11], [12, 14], [15, 17], [18, 20], [21, 23]]}
+program_reason_wide_14b:
+  program_reason: {per_domain: 6, seed: 2511, samples: 4, max_new_tokens: 900, dtype: bfloat16, batch: 48,
+    cells: [
+      ["unlabelled|person_first", [base, "bar:lookup128", "bar:lookup256", "bar:random_lookup256_0", "bar:all"]]]}
+  head_sets: *wide_head_sets
+
+# Reasoned replies
+reason_14b:
+  reason: {folder: reason, base: true, group: 2,
+    cells: [
+      ["false", plain, person_first,
+       [[slot, 0.25, null], [slot, -0.25, null], [random0, 0.25, null], [random1, 0.25, null],
+        [random0, -0.25, null], [label, 1.0, null], [randlabel0, 1.0, null], [transplant, 1.0, lines]]],
+      ["false", labelled, person_first,
+       [[slot, 0.25, null], [slot, -0.25, null], [random0, 0.25, null], [label, -1.0, null],
+        [transplant, 1.0, lines]]],
+      ["false", plain, own_first,
+       [[slot, 0.25, null], [slot, -0.25, null], [random0, -0.25, null], [label, 1.0, null],
+        [randlabel0, 1.0, null]]],
+      [strong, plain, person_first, [[label, 1.0, "false"]]]]}
+reason_controls_8b:
+  reason: {folder: reason_controls, base: false,
+    cells: [
+      ["false", plain, person_first,
+       [[slot, 0.25, null], [slot, -0.25, null], [random0, 0.25, null], [randlabel0, 1.0, null]]],
+      ["false", plain, own_first,
+       [[label, 1.0, null], [randlabel0, 1.0, null], [slot, 0.25, null], [slot, -0.25, null]]],
+      ["false", labelled, person_first, [[slot, 0.25, null], [slot, -0.25, null]]]]}
+reason_ext_8b:
+  reason: {folder: reason_ext, base: true, offset: 32, patients: 74,
+    cells: [
+      ["false", plain, person_first,
+       [[slot, -0.25, null], [slot, 0.25, null], [random0, 0.25, null], [random0, -0.25, null]]],
+      ["false", labelled, person_first, [[slot, 0.25, null], [slot, -0.25, null], [random0, 0.25, null]]],
+      ["false", plain, own_first, [[slot, -0.25, null], [slot, 0.25, null], [random0, -0.25, null]]]]}
+reason_more_8b:
+  reason: {folder: reason_more, base: false,
+    cells: [
+      ["false", plain, person_first,
+       [[slot, -0.5, null], [slot, -0.125, null], [slot, 0.125, null], [slot, 0.5, null], [random1, 0.25, null],
+        [random2, 0.25, null], [random0, -0.25, null], [random1, -0.25, null]]],
+      ["false", labelled, person_first,
+       [[slot, 0.125, null], [slot, 0.5, null], [random0, 0.25, null], [random1, 0.25, null],
+        [random2, 0.25, null]]],
+      ["false", plain, own_first,
+       [[slot, -0.125, null], [slot, -0.5, null], [random0, -0.25, null], [random1, -0.25, null],
+        [random2, -0.25, null]]]]}

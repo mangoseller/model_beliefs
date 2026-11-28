@@ -1,1 +1,0 @@
-{"dtype": "bfloat16", "circuit_tables_reply": {"folders": ["reason", "reason_ext"], "max_tokens": 700, "fit_patients": 76, "boundary": 24, "scales": [1.0, 2.0]}}

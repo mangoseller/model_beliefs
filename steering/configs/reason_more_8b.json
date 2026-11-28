@@ -1,4 +1,0 @@
-{"reason": {"folder": "reason_more", "base": false, "cells": [
-  ["false", "plain", "person_first", [["slot", -0.5, null], ["slot", -0.125, null], ["slot", 0.125, null], ["slot", 0.5, null], ["random1", 0.25, null], ["random2", 0.25, null], ["random0", -0.25, null], ["random1", -0.25, null]]],
-  ["false", "labelled", "person_first", [["slot", 0.125, null], ["slot", 0.5, null], ["random0", 0.25, null], ["random1", 0.25, null], ["random2", 0.25, null]]],
-  ["false", "plain", "own_first", [["slot", -0.125, null], ["slot", -0.5, null], ["random0", -0.25, null], ["random1", -0.25, null], ["random2", -0.25, null]]]]}}

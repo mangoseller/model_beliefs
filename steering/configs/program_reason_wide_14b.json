@@ -1,1 +1,0 @@
-{"program_reason": {"per_domain": 6, "seed": 2511, "samples": 4, "max_new_tokens": 900, "dtype": "bfloat16", "batch": 48, "cells": [["unlabelled|person_first", ["base", "bar:lookup128", "bar:lookup256", "bar:random_lookup256_0", "bar:all"]]]}, "head_sets": {"lookup_sizes": [16, 32, 64, 128, 256], "reader_attention": 0.1, "randoms": 3}}
