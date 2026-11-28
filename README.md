@@ -18,25 +18,12 @@ fields.
 | What PERSON thinks; it has the full record, PERSON the partial one | C | 25% |
 | What PERSON thinks, if PERSON had the full record | D | 28% |
 
-**Leakage** $\lambda$ is where C falls between M and D in log-odds $\ell$: $0$ means the model
-kept its private evidence out of PERSON's belief, $1$ means it all leaked in. Here
-$\lambda = (\ell_C - \ell_M)/(\ell_D - \ell_M) \approx 0.84$; people score about $0.51$
-(Camerer, Loewenstein and Weber, 1989).
-
-Across cases, with $x = \ell_A - \ell_B$ and $x'$ the same gap from a second, independent run:
-
-$$
-\lambda = \frac{\beta_C}{\beta_D}, \qquad
-\rho = \frac{\mathrm{Cov}(x, x')}{\mathrm{Var}(x)}, \qquad
-\varphi = \frac{\beta_D}{\rho}, \qquad
-\tau = \frac{\beta_D - \beta_C}{\rho},
-$$
-
-where $\beta_C$ and $\beta_D$ are the slopes of $\ell_C - \ell_M$ and $\ell_D - \ell_M$ on $x$. $\rho$
-corrects for noise in $x$, $\varphi$ is how strongly PERSON's belief follows the evidence, and $\tau$
-is a theory-of-mind score.
-
 The study runs two settings, PERSON missing evidence and PERSON given altered evidence.
+
+The steering experiments trace how the record-lookup circuit maps the owner named in a question
+to a place on the page, where reader heads fetch the requested field’s value. Each value the
+model writes in a reasoned reply is a fresh lookup, and correcting what the lookup heads read
+brings leakage close to zero in both models.
 
 ## Running it
 
