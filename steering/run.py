@@ -54,11 +54,10 @@ reason.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import itertools
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
 from typing import NamedTuple
@@ -69,9 +68,11 @@ import pandas as pd
 from belief_leakage import binding
 from belief_leakage import binding_causal
 from belief_leakage import config
+from belief_leakage.package_run import file_sha256
 from steering import interventions
 from steering import prompts
 from steering import transcripts
+from steering.transcripts import value_token
 from steering.engine import Engine, Job, half_bits, to_device
 from steering.results import read_rows, reply_rows, stated_value, write_rows
 
@@ -265,11 +266,6 @@ def load_cfg(out_dir: Path, override_file: Path | None = None) -> dict:
 
 def arms_of(cfg: dict) -> list[str]:
     return [arm for pair in cfg["pairs"].values() for arm in pair]
-
-
-def file_sha256(path: Path) -> str:
-    with path.open("rb") as handle:
-        return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
 class Timer:
@@ -672,6 +668,53 @@ def vector_reply_job(engine: Engine, vectors: dict, cell: ReasonCell, kind: str,
     return meta, Job(cell.layout.ids, edits)
 
 
+@dataclass
+class ReplyBatch:
+    """Jobs for one sampling pass and the result rows that refer to each job."""
+    jobs: list[Job] = field(default_factory=list)
+    wanted: list[tuple[str, dict, int]] = field(default_factory=list)
+
+    def add(self, case: str, meta: dict | None, job: Job):
+        if meta is not None:
+            self.wanted.append((case, meta, len(self.jobs)))
+        self.jobs.append(job)
+
+
+def patients_to_sample(cases: pd.Series, cfg: dict, folder: Path, patients: int, offset=0) -> list[str]:
+    """Held-out patients in the requested slice who do not yet have a result file."""
+    pool = sorted(cases.index[cases == cfg["intervene_split"]])[offset:patients]
+    return [case for case in pool if not (folder / f"{case}.parquet").exists()]
+
+
+def sample_patients(engine, folder, todo, settings, seed, stage, add_jobs, *, group_size=None,
+                    paired=False, static_cache=True, timer=None):
+    """Resume per-patient reply files, sampling each group with its original first-patient seed."""
+    if group_size is None:
+        group_size = int(settings["group"])
+    for start in range(0, len(todo), group_size):
+        started, group = time.time(), todo[start:start + group_size]
+        batch = ReplyBatch()
+        for case in group:
+            add_jobs(case, batch)
+        group_seed = seed + sum(map(ord, group[0]))
+        samples, tokens = int(settings["samples"]), int(settings["max_new_tokens"])
+        if paired:  # leader and follower must stay in the same forward pass
+            generator = engine.torch.Generator(device=engine.device).manual_seed(group_seed)
+            replies = engine._generate(batch.jobs, samples, tokens, generator, True)
+        else:
+            replies = engine.generate(batch.jobs, samples, tokens, group_seed, int(settings["batch"]), static_cache)
+        rows = {case: [] for case in group}
+        for case, meta, index in batch.wanted:
+            rows[case].extend(reply_rows(meta, replies[index]))
+        for case in group:
+            write_rows(folder / f"{case}.parquet", rows[case])
+        if timer is not None:
+            timer.add(folder.name, time.time() - started, len(group))
+        answers = sum(len(replies[i]) for i in {index for _, _, index in batch.wanted})
+        print(f"[{stage}] {start + len(group)}/{len(todo)} patients, {answers} answers, "
+              f"{time.time() - started:.1f}s", flush=True)
+
+
 def stage_reason(engine: Engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """Sampled replies with reasoning to each cell's prompt, unedited and under its edits. Several patients
     share a pass, which lasts as long as its longest reply. Writes ``<folder>/<patient>.parquet``."""
@@ -680,27 +723,14 @@ def stage_reason(engine: Engine, run_dir: Path, cfg: dict, cases: pd.Series) -> 
     vectors = to_device(vectors, engine.device)
     settings = cfg["reason"]
     folder = run_dir / settings.get("folder", "reason")
-    test_cases = sorted(cases.index[cases == cfg["intervene_split"]])
-    pool = test_cases[int(settings.get("offset", 0)): int(settings["patients"])]
-    todo = [case for case in pool if not (folder / f"{case}.parquet").exists()]
-    timer = Timer(run_dir)
-    group_size = max(1, int(settings.get("group", 1)))
-    for start in range(0, len(todo), group_size):
-        started, group = time.time(), todo[start:start + group_size]
-        jobs = []        # (patient, row columns, job)
-        for case in group:
-            jobs += [(case, meta, job) for meta, job in reason_jobs(engine, vectors, cfg, case, cases)]
-        replies = engine.generate([job for _, _, job in jobs], int(settings["samples"]),
-                                  int(settings["max_new_tokens"]), seed + sum(map(ord, group[0])),
-                                  int(settings["batch"]), bool(settings.get("static_cache", True)))
-        rows = {case: [] for case in group}
-        for (case, meta, _), samples in zip(jobs, replies):
-            rows[case] += reply_rows(meta, samples)
-        for case in group:
-            write_rows(folder / f"{case}.parquet", rows[case])
-        timer.add(folder.name, time.time() - started, len(group))
-        print(f"[reason] {min(start + group_size, len(todo))}/{len(todo)} patients, "
-              f"{sum(map(len, rows.values()))} answers, {time.time() - started:.1f}s", flush=True)
+    todo = patients_to_sample(cases, cfg, folder, int(settings["patients"]), int(settings.get("offset", 0)))
+
+    def add_jobs(case, batch):
+        for meta, job in reason_jobs(engine, vectors, cfg, case, cases):
+            batch.add(case, meta, job)
+
+    sample_patients(engine, folder, todo, settings, seed, "reason", add_jobs,
+                    group_size=max(1, int(settings.get("group", 1))), static_cache=bool(settings.get("static_cache", True)), timer=Timer(run_dir))
 
 
 def unedited_replies(run_dir: Path, folders: list[str]) -> pd.DataFrame:
@@ -727,25 +757,6 @@ class DecisionProbe:
     person_token: int                   # ... and if PERSON's is
 
 
-def value_token(engine: Engine, reply_text: str, prompt: str, value_start: int, value_end: int,
-                other_value: str) -> tuple[list[int], int, int] | None:
-    """The token at which a reply's disputed value and the other record's value, written in its place, first
-    differ. ``value_start`` and ``value_end`` bound the value in the reply's text. Returns (the prompt and the
-    reply up to that token, the token as written, the other record's token), or None if the two never
-    differ."""
-    chat = prompts.chat_text(engine.tok, prompt, engine.kw)
-    text_before_value = chat + reply_text[:value_start]
-    written_ids = engine.tok(text_before_value + reply_text[value_start:value_end],
-                             add_special_tokens=False)["input_ids"]
-    other_ids = engine.tok(text_before_value + other_value, add_special_tokens=False)["input_ids"]
-    differing = (index for index, (written, other) in enumerate(zip(written_ids, other_ids))
-                 if written != other)
-    differ_at = next(differing, None)
-    if differ_at is None:
-        return None
-    return written_ids[:differ_at], written_ids[differ_at], other_ids[differ_at]
-
-
 def record_token_groups(layout: prompts.Layout, code: str) -> dict[str, list[int]]:
     """The record tokens whose attention is read: the disputed field's line and every line, in the first and
     in the second record block. A group with no tokens is left out."""
@@ -762,29 +773,17 @@ def decision_probes(engine: Engine, vectors: dict, reply, prompt: str,
     """The probes of one reply (a row of the reasoning table): unedited, and under the slot vector and a
     random direction of its size at each strength. Empty if the reply states no disputed value in a form that
     can be exchanged for the other record's."""
-    first, line_start, line_end = transcripts.first_stated(reply.text, prompt)
-    if first not in ("model's", "PERSON's"):
+    point = transcripts.first_written_value(engine, prompt, reply.text)
+    if point is None:
         return []
-    span = transcripts.stated_span(reply.text[line_start:line_end], prompt)
-    if span is None:
-        return []
-    code, whose, value_start, value_end, other_value = span
-    layout = prompts.layout(engine.tok, prompt, engine.kw, prefix="")
-    found = value_token(engine, reply.text, prompt, line_start + value_start, line_start + value_end,
-                        other_value)
-    if found is None or len(found[0]) < layout.n_ctx + 2:
-        return []
-    ids, written_token, other_token = found
-    if whose == "model's":
-        own_token, person_token = written_token, other_token
-    else:
-        own_token, person_token = other_token, written_token
-    attention_groups = record_token_groups(layout, code)
+    layout, ids = point.layout, point.ids
+    own_token, person_token = point.own_token, point.person_token
+    attention_groups = record_token_groups(layout, point.code)
 
     reasoning = transcripts.ANSWER.split(reply.text)[0]
     reasoning_tokens = len(engine.tok(reasoning, add_special_tokens=False)["input_ids"])
     meta = dict(case_id=reply.case_id, arm=reply.arm, block_order=reply.block_order, sample=int(reply.sample),
-                field=code, wrote=whose, category=transcripts.category(reply.text, prompt),
+                field=point.code, wrote=point.whose, category=transcripts.category(reply.text, prompt),
                 position=(len(ids) - len(layout.ids)) / max(reasoning_tokens, 1), reply_value=reply.value)
     unedited_meta = dict(meta, variant="unedited", alpha=0.0)
     probes = [DecisionProbe(unedited_meta, ids, layout.n_ctx, [], attention_groups, own_token, person_token)]

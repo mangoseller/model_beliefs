@@ -41,7 +41,7 @@ from belief_leakage.beliefs import clip_logit
 from steering import circuit
 from steering import prompts
 from steering.engine import Edit, Job, stated_probability
-from steering.results import read_rows, reply_rows, write_rows
+from steering.results import read_rows, reply_rows as reasoned_rows, write_rows
 
 CI = circuit        # the test file reaches the circuit module through this name
 
@@ -859,11 +859,6 @@ def matching_line_tokens(layout) -> tuple[list[int], list[int]]:
     return own_tokens, person_tokens
 
 
-def reasoned_rows(meta: dict, replies: list[dict]) -> list[dict]:
-    """One row per sampled reply, in the format of the reasoning stage."""
-    return reply_rows(meta, replies)
-
-
 def stage_redirect(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     """Remove the leak by changing what the lookup heads copy, with attention left alone.
 
@@ -884,33 +879,22 @@ def stage_redirect(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
     (run_dir / "circuit_redirect" / f"value_heads_{folder_name}.json").write_text(json.dumps(
         {name: dict(value_heads=sum(len(chosen) for chosen in by_layer.values()), by_block=by_layer)
          for name, by_layer in value_heads.items()}))
-    folder, seed, group_size = run_dir / folder_name, int(config.load()["seed"]), int(settings["group"])
-    patients = sorted(cases.index[cases == cfg["intervene_split"]])[: int(settings["patients"])]
-    todo = [case for case in patients if not (folder / f"{case}.parquet").exists()]
-    for start in range(0, len(todo), group_size):
-        started, group, jobs = time.time(), todo[start:start + group_size], []
-        for case in group:
-            prompt_row = run.case_prompts(case, cases, [plain_arm])[(plain_arm, "person_first", "C")]
-            layout = prompts.layout(engine.tok, prompt_row["prompt"], engine.kw, prefix="")
-            own_tokens, person_tokens = matching_line_tokens(layout)
-            _, _, captured = engine.run([layout.ids[:layout.n_ctx]], capture=[person_tokens])
-            person_stream = captured[0][1]           # [layers + 1, tokens, hidden] at PERSON's line tokens
-            for name, columns in value_columns.items():
-                meta = run.meta_of(prompt_row, part="reason", variant=f"redirect: {name}", kind="redirect")
-                # at the model's line tokens, these value columns are computed from PERSON's residual stream
-                redirect = (own_tokens, person_stream, "v", None, columns)
-                jobs.append((case, meta, Job(layout.ids, paths=[redirect])))
-        group_seed = seed + sum(map(ord, group[0]))
-        replies = engine.generate([job for _, _, job in jobs], int(settings["samples"]),
-                                  int(settings["max_new_tokens"]), group_seed, int(settings["batch"]))
-        rows = {case: [] for case in group}
-        for (case, meta, _), job_replies in zip(jobs, replies):
-            rows[case] += reasoned_rows(meta, job_replies)
-        for case in group:
-            write_rows(folder / f"{case}.parquet", rows[case])
-        n_answers = sum(map(len, rows.values()))
-        print(f"[redirect] {min(start + group_size, len(todo))}/{len(todo)} patients, {n_answers} answers, "
-              f"{time.time() - started:.1f}s", flush=True)
+    folder, seed = run_dir / folder_name, int(config.load()["seed"])
+    todo = run.patients_to_sample(cases, cfg, folder, int(settings["patients"]))
+
+    def add_jobs(case, batch):
+        prompt_row = run.case_prompts(case, cases, [plain_arm])[(plain_arm, "person_first", "C")]
+        layout = prompts.layout(engine.tok, prompt_row["prompt"], engine.kw, prefix="")
+        own_tokens, person_tokens = matching_line_tokens(layout)
+        _, _, captured = engine.run([layout.ids[:layout.n_ctx]], capture=[person_tokens])
+        person_stream = captured[0][1]           # [layers + 1, tokens, hidden] at PERSON's line tokens
+        for name, columns in value_columns.items():
+            meta = run.meta_of(prompt_row, part="reason", variant=f"redirect: {name}", kind="redirect")
+            # at the model's line tokens, these value columns are computed from PERSON's residual stream
+            redirect = (own_tokens, person_stream, "v", None, columns)
+            batch.add(case, meta, Job(layout.ids, paths=[redirect]))
+
+    run.sample_patients(engine, folder, todo, settings, seed, "redirect", add_jobs)
 
 
 def runs_of_equal(first: int, last: int, label) -> list[tuple[int, int]]:

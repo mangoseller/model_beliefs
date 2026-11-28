@@ -17,18 +17,28 @@ from pathlib import Path
 SKIP = {".followup.lock", ".binding.lock", ".causal.lock", ".freeze.lock"}
 
 
-def _sha(path: Path) -> str:
+def file_sha256(path: Path) -> str:
     with path.open("rb") as handle:
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
+def write_archive(target: Path, add, *, mode=None, suffix=".partial") -> str:
+    """Write a tar archive atomically (a temporary file renamed on success); returns its SHA-256."""
+    partial = target.with_name(target.name + suffix)
+    with tarfile.open(partial, mode or ("w:gz" if target.name.endswith(".gz") else "w")) as archive:
+        add(archive)
+    partial.replace(target)
+    digest = file_sha256(target)
+    target.with_name(target.name + ".sha256").write_text(f"{digest}  {target.name}\n")
+    return digest
+
+
 def _write(target: Path, root: Path, members, mode: str) -> Path:
-    tmp = target.with_name(target.name + ".tmp")
-    with tarfile.open(tmp, mode) as tar:
+    def add_members(archive):
         for path in members:
-            tar.add(path, arcname=str(Path(root.name) / path.relative_to(root)), recursive=False)
-    tmp.replace(target)
-    target.with_name(target.name + ".sha256").write_text(f"{_sha(target)}  {target.name}\n")
+            archive.add(path, arcname=str(Path(root.name) / path.relative_to(root)), recursive=False)
+
+    write_archive(target, add_members, mode=mode, suffix=".tmp")
     return target
 
 

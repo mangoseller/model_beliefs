@@ -40,7 +40,8 @@ from belief_leakage import config as experiment_config
 from steering import interventions
 from steering import prompts
 from steering import run
-from steering import transcripts
+from steering.run import patients_to_sample
+from steering.transcripts import WritingPoint, first_written_value
 from steering.engine import Edit, Job
 from steering.results import read_rows as read, reply_rows as sampled_reply_rows, write_rows as write
 
@@ -699,61 +700,9 @@ def tables(run_dir: Path, cfg: dict, draws: int = 1000) -> dict:
 
 # ==== Replies: the token at which a reasoned reply first writes a disputed value
 
-@dataclass
-class WritingPoint:
-    """A reply fed back to the model up to the token at which it first writes a value of a disputed field."""
-    code: str             # the disputed field's code
-    whose: str            # "model's" or "PERSON's": the record whose value the reply wrote
-    layout: object
-    ids: list[int]        # prompt and reply tokens before the token that tells the two records' values apart
-    own_token: int        # that token, if the model's record's value is written
-    person_token: int     # that token, if PERSON's is
-    line_start: int       # character offset, in the reply, of the line that states the value
-
-    @property
-    def written_record(self) -> str:
-        """The record ("own" or "person") whose value the reply wrote."""
-        return "own" if self.whose == "model's" else "person"
-
-
-def first_written_value(engine, prompt: str, reply: str,
-                        max_tokens: int | None = None) -> WritingPoint | None:
-    """Where ``reply`` first states a value of a field the two records disagree on.
-
-    The reply is tokenised twice, as written and with the other record's value in its place; the first token
-    at which the two differ is the writing token. None if the reply states no such value, if the two values
-    are told apart only after the reply's end, or if the writing token comes within two tokens of the records
-    or more than ``max_tokens`` after them."""
-    first, line_start, line_end = transcripts.first_stated(reply, prompt)
-    if first not in ("model's", "PERSON's"):
-        return None
-    span = transcripts.stated_span(reply[line_start:line_end], prompt)
-    if span is None:
-        return None
-    code, whose, value_start, value_end, other_value = span
-    layout = prompts.layout(engine.tok, prompt, engine.kw, prefix="")
-    before_value = prompts.chat_text(engine.tok, prompt, engine.kw) + reply[:line_start + value_start]
-    as_written = before_value + reply[line_start + value_start:line_start + value_end]
-    written_ids = engine.tok(as_written, add_special_tokens=False)["input_ids"]
-    other_ids = engine.tok(before_value + other_value, add_special_tokens=False)["input_ids"]
-    token_pairs = enumerate(zip(written_ids, other_ids))
-    differ_at = next((i for i, (written, other) in token_pairs if written != other), None)
-    if differ_at is None or differ_at < layout.n_ctx + 2:
-        return None
-    if max_tokens is not None and differ_at - layout.n_ctx > max_tokens:
-        return None
-    written_token, other_token = written_ids[differ_at], other_ids[differ_at]
-    if whose == "model's":
-        own_token, person_token = written_token, other_token
-    else:
-        own_token, person_token = other_token, written_token
-    return WritingPoint(code, whose, layout, written_ids[:differ_at], own_token, person_token, line_start)
-
-
 def unedited_replies(run_dir: Path, cfg: dict, folders) -> pd.DataFrame:
-    frames = [read(run_dir / folder) for folder in folders]
-    replies = pd.concat([frame for frame in frames if not frame.empty], ignore_index=True)
-    return replies[(replies.variant == "base") & replies.arm.isin(cfg["pairs"]["false"])]
+    replies = run.unedited_replies(run_dir, folders)
+    return replies[replies.arm.isin(cfg["pairs"]["false"])]
 
 
 # ==== Stage reply: the lookup's head sets at the writing token
@@ -2126,12 +2075,6 @@ def load_place_vectors(engine, run_dir: Path) -> dict:
     return {name: vector.to(engine.device) for name, vector in saved.items()}
 
 
-def patients_to_sample(cases: pd.Series, cfg: dict, folder: Path, patients: int) -> list[str]:
-    """The first ``patients`` held-out patients that have no file in ``folder`` yet."""
-    pool = held_out_patients(cases, cfg)[:patients]
-    return [case for case in pool if not (folder / f"{case}.parquet").exists()]
-
-
 def knockout_keys(layout: prompts.Layout, head_set: str, target: str) -> list[int]:
     """The tokens a ``stage_steer`` knockout bars its heads from.
 
@@ -2196,30 +2139,20 @@ def stage_steer(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
         named = program.named_sets(run_dir, engine, cfg)
         head_sets |= {name: heads for name, heads in named.items() if name not in head_sets}
     window = tuple(settings["window"])
-    folder, group = run_dir / settings["folder"], int(settings["group"])
+    folder = run_dir / settings["folder"]
     seed = int(experiment_config.load()["seed"])
     todo = patients_to_sample(cases, cfg, folder, int(settings["patients"]))
-    for start in range(0, len(todo), group):
-        started = time.time()
-        part, jobs = todo[start:start + group], []
-        for case in part:
-            prompt_rows = run.case_prompts(case, cases, cfg["pairs"]["false"])
-            for side, order, conditions in settings["cells"]:
-                prompt_row = prompt_rows[(cfg["pairs"]["false"][ARM_OF_SIDE[side]], order, "C")]
-                layout = prompts.layout(engine.tok, prompt_row["prompt"], engine.kw, prefix="")
-                for condition in conditions:
-                    meta, job = steer_job(prompt_row, layout, condition, head_sets, place_vectors, window)
-                    jobs.append((case, meta, job))
-        replies = engine.generate([job for _, _, job in jobs], int(settings["samples"]),
-                                  int(settings["max_new_tokens"]), seed + sum(map(ord, part[0])),
-                                  int(settings["batch"]))
-        rows = {case: [] for case in part}
-        for (case, meta, _), samples in zip(jobs, replies):
-            rows[case] += sampled_reply_rows(meta, samples)
-        for case in part:
-            write(folder / f"{case}.parquet", rows[case])
-        print(f"[circuit steer] {min(start + group, len(todo))}/{len(todo)} patients, "
-              f"{sum(map(len, rows.values()))} answers, {time.time() - started:.1f}s", flush=True)
+
+    def add_jobs(case, batch):
+        prompt_rows = run.case_prompts(case, cases, cfg["pairs"]["false"])
+        for side, order, conditions in settings["cells"]:
+            prompt_row = prompt_rows[(cfg["pairs"]["false"][ARM_OF_SIDE[side]], order, "C")]
+            layout = prompts.layout(engine.tok, prompt_row["prompt"], engine.kw, prefix="")
+            for condition in conditions:
+                meta, job = steer_job(prompt_row, layout, condition, head_sets, place_vectors, window)
+                batch.add(case, meta, job)
+
+    run.sample_patients(engine, folder, todo, settings, seed, "circuit steer", add_jobs)
 
 
 def paired_head_columns(engine, run_dir: Path, cfg: dict, n_heads: int) -> tuple[dict, int]:
@@ -2294,30 +2227,20 @@ def stage_paired(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vector
     engine.cast(settings["dtype"])
     vectors = load_vectors(run_dir, engine.device)
     columns, size = paired_head_columns(engine, run_dir, cfg, int(settings["heads"]))
-    folder, group = run_dir / settings.get("folder", "reason_paired"), int(settings["group"])
+    folder = run_dir / settings.get("folder", "reason_paired")
     seed = int(experiment_config.load()["seed"])
     todo = patients_to_sample(cases, cfg, folder, int(settings["patients"]))
     arms = sorted({arm for variant, *_ in settings["cells"] for arm in cfg["pairs"][variant]})
-    for start in range(0, len(todo), group):
-        started = time.time()
-        part, jobs = todo[start:start + group], []
-        for case in part:
-            prompt_rows = run.case_prompts(case, cases, arms)
-            for cell in settings["cells"]:
-                cell_jobs = paired_jobs(engine, vectors, prompt_rows, cell, cfg, columns, size,
-                                        first_index=len(jobs))
-                jobs += [(case, meta, job) for meta, job in cell_jobs]
-        generator = engine.torch.Generator(device=engine.device).manual_seed(seed + sum(map(ord, part[0])))
-        replies = engine._generate([job for _, _, job in jobs], int(settings["samples"]),
-                                   int(settings["max_new_tokens"]), generator, True)
-        rows = {case: [] for case in part}
-        for (case, meta, _), samples in zip(jobs, replies):
-            if meta is not None:
-                rows[case] += sampled_reply_rows(meta, samples)
-        for case in part:
-            write(folder / f"{case}.parquet", rows[case])
-        print(f"[circuit paired] {min(start + group, len(todo))}/{len(todo)} patients, "
-              f"{sum(map(len, rows.values()))} answers, {time.time() - started:.1f}s", flush=True)
+
+    def add_jobs(case, batch):
+        prompt_rows = run.case_prompts(case, cases, arms)
+        for cell in settings["cells"]:
+            cell_jobs = paired_jobs(engine, vectors, prompt_rows, cell, cfg, columns, size,
+                                    first_index=len(batch.jobs))
+            for meta, job in cell_jobs:
+                batch.add(case, meta, job)
+
+    run.sample_patients(engine, folder, todo, settings, seed, "circuit paired", add_jobs, paired=True)
 
 
 def reference_jobs(engine, cases: pd.Series, case: str, cfg: dict, cells: list, arms: list,
@@ -2351,25 +2274,15 @@ def stage_references(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None
     format with the role kept (``refs_own``, one file per patient)."""
     settings = cfg["references"]
     engine.cast(settings["dtype"])
-    folder, group = run_dir / "refs_own", int(settings["group"])
+    folder = run_dir / "refs_own"
     seed = int(experiment_config.load()["seed"]) + 5
     todo = patients_to_sample(cases, cfg, folder, int(settings["patients"]))
     arms = sorted({cfg["pairs"][variant][ARM_OF_SIDE[side]] for variant, side, _ in settings["cells"]})
-    for start in range(0, len(todo), group):
-        started = time.time()
-        part = todo[start:start + group]
-        jobs, wanted = [], []
-        for case in part:
-            case_jobs, case_wanted = reference_jobs(engine, cases, case, cfg, settings["cells"], arms,
-                                                    first_index=len(jobs))
-            jobs += case_jobs
-            wanted += case_wanted
-        replies = engine.generate(jobs, int(settings["samples"]), int(settings["max_new_tokens"]),
-                                  seed + sum(map(ord, part[0])), int(settings["batch"]))
-        rows = {case: [] for case in part}
-        for case, meta, job_index in wanted:
-            rows[case] += sampled_reply_rows(meta, replies[job_index])
-        for case in part:
-            write(folder / f"{case}.parquet", rows[case])
-        print(f"[references] {min(start + group, len(todo))}/{len(todo)} patients, "
-              f"{len(jobs) * int(settings['samples'])} answers, {time.time() - started:.1f}s", flush=True)
+
+    def add_jobs(case, batch):
+        case_jobs, case_wanted = reference_jobs(engine, cases, case, cfg, settings["cells"], arms,
+                                                first_index=len(batch.jobs))
+        batch.jobs.extend(case_jobs)
+        batch.wanted.extend(case_wanted)
+
+    run.sample_patients(engine, folder, todo, settings, seed, "references", add_jobs)

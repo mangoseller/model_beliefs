@@ -3,8 +3,10 @@ differ (false arms: both values; withheld-field arms: the model's value, which P
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 from belief_leakage import binding
+from steering import prompts
 
 # How a reply names each yes/no field, and the wording around the name that says yes or no.
 TERMS = {"diab": r"diabet",
@@ -178,3 +180,69 @@ def category(text: str, prompt: str) -> str:
     if states_person:
         return "person only"
     return "neither"
+
+
+def value_token(engine, reply_text: str, prompt: str, value_start: int, value_end: int,
+                other_value: str) -> tuple[list[int], int, int] | None:
+    """The token at which a reply's disputed value and the other record's value, written in its place, first
+    differ. ``value_start`` and ``value_end`` bound the value in the reply's text. Returns (the prompt and the
+    reply up to that token, the token as written, the other record's token), or None if the two never
+    differ."""
+    chat = prompts.chat_text(engine.tok, prompt, engine.kw)
+    text_before_value = chat + reply_text[:value_start]
+    written_ids = engine.tok(text_before_value + reply_text[value_start:value_end],
+                             add_special_tokens=False)["input_ids"]
+    other_ids = engine.tok(text_before_value + other_value, add_special_tokens=False)["input_ids"]
+    differing = (index for index, (written, other) in enumerate(zip(written_ids, other_ids))
+                 if written != other)
+    differ_at = next(differing, None)
+    if differ_at is None:
+        return None
+    return written_ids[:differ_at], written_ids[differ_at], other_ids[differ_at]
+
+
+@dataclass
+class WritingPoint:
+    """A reply fed back to the model up to the token at which it first writes a value of a disputed field."""
+    code: str             # the disputed field's code
+    whose: str            # "model's" or "PERSON's": the record whose value the reply wrote
+    layout: object
+    ids: list[int]        # prompt and reply tokens before the token that tells the two records' values apart
+    own_token: int        # that token, if the model's record's value is written
+    person_token: int     # that token, if PERSON's is
+    line_start: int       # character offset, in the reply, of the line that states the value
+
+    @property
+    def written_record(self) -> str:
+        """The record ("own" or "person") whose value the reply wrote."""
+        return "own" if self.whose == "model's" else "person"
+
+
+def first_written_value(engine, prompt: str, reply: str,
+                        max_tokens: int | None = None) -> WritingPoint | None:
+    """Where ``reply`` first states a value of a field the two records disagree on.
+
+    The reply is tokenised twice, as written and with the other record's value in its place; the first token
+    at which the two differ is the writing token. None if the reply states no such value, if the two values
+    are told apart only after the reply's end, or if the writing token comes within two tokens of the records
+    or more than ``max_tokens`` after them."""
+    first, line_start, line_end = first_stated(reply, prompt)
+    if first not in ("model's", "PERSON's"):
+        return None
+    span = stated_span(reply[line_start:line_end], prompt)
+    if span is None:
+        return None
+    code, whose, value_start, value_end, other_value = span
+    layout = prompts.layout(engine.tok, prompt, engine.kw, prefix="")
+    tokens = value_token(engine, reply, prompt, line_start + value_start, line_start + value_end, other_value)
+    if tokens is None:
+        return None
+    ids, written_token, other_token = tokens
+    after_records = len(ids) - layout.n_ctx
+    if after_records < 2 or (max_tokens is not None and after_records > max_tokens):
+        return None
+    if whose == "model's":
+        own_token, person_token = written_token, other_token
+    else:
+        own_token, person_token = other_token, written_token
+    return WritingPoint(code, whose, layout, ids, own_token, person_token, line_start)

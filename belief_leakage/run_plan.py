@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 
 from belief_leakage import config as C, run_generation as G
+from belief_leakage.datasets import final_choice
+from belief_leakage.package_run import file_sha256
 
 
 def released_items(model, records):
@@ -252,14 +254,6 @@ def capture(root: Path, model: str, replayer_factory=None, items=None) -> None:
     print(f"{model}: {len(items)} activation rows verified/captured (old arrays untouched)")
 
 
-def file_sha256(path: Path) -> str:
-    with path.open("rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
-
-
-_CHOICE_LINE = re.compile(r"(?:^|[\s>#*_`:])choice[\s*_`]*:[\s*_`]*(.*?)\s*$", flags=re.I)
-
-
 def score(item: G.Item, record: dict | None, trial: dict):
     """``responses.score_answer`` on the answer after the base run's parser cleanup: for choices, the last
     "Choice:" line and the lines after it, without Markdown emphasis; for probabilities, trailing emphasis
@@ -270,11 +264,8 @@ def score(item: G.Item, record: dict | None, trial: dict):
         if not text.endswith("```"):
             text = text.rstrip("*_` \t\n")
     else:
-        lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
-        at = [k for k, line in enumerate(lines) if _CHOICE_LINE.search(line)]
-        if at:
-            text = " ".join([_CHOICE_LINE.search(lines[at[-1]]).group(1), *lines[at[-1] + 1:]]).strip()
-        text = re.sub(r"[*_`]", "", text)
+        choice = final_choice(text)
+        text = re.sub(r"[*_`]", "", text if choice is None else choice)
     return score_answer(item, None if record is None else record | {"text": text}, trial)
 
 

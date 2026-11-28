@@ -286,24 +286,13 @@ def evaluate(W, arms, checks=True):
 
 def bootstrap_draws(frame: pd.DataFrame, arms, resamples: int, seed: int, checks=True):
     """Point estimates and the paired patient-bootstrap draws of every cell statistic and contrast."""
-    arrays = {c: frame[c].to_numpy(dtype=float) for c in frame.columns}
-    points, cpoints = evaluate(arrays, arms, checks)
-    draws = {key: {s: [] for s in stats} for key, stats in points.items()}
-    cdraws = {name: [] for name in cpoints}
-    rng = np.random.default_rng(seed)
-    n = len(frame)
-    for _ in range(int(resamples)):
-        idx = rng.integers(0, n, n)
-        cells, contrasts = evaluate({c: v[idx] for c, v in arrays.items()}, arms, checks)
-        for key, stats in draws.items():
-            got = cells.get(key, {})
-            for s, values in stats.items():
-                values.append(got.get(s, np.nan))
-        for name, values in cdraws.items():
-            values.append(contrasts.get(name, np.nan))
-    draws = {key: {s: np.asarray(v, float) for s, v in stats.items()} for key, stats in draws.items()}
-    cdraws = {name: np.asarray(v, float) for name, v in cdraws.items()}
-    return points, cpoints, draws, cdraws
+    def by_group(sample):
+        cells, contrasts = evaluate(sample, arms, checks)
+        return cells | {"contrasts": contrasts}
+
+    points, draws = L.bootstrap_draws(frame, by_group, resamples, seed)
+    contrast_points, contrast_draws = points.pop("contrasts"), draws.pop("contrasts")
+    return points, contrast_points, draws, contrast_draws
 
 
 def summarise(points, cpoints, draws, cdraws, take=None):

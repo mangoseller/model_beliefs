@@ -58,7 +58,7 @@ from pathlib import Path
 
 import yaml
 
-from archive.smolin_wilder_replication.release import sha256
+from belief_leakage.package_run import file_sha256 as sha256, write_archive
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "runs"
@@ -474,17 +474,6 @@ def stage_report(run: Run, cfg: dict) -> None:
     run.save()
     # In a subprocess, so the belief_leakage modules read this run's config (SO_CONFIG).
     run.py("belief_leakage.runner_record", str(run.dir), log="report")
-
-
-def write_archive(target: Path, add) -> str:
-    """Write a tar archive atomically (a temporary file renamed on success); returns its SHA-256."""
-    partial = target.with_name(target.name + ".partial")
-    with tarfile.open(partial, "w:gz" if target.name.endswith(".gz") else "w") as archive:
-        add(archive)
-    os.replace(partial, target)
-    digest = sha256(target)
-    target.with_name(target.name + ".sha256").write_text(f"{digest}  {target.name}\n")
-    return digest
 
 
 def stage_package(run: Run, cfg: dict) -> None:

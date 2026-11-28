@@ -25,12 +25,7 @@ MIN_GAP = 5.0       # a lookup counts if its two questions' margins are at least
 
 def bootstrap_interval(frame: pd.DataFrame, column: str, rng) -> tuple[float, float]:
     """The 95% interval of the mean of the patients' means, by resampling patients; (nan, nan) under three."""
-    per_patient = frame.groupby("case_id")[column].mean().to_numpy()
-    if len(per_patient) < 3:
-        return np.nan, np.nan
-    draws = rng.integers(0, len(per_patient), (BOOTSTRAP_DRAWS, len(per_patient)))
-    means = per_patient[draws].mean(1)
-    return np.quantile(means, 0.025), np.quantile(means, 0.975)
+    return circuit.bootstrap_interval(frame, column, BOOTSTRAP_DRAWS, rng)
 
 
 def measure(name: str, prediction: str, frame: pd.DataFrame, column: str, rng) -> dict:
