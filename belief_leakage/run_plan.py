@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 
 from belief_leakage import config as C, run_generation as G
 from belief_leakage.datasets import final_choice
@@ -89,12 +90,25 @@ def configure(root: Path) -> None:
     G.cache_index.cache_clear()
 
 
+def _typed_settings(value):
+    """Compare YAML settings without treating booleans, integers and floats as interchangeable."""
+    if isinstance(value, dict):
+        return {(type(key), key): _typed_settings(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_typed_settings(item) for item in value]
+    return type(value), value
+
+
 def install_config(root: Path, config_bytes: bytes) -> None:
-    """Write the run's config (refusing to replace a different one) and configure the run."""
+    """Install a new run's config, or keep its saved copy if the settings match."""
     path = root / "config.yaml"
-    if path.exists() and path.read_bytes() != config_bytes:
-        raise ValueError(f"{root} already uses a different config")
-    path.write_bytes(config_bytes)
+    if path.exists():
+        saved = path.read_bytes()
+        if (saved != config_bytes
+                and _typed_settings(yaml.safe_load(saved)) != _typed_settings(yaml.safe_load(config_bytes))):
+            raise ValueError(f"{root} already uses a different config")
+    else:
+        path.write_bytes(config_bytes)
     configure(root)
 
 

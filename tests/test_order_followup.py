@@ -64,6 +64,17 @@ class Design(unittest.TestCase):
 
 
 class Resume(unittest.TestCase):
+    def test_prepare_preserves_the_saved_config_and_rejects_changed_settings(self):
+        with isolated_config(), tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = b"seed: 1  # pilot\nlatent: {anchor_cutoffs: false}\n"
+            F.install_config(root, original)
+            F.install_config(root, b"latent:\n  anchor_cutoffs: false\nseed: 1\n")
+            for changed in (original.replace(b"seed: 1", b"seed: 2"), original.replace(b"false", b"0")):
+                with self.assertRaisesRegex(ValueError, "different config"):
+                    F.install_config(root, changed)
+            self.assertEqual((root / "config.yaml").read_bytes(), original)
+
     def test_new_calls_only_activation_resume_and_changed_settings_fail(self):
         with isolated_config(), tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
