@@ -1,6 +1,6 @@
 """Package a finished run directory as independent result archives.
 
-    python -m second_order.package_run --run runs/binding-pilot [--out ..] [--name binding-pilot] [--what main]
+    python -m belief_leakage.package_run --run runs/binding-pilot [--out ..] [--name binding-pilot] [--what main]
 
 Writes ``<name>.tar.gz`` (everything but activations: plan, config, caches, exports,
 analysis) and, when the run has activations, ``<name>_activations.tar`` (uncompressed:

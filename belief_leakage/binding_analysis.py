@@ -1,6 +1,6 @@
 """Phase 2 of the binding experiment: beliefs, lambda per cell, contrasts and the decision rules.
 
-    python -m second_order.binding_analysis --run runs/binding-pilot --model qwen3_8b [--resamples 2000]
+    python -m belief_leakage.binding_analysis --run runs/binding-pilot --model qwen3_8b [--resamples 2000]
 
 Reads the session-1 export (``outputs/<model>_responses.parquet``) and writes
 ``outputs/analysis/<model>/``:
@@ -33,11 +33,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from second_order import binding as B
-from second_order import config as C
-from second_order import leakage as L
-from second_order import order_followup as F
-from second_order.beliefs import clip_logit
+from belief_leakage import binding as B
+from belief_leakage import config as C
+from belief_leakage import leakage as L
+from belief_leakage import order_followup as F
+from belief_leakage.beliefs import clip_logit
 
 ROLES = ("A", "B", "C", "M", "D")
 # lambda intervals in the rules are 95% Fieller sets. Each rule is supported, refuted (its interval excludes the
@@ -96,8 +96,8 @@ def direct_beliefs(long: pd.DataFrame) -> pd.DataFrame:
 
 def latent_beliefs(long: pd.DataFrame, plan: dict, model: str) -> pd.DataFrame:
     """One pooled refit across all latent-arm cells (self: A, B; person: C, M, D)."""
-    from second_order import fit_pooled as FP
-    from second_order.responses import configured_specs, split as patient_split
+    from belief_leakage import fit_pooled as FP
+    from belief_leakage.responses import configured_specs, split as patient_split
 
     arms = plan["spec"]["latent_arms"]
     if not arms:
@@ -170,7 +170,7 @@ def load_texts(root: Path, model: str) -> pd.Series | None:
 def score_checks(long: pd.DataFrame, texts: pd.Series | None) -> pd.DataFrame:
     """Every check row with ``correct_letter`` (the release's letter scoring) and ``correct`` (the shown/withheld
     checks scored from the reasoning where it reaches a conclusion, else the letter)."""
-    from second_order.check_scoring import reasoning_correct
+    from belief_leakage.check_scoring import reasoning_correct
     chk = long[long.output.str.startswith("check/") & (long.arm != "drift")].copy()
     missing = chk.status.isin(["not_generated", "call_error"])
     chk["correct_letter"] = chk.value.where(chk.status == "parsed", 0.0).where(~missing)

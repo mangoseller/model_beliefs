@@ -35,13 +35,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from second_order import binding
-from second_order import config as experiment_config
+from belief_leakage import binding
+from belief_leakage import config as experiment_config
 from steering import interventions
 from steering import prompts
 from steering import run
 from steering import transcripts
-from steering.engine import Edit, Job, stated_probability
+from steering.engine import Edit, Job
+from steering.results import read_rows as read, reply_rows as sampled_reply_rows, write_rows as write
 
 # The tokens the two lookup questions share after the phrase that names the record, in order: before the
 # quoted field name, the field name, the rest of the question, the chat template's tail, and the answer
@@ -301,23 +302,6 @@ def case_cells(case: str, cases: pd.Series, cfg: dict) -> dict:
     frame = prompts.build(cases.loc[[case]], cfg["pairs"]["false"])
     frame = frame[frame.role == "C"]
     return {(row.arm, row.block_order): row.prompt for row in frame.itertuples()}
-
-
-def write(path: Path, rows: list[dict]) -> None:
-    """Write rows as a parquet file, through a temporary file so that an interrupted run leaves no partial
-    one."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    pd.DataFrame(rows).to_parquet(temporary, index=False)
-    temporary.replace(path)
-
-
-def read(folder: Path) -> pd.DataFrame:
-    """Every parquet file of a folder as one frame (empty if there is none)."""
-    parts = sorted(folder.glob("*.parquet"))
-    if not parts:
-        return pd.DataFrame()
-    return pd.concat([pd.read_parquet(part) for part in parts], ignore_index=True)
 
 
 def unpatched_rows(cell: dict, pair: dict, runs: dict) -> list[dict]:
@@ -767,7 +751,7 @@ def first_written_value(engine, prompt: str, reply: str,
 
 
 def unedited_replies(run_dir: Path, cfg: dict, folders) -> pd.DataFrame:
-    frames = [run.read_rows(run_dir / folder) for folder in folders]
+    frames = [read(run_dir / folder) for folder in folders]
     replies = pd.concat([frame for frame in frames if not frame.empty], ignore_index=True)
     return replies[(replies.variant == "base") & replies.arm.isin(cfg["pairs"]["false"])]
 
@@ -2142,18 +2126,6 @@ def load_place_vectors(engine, run_dir: Path) -> dict:
     return {name: vector.to(engine.device) for name, vector in saved.items()}
 
 
-def sampled_reply_rows(meta: dict, samples: list[dict]) -> list[dict]:
-    """One row per sampled reply in the reasoning stage's format: its text and the probability it states (NaN
-    if it states none)."""
-    rows = []
-    for sample, reply in enumerate(samples):
-        stated = stated_probability(reply["text"])
-        value = float("nan") if stated is None else stated
-        rows.append(dict(meta, readout="reasoned", sample=sample, text=reply["text"],
-                         n_tokens=reply["n_tokens"], truncated=reply["truncated"], value=value))
-    return rows
-
-
 def patients_to_sample(cases: pd.Series, cfg: dict, folder: Path, patients: int) -> list[str]:
     """The first ``patients`` held-out patients that have no file in ``folder`` yet."""
     pool = held_out_patients(cases, cfg)[:patients]
@@ -2245,7 +2217,7 @@ def stage_steer(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
         for (case, meta, _), samples in zip(jobs, replies):
             rows[case] += sampled_reply_rows(meta, samples)
         for case in part:
-            run.write_rows(folder / f"{case}.parquet", rows[case])
+            write(folder / f"{case}.parquet", rows[case])
         print(f"[circuit steer] {min(start + group, len(todo))}/{len(todo)} patients, "
               f"{sum(map(len, rows.values()))} answers, {time.time() - started:.1f}s", flush=True)
 
@@ -2343,7 +2315,7 @@ def stage_paired(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_vector
             if meta is not None:
                 rows[case] += sampled_reply_rows(meta, samples)
         for case in part:
-            run.write_rows(folder / f"{case}.parquet", rows[case])
+            write(folder / f"{case}.parquet", rows[case])
         print(f"[circuit paired] {min(start + group, len(todo))}/{len(todo)} patients, "
               f"{sum(map(len, rows.values()))} answers, {time.time() - started:.1f}s", flush=True)
 
@@ -2398,6 +2370,6 @@ def stage_references(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None
         for case, meta, job_index in wanted:
             rows[case] += sampled_reply_rows(meta, replies[job_index])
         for case in part:
-            run.write_rows(folder / f"{case}.parquet", rows[case])
+            write(folder / f"{case}.parquet", rows[case])
         print(f"[references] {min(start + group, len(todo))}/{len(todo)} patients, "
               f"{len(jobs) * int(settings['samples'])} answers, {time.time() - started:.1f}s", flush=True)

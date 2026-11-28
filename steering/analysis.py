@@ -25,11 +25,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from second_order import binding
-from second_order import config
-from second_order.beliefs import clip_logit
+from belief_leakage import binding
+from belief_leakage import config
+from belief_leakage.beliefs import clip_logit
 from steering import prompts
 from steering import transcripts
+from steering.results import read_rows
 
 # The columns that together name one edit of one cell.
 EDIT_COLUMNS = ["part", "arm", "block_order", "variant", "alpha", "lo", "hi", "donor"]
@@ -38,14 +39,6 @@ MIN_CASES = 8
 # ``fraction`` is reported only where the two arms' unedited lambdas differ by at least this.
 MIN_GAP = 0.2
 CITATION_CATEGORIES = ("own only", "both", "person only", "neither")
-
-
-def read_rows(folder: Path) -> pd.DataFrame:
-    """Every per-patient file of a stage's folder as one table (empty if the folder has none)."""
-    files = sorted(folder.glob("*.parquet"))
-    if not files:
-        return pd.DataFrame()
-    return pd.concat([pd.read_parquet(file) for file in files], ignore_index=True)
 
 
 def interval(draws) -> tuple[float, float]:

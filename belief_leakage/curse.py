@@ -1,6 +1,6 @@
 """Curse-of-knowledge analysis: the estimators per model, dataset, method, setting and reference.  No model calls.
 
-    python -m second_order.curse [--models qwen3_8b qwen3_14b] [--resamples 2000]
+    python -m belief_leakage.curse [--models qwen3_8b qwen3_14b] [--resamples 2000]
 
 Writes ``outputs/curse/``:
 
@@ -27,7 +27,7 @@ Writes ``outputs/curse/``:
   against the latent belief (after the paper's Figures 5 and 3).
 * ``RESULTS.md``: the tables, the Camerer et al. reference w, and anomalies.
 
-Figures: ``python -m second_order.figures``.
+Figures: ``python -m belief_leakage.figures``.
 """
 
 from __future__ import annotations
@@ -38,13 +38,13 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 
-from second_order import beliefs as BL
-from second_order import config as C
-from second_order import datasets as DS
-from second_order import leakage as L
-from second_order.conditions import CONDITIONS, SETTINGS, references
-from second_order.report import display, md_table
-from second_order.responses import accuracy_summary, responses_path
+from belief_leakage import beliefs as BL
+from belief_leakage import config as C
+from belief_leakage import datasets as DS
+from belief_leakage import leakage as L
+from belief_leakage.conditions import CONDITIONS, SETTINGS, references
+from belief_leakage.report import display, md_table
+from belief_leakage.responses import accuracy_summary, responses_path
 
 OUT = C.RESULTS / "curse"
 METHODS = ("latent", "direct")
@@ -438,14 +438,14 @@ def write_results_md(models, tables: dict[str, pd.DataFrame]) -> None:
     est = tables["estimates"]
     w = float(C.load()["experiment"]["camerer_w"])
     parts = [f"# Curse of knowledge: results\n\nGenerated {dt.date.today().isoformat()} by "
-             "`python -m second_order.curse`; figures by `python -m second_order.figures`.  Numbers only; no "
+             "`python -m belief_leakage.curse`; figures by `python -m belief_leakage.figures`.  Numbers only; no "
              "interpretation.  Estimates with 95% paired bootstrap percentile intervals over patients (CKD) or "
              "items (bespoke); unavailable ratios carry a reason in estimates.csv.  Bespoke placebo items "
              "are excluded from the estimates.\n\n"
              f"Models: {', '.join(display(m) for m in models)}.  Reference: Camerer, Loewenstein and Weber (1989) "
              f"find w ≈ {w} for people (a weight on dollar values, not on log-odds).\n\n"]
     if est.empty:
-        parts.append("_(no estimates: run generation and `second_order.phase3` first)_\n")
+        parts.append("_(no estimates: run generation and `belief_leakage.phase3` first)_\n")
     else:
         main = est[est.case_set == "all"]
         per, both = main[main.setting.isin(SETTINGS)], main[main.setting == "both"]

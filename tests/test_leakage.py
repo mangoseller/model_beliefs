@@ -10,11 +10,11 @@ from unittest.mock import patch
 import numpy as np
 import pandas as pd
 
-from second_order import leakage as L
-from second_order.beliefs import COLUMNS, clip_logit
-from second_order.conditions import CONDITIONS, references, setting_conditions
-from second_order.fit_pooled import groups
-from second_order.run_generation import Cache, Item, item_key
+from belief_leakage import leakage as L
+from belief_leakage.beliefs import COLUMNS, clip_logit
+from belief_leakage.conditions import CONDITIONS, references, setting_conditions
+from belief_leakage.fit_pooled import groups
+from belief_leakage.run_generation import Cache, Item, item_key
 
 PHI, ALPHA = 0.8, 0.3
 

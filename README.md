@@ -54,12 +54,12 @@ This installs everything, runs the experiment on both models, and packages the r
 ## Layout
 
 ```
-second_order/      the experiment, and its config.yaml
+belief_leakage/      the experiment, and its config.yaml
 steering/          the lookup circuit behind the false-evidence leak: steering, patching, the lookup as a program (steering/README.md)
 datasets/          the experiment's input data
 archive/
   first_order_toolkit/         standalone first-order belief experiments
-  smolin_wilder_replication/   paper reproduction and latent model used by second_order/
+  smolin_wilder_replication/   paper reproduction and latent model used by belief_leakage/
 tests/             unit and end-to-end tests
 requirements/      pinned dependencies for run_experiment.sh and for steering/
 ```

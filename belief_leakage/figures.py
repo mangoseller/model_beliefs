@@ -30,7 +30,7 @@ For the bespoke dataset:
 
 Plus ``retention``.
 
-    python -m second_order.figures
+    python -m belief_leakage.figures
 """
 
 from __future__ import annotations
@@ -42,8 +42,8 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from second_order import config as C  # noqa: E402
-from second_order.report import display  # noqa: E402
+from belief_leakage import config as C  # noqa: E402
+from belief_leakage.report import display  # noqa: E402
 
 INK, INK2, MUTED, GRID = "#0b0b0b", "#52514e", "#8a8984", "#e6e5e1"
 CONDITION_ORDER = ["A", "B", "B_F", "D", "D_single", "M", "M_single", "C", "C_swap", "D_F", "M_F", "M_single_F", "C_F", "C_swap_F",
@@ -465,7 +465,7 @@ def headline(frame):
     """Rows of each dataset's headline reference (CKD: two_record; bespoke: single_record)."""
     if frame.empty:
         return frame
-    from second_order.conditions import primary_reference
+    from belief_leakage.conditions import primary_reference
 
     return frame[frame.reference == frame.dataset.map(primary_reference)]
 

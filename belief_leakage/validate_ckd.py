@@ -1,4 +1,4 @@
-"""Check the CKD release with python -m second_order.validate_ckd."""
+"""Check the CKD release with python -m belief_leakage.validate_ckd."""
 from collections import Counter, defaultdict
 import csv
 import gzip
@@ -6,7 +6,7 @@ import hashlib
 from itertools import groupby
 import re
 
-from second_order.datasets import ckd_dir
+from belief_leakage.datasets import ckd_dir
 
 FIELDS = dict(age="age", htn="hypertension", diab="diabetes", cvd="cardiovascular disease",
               bmi="body mass index", sex="sex", edu="education level", smkstat="smoking status",

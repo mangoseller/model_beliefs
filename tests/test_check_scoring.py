@@ -1,11 +1,11 @@
-"""Scoring the partial checks from the reasoning (second_order/check_scoring.py), on Qwen3 8B answers trimmed to
+"""Scoring the partial checks from the reasoning (belief_leakage/check_scoring.py), on Qwen3 8B answers trimmed to
 their last lines.
 
     python -m unittest tests.test_check_scoring
 """
 import unittest
 
-from second_order.check_scoring import conclusion, reasoning_correct
+from belief_leakage.check_scoring import conclusion, reasoning_correct
 
 CASES = [
     # the value echo: right reasoning, then the letter of the option that reads like the value ("No")

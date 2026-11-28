@@ -35,12 +35,13 @@ from typing import NamedTuple
 import numpy as np
 import pandas as pd
 
-from second_order import binding
-from second_order import config
-from second_order.beliefs import clip_logit
+from belief_leakage import binding
+from belief_leakage import config
+from belief_leakage.beliefs import clip_logit
 from steering import circuit
 from steering import prompts
 from steering.engine import Edit, Job, stated_probability
+from steering.results import read_rows, reply_rows, write_rows
 
 CI = circuit        # the test file reaches the circuit module through this name
 
@@ -582,7 +583,7 @@ def stage_program(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
                 skipped += 1
                 continue
             rows += item_rows(engine, item, encoded, setup)
-        circuit.write(path, rows)
+        write_rows(path, rows)
         print(f"[circuit program] {group_index + 1}/{len(groups)} groups, {len(rows)} runs, "
               f"{skipped} items skipped, {time.time() - started:.1f}s", flush=True)
 
@@ -590,7 +591,7 @@ def stage_program(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
 def program_tables(run_dir: Path) -> dict:
     """Summaries of the program stage: how often each variant makes the model give its target's value (overall
     and by cell), and what the model does unaided against what the program says it does."""
-    rows = circuit.read(run_dir / "circuit_program" / "rows")
+    rows = read_rows(run_dir / "circuit_program" / "rows")
     if rows.empty:
         return {}
     three_records = np.where(rows.records == 3, "invented, three records", "invented, two records")
@@ -729,7 +730,7 @@ def stage_program_reason(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> 
         rows = []
         for (meta, _), job_replies in zip(jobs, replies):
             rows += reason_rows(meta, job_replies)
-        circuit.write(path, rows)
+        write_rows(path, rows)
         print(f"[program reason] {domain} {thing_number}: {len(rows)} answers, {time.time() - started:.1f}s",
               flush=True)
 
@@ -748,7 +749,7 @@ def leak(mixed_gap: np.ndarray, alone_gap: np.ndarray) -> float:
 def program_reason_tables(run_dir: Path, draws: int = 2000) -> dict:
     """The leak per cell and condition of ``stage_program_reason`` (bootstrap interval over things), the
     share of replies quoting each record, and the reference gap between the two records alone."""
-    replies = circuit.read(run_dir / "program_reason")
+    replies = read_rows(run_dir / "program_reason")
     if replies.empty:
         return {}
     replies["logit"] = clip_logit(replies.value.fillna(0.5))
@@ -860,13 +861,7 @@ def matching_line_tokens(layout) -> tuple[list[int], list[int]]:
 
 def reasoned_rows(meta: dict, replies: list[dict]) -> list[dict]:
     """One row per sampled reply, in the format of the reasoning stage."""
-    rows = []
-    for sample, reply in enumerate(replies):
-        probability = stated_probability(reply["text"])
-        rows.append(dict(meta, readout="reasoned", sample=sample, text=reply["text"],
-                         n_tokens=reply["n_tokens"], truncated=reply["truncated"],
-                         value=float("nan") if probability is None else probability))
-    return rows
+    return reply_rows(meta, replies)
 
 
 def stage_redirect(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
@@ -912,7 +907,7 @@ def stage_redirect(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
         for (case, meta, _), job_replies in zip(jobs, replies):
             rows[case] += reasoned_rows(meta, job_replies)
         for case in group:
-            run.write_rows(folder / f"{case}.parquet", rows[case])
+            write_rows(folder / f"{case}.parquet", rows[case])
         n_answers = sum(map(len, rows.values()))
         print(f"[redirect] {min(start + group_size, len(todo))}/{len(todo)} patients, {n_answers} answers, "
               f"{time.time() - started:.1f}s", flush=True)
@@ -1235,8 +1230,8 @@ def stage_reply_headers(engine, run_dir: Path, cfg: dict, cases: pd.Series, load
             per_cell = {f"{cell[0]}|{cell[1]}": count for cell, count in used_per_cell.items()}
             print(f"[reply headers] {used} replies {per_cell}, {time.time() - started:.1f}s", flush=True)
     out_dir.mkdir(exist_ok=True)
-    circuit.write(path, rows)
-    circuit.write(out_dir / "attention.parquet", attention_rows)
+    write_rows(path, rows)
+    write_rows(out_dir / "attention.parquet", attention_rows)
     print(f"[reply headers] {sum(used_per_cell.values())} replies, {len(rows)} rows, "
           f"{time.time() - started:.1f}s", flush=True)
 

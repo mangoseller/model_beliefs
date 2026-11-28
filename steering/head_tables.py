@@ -36,6 +36,7 @@ import pandas as pd
 from steering import circuit
 from steering import program
 from steering import prompts
+from steering.results import read_rows, write_rows
 
 ALIGNED = ("pre", "post", "tail", "last")       # token groups with the same tokens whatever the field
 UNRANKED = 10 ** 6                              # rank given to a head the lookup ranking does not list
@@ -385,7 +386,7 @@ def stage_tables(engine, run_dir: Path, cfg: dict, cases: pd.Series) -> None:
             for condition, (patched_margin, top) in zip(conditions, results):
                 rows.append(dict(meta, test=condition["test"], setting=condition["setting"],
                                  margin=patched_margin, top_right=top == right, top_other=top == other))
-        circuit.write(out / "rows" / f"{case}.parquet", rows)
+        write_rows(out / "rows" / f"{case}.parquet", rows)
         seconds = time.time() - started
         print(f"[circuit tables] {done + 1}/{len(held_out)} patients, {len(rows)} runs, {seconds:.1f}s",
               flush=True)
@@ -436,7 +437,7 @@ def tables(run_dir: Path, cfg: dict) -> dict:
     """Per test and setting: the share of lookups answered with the right value, with the right or the other
     record's value as the top token, and the mean margin; the same by field for the prompt's own settings; and
     how much of each head the tables account for."""
-    rows = circuit.read(run_dir / "circuit_tables" / "rows")
+    rows = read_rows(run_dir / "circuit_tables" / "rows")
     if rows.empty:
         return {}
     rows["right"], rows["other"] = rows.margin > 0, rows.margin < 0
@@ -548,7 +549,7 @@ def stage_tables_reply(engine, run_dir: Path, cfg: dict, cases: pd.Series, load_
         rows += reply_rows(engine, cfg, cases, settings, probe, readers, sets.get("random_readers_0", []),
                            upstream_dims, terms)
     out.mkdir(exist_ok=True)
-    circuit.write(path, rows)
+    write_rows(path, rows)
     print(f"[circuit tables reply] {len(rows)} runs, {time.time() - started:.1f}s", flush=True)
 
 

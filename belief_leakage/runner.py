@@ -16,16 +16,16 @@ Stages, in order (``--stages`` runs a subset, ``--skip`` leaves some out):
 3. ``checks``: unit tests, the CKD dataset's own validator, the GPU and disk.
 4. ``paper``: ``archive/smolin_wilder_replication/reproduce.sh analysis`` (the original paper's figures and
    tables) and a comparison with the paper's CKD numbers (``archive/smolin_wilder_replication/baseline_ckd.csv``).
-5. ``tune``: a smoke test and inference tuning per model (``second_order.tune``): a sample
+5. ``tune``: a smoke test and inference tuning per model (``belief_leakage.tune``): a sample
    of real calls under a few vLLM engine settings, the fastest kept in the run's config;
    stops the run if the answers do not parse or are truncated.
 6. ``generate``: every condition, run, sample and comprehension follow-up per model
    (``run_generation``, with a progress bar).  Each model's parsing and CPU latent fits
    (``phase3``) start in the background as soon as its generation ends.
 7. ``activations``: residual-stream activations at three positions and every layer, for
-   the probability answers (``second_order.freeze``), on the GPU while the fits run.
+   the probability answers (``belief_leakage.freeze``), on the GPU while the fits run.
 8. ``fits``: waits for the background fits (or runs them, on a resumed run).
-9. ``analyze``: ``second_order.curse`` (estimates, checks, tables) and ``second_order.figures``.
+9. ``analyze``: ``belief_leakage.curse`` (estimates, checks, tables) and ``belief_leakage.figures``.
 10. ``report``: ``RUN_REPORT.md`` and ``record/`` (every constant, the estimator, the
     environment, the model snapshots, the tuning, the data provenance, usage, example prompts).
 11. ``package``: ``runs/<run_id>.tar.gz`` with everything except the model weights, the
@@ -160,7 +160,7 @@ def write_config(run: Run) -> dict:
     """The run's config: the repository config with this run's choices (kept on resume)."""
     if run.config_path.exists():
         return yaml.safe_load(run.config_path.read_text())
-    cfg = yaml.safe_load((ROOT / "second_order" / "config.yaml").read_text())
+    cfg = yaml.safe_load((ROOT / "belief_leakage" / "config.yaml").read_text())
     args = run.args
     profile = {key: (getattr(args, key, None) if getattr(args, key, None) is not None else not getattr(args, "core", False))
                for key in ("paper", "activations", "extra_batteries")}
@@ -221,8 +221,8 @@ def fetch_paper_data(run: Run) -> None:
 def stage_fetch_data(run: Run, cfg: dict) -> None:
     if cfg.get("run_profile", {}).get("paper", True) and "paper" not in run.args.skip:
         fetch_paper_data(run)
-    from second_order import config as C
-    from second_order import datasets as DS
+    from belief_leakage import config as C
+    from belief_leakage import datasets as DS
 
     patients = len(DS.case_ids("ckd"))
     run.manifest["datasets"] = {"ckd_patients": patients,
@@ -237,7 +237,7 @@ def local_models(run: Run, cfg: dict) -> list[str]:
 def stage_fetch_models(run: Run, cfg: dict) -> None:
     from huggingface_hub import snapshot_download
 
-    from second_order.run_generation import resolve_revision
+    from belief_leakage.run_generation import resolve_revision
 
     pins = run.manifest.setdefault("model_snapshots", {})
     for model in local_models(run, cfg):
@@ -261,7 +261,7 @@ def stage_checks(run: Run, cfg: dict) -> None:
     clean = {k: v for k, v in run.env.items() if k not in SO_ENV}  # the tests use the repository config
     run.sh([sys.executable, "-m", "unittest", "tests.test_datasets", "tests.test_leakage",
             "tests.test_generation", "tests.test_runner"], "checks", env=clean)
-    code = run.py("second_order.validate_ckd", log="ckd_validate", check=False)
+    code = run.py("belief_leakage.validate_ckd", log="ckd_validate", check=False)
     run.manifest.setdefault("datasets", {})["ckd_validator"] = "passed" if code == 0 else f"failed ({code})"
     if code:
         raise RuntimeError("the CKD dataset validator failed; see logs/ckd_validate.log")
@@ -340,7 +340,7 @@ def stage_tune(run: Run, cfg: dict) -> None:
         out.unlink(missing_ok=True)  # never read a previous invocation's result
         extra = ["--items", "256", "--candidates", "2"] if run.args.smoke else []
         run.log(f"tuning {model}: timing engine settings on a sample of real calls (log: logs/tune_{model}.log)")
-        code = run.py("second_order.tune", "--model", model, "--out", str(out), *extra, log=f"tune_{model}",
+        code = run.py("belief_leakage.tune", "--model", model, "--out", str(out), *extra, log=f"tune_{model}",
                       check=False, echo=True)
         summary = json.loads(out.read_text()) if out.exists() else {}
         if code and not summary.get("error"):
@@ -370,7 +370,7 @@ def stage_generate(run: Run, cfg: dict) -> None:
         run.log(f"model {n}/{len(run.args.models)}: {model}: generating (progress bar below; "
                 f"log: logs/generate_{model}.log)")
         started = time.time()
-        code = run.py("second_order.run_generation", "--model", model, *cases,
+        code = run.py("belief_leakage.run_generation", "--model", model, *cases,
                       log=f"generate_{model}", check=False, echo=True)
         run.manifest.setdefault("generation", {})[model] = {"exit_code": code,
                                                              "minutes": round((time.time() - started) / 60, 1)}
@@ -388,7 +388,7 @@ def stage_generate(run: Run, cfg: dict) -> None:
             continue
         run.log(f"model {model}: generation done in {(time.time() - started) / 60:.1f} min; "
                 f"parsing and latent fits start in the background (log: logs/phase3_{model}.log)")
-        job = run.popen("second_order.phase3", "--model", model, *cases, log=f"phase3_{model}")
+        job = run.popen("belief_leakage.phase3", "--model", model, *cases, log=f"phase3_{model}")
         run.heartbeat.add(model, job)
         if run.args.no_parallel_fits:
             job.wait()
@@ -406,7 +406,7 @@ def stage_activations(run: Run, cfg: dict) -> None:
     failures = []
     for model in [m for m in generated(run) if cfg["models"][m]["backend"] in ("vllm", "hf")]:
         started = time.time()
-        code = run.py("second_order.freeze", "--model", model, "--cases", str(cfg["main_cases"]),
+        code = run.py("belief_leakage.freeze", "--model", model, "--cases", str(cfg["main_cases"]),
                       log=f"activations_{model}", check=False, echo=True)
         folder = run.dir / "data" / "activations" / model
         size = sum(p.stat().st_size for p in folder.rglob("*") if p.is_file()) if folder.exists() else 0
@@ -423,7 +423,7 @@ def stage_fits(run: Run, cfg: dict) -> None:
     run.heartbeat = run.heartbeat or Heartbeat(run)
     started_here = {m for m, _ in run.fits}
     for model in [m for m in generated(run) if m not in started_here]:
-        job = run.popen("second_order.phase3", "--model", model, "--cases", str(cfg["main_cases"]),
+        job = run.popen("belief_leakage.phase3", "--model", model, "--cases", str(cfg["main_cases"]),
                         log=f"phase3_{model}")
         run.fits.append((model, job))
         run.heartbeat.add(model, job)
@@ -450,9 +450,9 @@ def stage_analyze(run: Run, cfg: dict) -> None:
             or (run.dir / "data" / "beliefs" / m).exists()]
     if not done:
         raise RuntimeError("no model has beliefs to analyse")
-    run.py("second_order.curse", "--models", *done, "--resamples", str(cfg["analysis"]["bootstrap_resamples"]),
+    run.py("belief_leakage.curse", "--models", *done, "--resamples", str(cfg["analysis"]["bootstrap_resamples"]),
            log="analyze")
-    run.py("second_order.figures", log="analyze")
+    run.py("belief_leakage.figures", log="analyze")
     import pandas as pd
 
     est = pd.read_csv(run.dir / "outputs" / "curse" / "estimates.csv")
@@ -472,8 +472,8 @@ def stage_report(run: Run, cfg: dict) -> None:
                            "dirty": bool(capture(["git", "-C", str(ROOT), "status", "--porcelain"]).strip())}
     run.manifest["stages"]["report"] = {"status": "running", "started": now()}
     run.save()
-    # In a subprocess, so the second_order modules read this run's config (SO_CONFIG).
-    run.py("second_order.runner_record", str(run.dir), log="report")
+    # In a subprocess, so the belief_leakage modules read this run's config (SO_CONFIG).
+    run.py("belief_leakage.runner_record", str(run.dir), log="report")
 
 
 def write_archive(target: Path, add) -> str:

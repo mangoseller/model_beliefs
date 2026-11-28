@@ -9,12 +9,12 @@ B take no order. The full 31-output latent battery is asked of every cell.
 A prompt identical to one of the base run's is reused (its archived answer and activations), and identical
 new prompts within the plan are one item, so only missing calls are made:
 
-    python -m second_order.order_followup prepare --run runs/<name> --base-run <base run dir or tarball> \\
+    python -m belief_leakage.order_followup prepare --run runs/<name> --base-run <base run dir or tarball> \\
         --base-activations <base run dir or activations tar> [--models qwen3_8b qwen3_14b]
-    python -m second_order.order_followup status   --run runs/<name>
-    python -m second_order.order_followup generate --run runs/<name> --model qwen3_8b
-    python -m second_order.order_followup capture  --run runs/<name> --model qwen3_8b
-    python -m second_order.order_followup export   --run runs/<name> --model qwen3_8b
+    python -m belief_leakage.order_followup status   --run runs/<name>
+    python -m belief_leakage.order_followup generate --run runs/<name> --model qwen3_8b
+    python -m belief_leakage.order_followup capture  --run runs/<name> --model qwen3_8b
+    python -m belief_leakage.order_followup export   --run runs/<name> --model qwen3_8b
 
 ``binding`` reuses this module's plan files, caches, scoring and activation capture.
 """
@@ -35,7 +35,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from second_order import config as C, datasets as DS, run_generation as G
+from belief_leakage import config as C, datasets as DS, run_generation as G
 
 CUE = " Your chart gives the verified patient information."
 ORDERS = ("own_first", "person_first")
@@ -228,7 +228,7 @@ def copy_baseline(root, model, wanted, signature, base_run, base_activations) ->
             raise ValueError(f"{model}: {len(set(wanted) - found)} baseline generations missing; "
                              "refusing to regenerate them")
         tmp.replace(dest)
-    from second_order.freeze import index_digest
+    from belief_leakage.freeze import index_digest
     member = f"data/activations/{model}/ckd"
     index = pd.read_parquet(io.BytesIO(read_member(base_activations, f"{member}/index.parquet")))
     meta = json.loads(read_member(base_activations, f"{member}/meta.json"))
@@ -296,7 +296,7 @@ def generate(root: Path, model: str) -> None:
 def capture(root: Path, model: str, replayer_factory=None, items=None) -> None:
     """Residual-stream activations of every capture item (or of ``items``: plan item dicts). An existing
     capture whose identity and checksum match is kept; a damaged one is replayed."""
-    from second_order.freeze import POSITIONS, Replayer
+    from belief_leakage.freeze import POSITIONS, Replayer
     plan = read_plan(root)
     if model not in plan["models"]:
         raise ValueError(f"model {model} is not in the prepared plan")
@@ -348,7 +348,7 @@ def score(item: G.Item, record: dict | None, trial: dict):
     """``responses.score_answer`` on the answer after the base run's parser cleanup: for choices, the last
     "Choice:" line and the lines after it, without Markdown emphasis; for probabilities, trailing emphasis
     stripped (unless the answer ends in a code fence) so a terminal JSON object is found."""
-    from second_order.responses import score_answer, visible_text
+    from belief_leakage.responses import score_answer, visible_text
     text = visible_text((record or {}).get("text", "")) or ""
     if item.output.startswith("probability"):
         if not text.endswith("```"):

@@ -1,6 +1,6 @@
 """Parse, fit and export beliefs: responses -> matrices -> pooled fits -> latents -> beliefs.
 
-    python -m second_order.phase3 --model qwen3_8b                # CKD and the bespoke dataset
+    python -m belief_leakage.phase3 --model qwen3_8b                # CKD and the bespoke dataset
 
 Writes, for CKD:
   data/latents/{model}.parquet, {model}_matrix.parquet, {model}_parameters.parquet
@@ -21,12 +21,12 @@ import argparse
 
 import pandas as pd
 
-from second_order import beliefs as BL
-from second_order import config as C
-from second_order import datasets as DS
-from second_order.fit_pooled import anchor_check, fit_all
-from second_order.responses import checks, collect, comprehension, matrix, retention
-from second_order.run_generation import dataset_cases
+from belief_leakage import beliefs as BL
+from belief_leakage import config as C
+from belief_leakage import datasets as DS
+from belief_leakage.fit_pooled import anchor_check, fit_all
+from belief_leakage.responses import checks, collect, comprehension, matrix, retention
+from belief_leakage.run_generation import dataset_cases
 
 
 def write_transcripts(model: str, dataset: str, long: pd.DataFrame, seed: int, n: int) -> None:

@@ -19,12 +19,12 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from second_order import binding as B
-from second_order import binding_synthetic as BS
-from second_order import config as C
-from second_order import datasets as DS
-from second_order import order_followup as F
-from second_order import run_generation as G
+from belief_leakage import binding as B
+from belief_leakage import binding_synthetic as BS
+from belief_leakage import config as C
+from belief_leakage import datasets as DS
+from belief_leakage import order_followup as F
+from belief_leakage import run_generation as G
 
 ROOT = Path(__file__).resolve().parents[1]
 SEED = 20261111
@@ -227,11 +227,11 @@ class SyntheticEndToEnd(unittest.TestCase):
         (tmp / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
         cls.env = {**os.environ, "SO_CONFIG": str(tmp / "config.yaml"), "PYTHONPATH": str(ROOT)}
         cls.run_dir = tmp / "run"
-        run(["second_order.binding", "prepare", "--run", str(cls.run_dir), "--profile", "full", "--models", "synthetic",
+        run(["belief_leakage.binding", "prepare", "--run", str(cls.run_dir), "--profile", "full", "--models", "synthetic",
              "--n-patients", "60", "--direct-samples", "4"], cls.env)
-        run(["second_order.binding", "generate", "--run", str(cls.run_dir), "--model", "synthetic"], cls.env)
-        run(["second_order.binding", "export", "--run", str(cls.run_dir), "--model", "synthetic"], cls.env)
-        run(["second_order.binding_analysis", "--run", str(cls.run_dir), "--model", "synthetic", "--resamples", "200"],
+        run(["belief_leakage.binding", "generate", "--run", str(cls.run_dir), "--model", "synthetic"], cls.env)
+        run(["belief_leakage.binding", "export", "--run", str(cls.run_dir), "--model", "synthetic"], cls.env)
+        run(["belief_leakage.binding_analysis", "--run", str(cls.run_dir), "--model", "synthetic", "--resamples", "200"],
             cls.env)
         out = cls.run_dir / "outputs" / "analysis" / "synthetic"
         cls.cells = pd.read_csv(out / "lambda_cells.csv")
@@ -277,12 +277,12 @@ class SyntheticEndToEnd(unittest.TestCase):
         self.assertFalse(rules["H3_absence_not_ignorance[partial]"]["supported"])
 
     def test_resume_generates_nothing_twice_and_import_reuses_keys(self):
-        done = run(["second_order.binding", "generate", "--run", str(self.run_dir), "--model", "synthetic"], self.env)
+        done = run(["belief_leakage.binding", "generate", "--run", str(self.run_dir), "--model", "synthetic"], self.env)
         self.assertIn("0 to call", done.stdout)
         other = Path(self.tmp.name) / "other"
-        run(["second_order.binding", "prepare", "--run", str(other), "--profile", "pilot", "--models", "synthetic",
+        run(["belief_leakage.binding", "prepare", "--run", str(other), "--profile", "pilot", "--models", "synthetic",
              "--n-patients", "10", "--direct-samples", "2"], self.env)
-        done = run(["second_order.binding", "import-cache", "--run", str(other), "--from", str(self.run_dir)], self.env)
+        done = run(["belief_leakage.binding", "import-cache", "--run", str(other), "--from", str(self.run_dir)], self.env)
         counts = json.loads(done.stdout[done.stdout.index("{"):])["synthetic"]
         # Every pilot item for patients the full run covered is imported; nothing is regenerated.
         self.assertGreater(counts["imported"], 0)
@@ -321,7 +321,7 @@ class SyntheticEndToEnd(unittest.TestCase):
             C.load.cache_clear()
 
     def test_package_writes_independent_archives(self):
-        from second_order.package_run import package
+        from belief_leakage.package_run import package
         out = Path(self.tmp.name) / "pkg"
         written = package(self.run_dir, out, "binding-test")
         has_acts = any((self.run_dir / "data" / "activations").rglob("acts.npy"))
@@ -393,7 +393,7 @@ class OrderFollowupAdapter(unittest.TestCase):
     ``binding_analysis --order-followup``."""
 
     def test_adapter_recovers_planted_lambda(self):
-        from second_order import binding_analysis as BA
+        from belief_leakage import binding_analysis as BA
         saved = (C.CONFIG_PATH, C.CACHE)
         try:
             with tempfile.TemporaryDirectory() as tmp:

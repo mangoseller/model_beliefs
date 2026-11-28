@@ -53,7 +53,7 @@ stages on replies read the `reason` folders.
     python -m steering.run analyse --model qwen3_8b --out runs/steering --session1 <beliefs_direct.parquet>
 
 The leak of a sampled answer is measured against reference beliefs from the binding experiment
-(`second_order.binding_analysis` writes `beliefs_direct.parquet`). Float32 weights take about 32 GB for 8B and 59 GB
+(`belief_leakage.binding_analysis` writes `beliefs_direct.parquet`). Float32 weights take about 32 GB for 8B and 59 GB
 for 14B; sampled stages run in bfloat16.
 
 ## Tests

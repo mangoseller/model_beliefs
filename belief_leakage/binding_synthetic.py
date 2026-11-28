@@ -18,9 +18,9 @@ import re
 
 import numpy as np
 
-from second_order import binding as B
-from second_order import datasets as DS
-from second_order import synthetic as S
+from belief_leakage import binding as B
+from belief_leakage import datasets as DS
+from belief_leakage import synthetic as S
 
 # A pattern of the hypotheses: misbinding by order in the false setting, removed by labels; a
 # partial-setting leak that labels reduce and explicit absence reduces further.

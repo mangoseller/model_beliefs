@@ -1,6 +1,6 @@
 """Prompts and token layouts.
 
-Every prompt is rebuilt from the released CKD data with ``second_order.binding.transform``, so a cell here is
+Every prompt is rebuilt from the released CKD data with ``belief_leakage.binding.transform``, so a cell here is
 the binding experiment's cell, character for character. A ``Layout`` names the tokens of one encoded prompt:
 each record block's header, its field lines (field name, value, line end) and end marker, the question, and
 the chat-template tail with the forced answer prefix.
@@ -14,15 +14,13 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-from second_order import binding
-from second_order import binding_causal
-from second_order import config
+from belief_leakage import binding
+from belief_leakage import binding_causal
+from belief_leakage import config
+from belief_leakage.binding import REPLICATED_ROLES, ROLES, TWO_RECORD_ROLES
 
-ROLES = ("A", "B", "C", "M", "D")
 TOKROLES = ("name", "val", "eol")   # within a field line; "hdr" is the last token of a block's header
 QUERIES = ("person", "own")
-TWO_RECORD_ROLES = "CMD"            # the prompts that show two records and so come in two page orders
-REPLICATED_ROLES = "AB"             # the model's own-belief prompts, which are run twice
 
 
 # Patients and prompts
@@ -49,14 +47,13 @@ def build(cases: pd.Series, arms) -> pd.DataFrame:
     """One row per (patient, arm, order, role, replicate) with the stated-probability prompt. A and B take no
     order and have two replicates; arms that share an own-belief version share those prompts."""
     released, rows = released_prompts(), []
-    for case, arm, role in itertools.product(cases.index, arms, ROLES):
-        source = binding.source_condition(arm, role)
-        two_records = role in TWO_RECORD_ROLES
-        orders = binding.ORDERS if two_records else ("shared",)
-        replicates = (0, 1) if role in REPLICATED_ROLES else (0,)
-        for order, replicate in itertools.product(orders, replicates):
-            released_prompt = released[(case, source, replicate)]
-            prompt = binding.transform(released_prompt, arm, order if two_records else None, role)
+
+    def released_prompt(case, source, output, replicate):
+        return released[(case, source, replicate)]
+
+    for case, arm, role, order in binding.prompt_cells(cases.index, arms):
+        prompts = binding.cell_prompts(case, arm, role, order, ("probability/normal",), released_prompt)
+        for _, replicate, prompt in prompts:
             rows.append(dict(case_id=case, split=cases[case], arm=arm, block_order=order, role=role,
                              replicate=replicate, prompt=prompt))
     return pd.DataFrame(rows)
